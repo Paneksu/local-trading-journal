@@ -2,6 +2,16 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.2.1] · 2026-10-26
+
+### PL
+- Poprawione: dashboard działający na starszym kodzie niż pliki na dysku (np. po `git pull` bez restartu) nie oferuje już wersji, która jest na dysku, i nie twierdzi, że aktualizacja jest niedostępna. Pokazuje komunikat „Pliki są już w wersji …, ale dashboard działa na starszej” i przycisk „Uruchom ponownie” (pigułka w pasku statusu, Ustawienia → Aktualizacje).
+- Poprawione: okno „Co nowego” pomija obrazki i HTML z notatek wydania (zamiast surowego tekstu), ukrywa linię `---` i sumę kontrolną wydania, a przy obrazkach dodaje wskazówkę, że zrzuty są na stronie wydania.
+
+### EN
+- Fixed: a dashboard running older code than the files on disk (e.g. after `git pull` without a restart) no longer offers the version that is already on disk, nor claims the update is unavailable. It shows "The files are already at version …, but the dashboard is running an older one" and a "Restart" button (status bar pill, Settings → Updates).
+- Fixed: the "What's new" window skips images and HTML in the release notes (instead of raw text), hides the `---` line and the release checksum, and adds a hint that screenshots are on the release page when images were present.
+
 ## [1.2.0] · 2026-10-26
 
 ### PL

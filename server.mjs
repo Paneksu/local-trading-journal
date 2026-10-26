@@ -12,7 +12,7 @@ import { createNotion, NotionError } from './lib/notion.mjs';
 import { createData } from './lib/data.mjs';
 import { createWriter, ValidationError, PAGE_ID_RE } from './lib/writes.mjs';
 import { setLang, tr as t } from './lib/i18n.mjs';
-import { APP_VERSION, SCHEMA_VERSION, REPO, loadSchemaFile } from './lib/version.mjs';
+import { APP_VERSION, SCHEMA_VERSION, REPO, loadSchemaFile, readDiskVersion } from './lib/version.mjs';
 import { DBS } from './lib/roles.mjs';
 import { spawn } from 'node:child_process';
 import { fetchLatest, isNewer } from './lib/updater.mjs';
@@ -111,8 +111,16 @@ async function handleImg(url, res) {
 // Jedyne połączenie poza Notion: raz na dobę serwer pyta publiczne API GitHub o ostatnie wydanie (wyłącznik: Ustawienia albo updateCheck w config.local.json).
 // The only connection besides Notion: once a day the server asks the public GitHub API for the latest release (can be switched off).
 // Brak sieci jest cichy: wynik { offline: true }, ponowna próba za kilka godzin, bez błędów w konsoli.
+// Proces mógł wystartować przed aktualizacją plików (git pull, ręczne kopiowanie): wtedy wersja na dysku różni się od APP_VERSION. / The process may run older code than the files on disk.
+function versionState() {
+  let diskVersion = APP_VERSION;
+  try { diskVersion = readDiskVersion(); } catch { /* brak odczytu: traktuj jak zgodną */ }
+  const restartNeeded = diskVersion !== APP_VERSION;
+  return { diskVersion, restartNeeded };
+}
 async function updateInfo({ force = false } = {}) {
-  if (config.updateCheck === false && !force) return { disabled: true, current: APP_VERSION, available: false };
+  const vs = versionState();
+  if (config.updateCheck === false && !force) return { disabled: true, current: APP_VERSION, available: false, restartNeeded: vs.restartNeeded, diskVersion: vs.diskVersion };
   const c = config.updateCache;
   if (force || !c || Date.now() - c.at > 24 * 3600_000) {
     try {
@@ -124,8 +132,10 @@ async function updateInfo({ force = false } = {}) {
     persistConfig();
   }
   const u = config.updateCache || {};
-  const available = isNewer(u.latest, APP_VERSION);
+  // oferta dotyczy wersji nowszej niż pliki na dysku (nie niż działający proces), a przy niezgodności zamiast oferty jest prośba o restart
+  const available = !vs.restartNeeded && isNewer(u.latest, vs.diskVersion);
   return {
+    restartNeeded: vs.restartNeeded, diskVersion: vs.diskVersion,
     current: APP_VERSION, latest: u.latest || '', url: u.url || '', notes: available ? u.notes || '' : '', available,
     skipped: available && config.skipVersion === u.latest, checkedAt: u.at ? new Date(u.at).toISOString() : null, offline: !!u.offline, disabled: config.updateCheck === false,
   };
@@ -168,6 +178,17 @@ async function updatePlan() {
     reason: plan.hasCode ? '' : t('Masz najnowszą wersję.'), notion: plan.notion.map(({ db, kind, name, detail, status }) => ({ db, kind, name, detail, status })), notionError: plan.notionError || null,
   };
 }
+// Ponowne uruchomienie na kodzie z dysku: lib/restart.mjs czeka na koniec tego procesu i startuje nowy.
+function scheduleRestart(delay) {
+  setTimeout(() => {
+    try {
+      const h = spawn(process.execPath, [path.join(ROOT, 'lib', 'restart.mjs'), String(process.pid)], { cwd: ROOT, env: process.env, detached: true, stdio: 'ignore', windowsHide: true });
+      h.unref();
+    } catch (e) { console.error('[restart]', e.message); }
+    server.close();
+    setTimeout(() => process.exit(0), 200);
+  }, delay);
+}
 function startUpdate() {
   upd = { running: true, done: false, target: '', steps: STEPS.map((id) => ({ id, status: 'pending', detail: '' })), error: null };
   const setStep = (id, status, detail) => { const s = upd.steps.find((x) => x.id === id); if (s) { s.status = status; if (detail) s.detail = detail; } };
@@ -187,14 +208,7 @@ function startUpdate() {
     upd.done = true;
     console.log(`Update to ${upd.target} finished, restarting.`);
     // chwila na odebranie statusu przez stronę, potem restart (nowy proces czeka na zwolnienie portu)
-    setTimeout(() => {
-      try {
-        const h = spawn(process.execPath, [path.join(ROOT, 'lib', 'restart.mjs'), String(process.pid)], { cwd: ROOT, env: process.env, detached: true, stdio: 'ignore', windowsHide: true });
-        h.unref();
-      } catch (e) { console.error('[restart]', e.message); }
-      server.close();
-      setTimeout(() => process.exit(0), 200);
-    }, 1500);
+    scheduleRestart(1500);
   });
 }
 
@@ -258,7 +272,7 @@ function sendError(res, e) {
 
 function meta() {
   return {
-    lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
+    ...versionState(), lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
     updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
@@ -282,6 +296,13 @@ const ACTIONS = {
     return { ok: true };
   },
   '/api/update/plan': async () => updatePlan(),
+  '/api/restart': async () => {
+    if (upd.running) throw Object.assign(new NotionError(t('Aktualizacja już trwa.'), 409), { code: 'running' });
+    const vs = versionState();
+    console.log(`Restart requested (running ${APP_VERSION}, on disk ${vs.diskVersion}).`);
+    scheduleRestart(800);
+    return { restarting: true, diskVersion: vs.diskVersion };
+  },
   '/api/update/run': async () => {
     if (upd.running) throw Object.assign(new NotionError(t('Aktualizacja już trwa.'), 409), { code: 'running' });
     startUpdate();

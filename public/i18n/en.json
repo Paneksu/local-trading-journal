@@ -1044,5 +1044,10 @@
   "Kliknij, aby udostępnić kartę tygodnia": "Click to share the week card",
   "Udostępnij kartę miesiąca": "Share the month card",
   "Nick do podpisu": "Nickname for the signature",
-  "Podpis na kartach z okna Udostępnij: „JustJournal × nick”. Puste pole oznacza sam podpis JustJournal.": "Signature on the cards from the Share window: “JustJournal × nickname”. An empty field means just the JustJournal signature."
+  "Podpis na kartach z okna Udostępnij: „JustJournal × nick”. Puste pole oznacza sam podpis JustJournal.": "Signature on the cards from the Share window: “JustJournal × nickname”. An empty field means just the JustJournal signature.",
+  "Uruchom ponownie": "Restart",
+  "Dashboard działa na starszej wersji. Otwórz okno ponownego uruchomienia": "The dashboard is running an older version. Open the restart window",
+  "Pliki są już w wersji {v}, ale dashboard działa na starszej. Uruchom go ponownie.": "The files are already at version {v}, but the dashboard is running an older one. Restart it.",
+  "Trwa ponowne uruchomienie. Nie zamykaj tej karty.": "Restarting. Do not close this tab.",
+  "Zrzuty ekranu są na stronie wydania na GitHubie.": "Screenshots are on the release page on GitHub."
 }

@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import * as H from './pomocnicze.mjs';
 import { treeHash } from '../lib/updater.mjs';
+import { parseMarkdown } from '../public/js/markdown.js';
 import { loadMigrations, validateMigration } from '../lib/migrate.mjs';
 import { patchDataSource } from '../lib/workspace.mjs';
 import { backupAll, planRestore, applyRestore } from '../lib/backup.mjs';
@@ -463,6 +464,64 @@ test('moduł aktualizacji w dashboardzie: wykrycie, obcy Origin, plan, aktualiza
   await H.sleep(100);
   assert.equal(S2.p.err.trim(), '', 'brak błędów w logu serwera');
   S2.stop(); A.stop(); R.close();
+});
+
+test('notatki wydania: obrazki i HTML pomijane, nagłówek zrzutów znika, ---/tree-sha256 ukryte, link bez adresu', () => {
+  const md = [
+    '## Zmiany', '- **Nowe** pole `Ocena`', '- widok [Wg oceny](https://x.example/a)', '', '<details><summary>Więcej</summary>', 'Akapit w środku', '</details>', '',
+    '## Zrzuty / Screenshots', '', '**Podpis zrzutu**',
+    '![Karta](https://x.example/karta.png)', '<img src="https://x.example/b.png" width="300">', '[![Podgląd](https://x.example/p.png)](https://x.example/film)', '',
+        '', '## Inne', 'Tekst z obrazkiem ![mały](https://x.example/m.png) w środku <b>linii</b>.', '', '---', 'tree-sha256: ' + 'a'.repeat(64),
+  ].join('\r\n');
+  const r = parseMarkdown(md);
+  assert.equal(r.hadImages, true);
+  const txt = r.blocks.map((b) => b.type + ':' + b.text);
+  assert.deepEqual(txt, ['h:Zmiany', 'li:**Nowe** pole `Ocena`', 'li:widok [Wg oceny](https://x.example/a)', 'p:Akapit w środku', 'h:Inne', 'p:Tekst z obrazkiem  w środku linii.']);
+  const all = JSON.stringify(r.blocks);
+  for (const bad of ['png', '<', '---', 'tree-sha256', 'Zrzuty', 'details', 'Podpis']) assert.ok(!all.includes(bad), bad);
+  // bez obrazków: brak znacznika, nagłówek zrzutów z treścią zostaje, ciągły akapit łączy linie
+  const r2 = parseMarkdown('## Screenshots\nOpis zrzutów\n\nLinia 1\nLinia 2\n\n### Zrzuty\n');
+  assert.equal(r2.hadImages, false);
+  assert.deepEqual(r2.blocks.map((b) => b.type + ':' + b.text), ['h:Screenshots', 'p:Opis zrzutów', 'p:Linia 1 Linia 2']);
+  assert.deepEqual(parseMarkdown('').blocks, []);
+  // render nie używa innerHTML dla notatek
+  const src = readFileSync(path.join(ROOT, 'public/js/aktualizacja.js'), 'utf8');
+  const fn = src.slice(src.indexOf('export function renderMarkdown'), src.indexOf('export function createUpdater'));
+  assert.ok(!/innerHTML/.test(fn));
+});
+
+test('dashboard działający na starszym kodzie: restartNeeded, brak oferty wersji z dysku, restart na nowym kodzie', async () => {
+  const A = await H.atrapa(nextPort());
+  const R = await release(); // najnowsze wydanie = NEXT
+  const dir = H.tmp();
+  install(dir);
+  const S = await H.server(nextPort(), { NOTION_API_BASE: A.base, ...R.env }, { cwd: dir });
+  let c = (await H.dash(S.base, '/api/update/check', {})).j;
+  assert.equal(c.restartNeeded, false); assert.equal(c.available, true); assert.equal(c.latest, NEXT);
+  // „git pull” przy działającym procesie: na dysku jest już NEXT
+  const pj = path.join(dir, 'package.json');
+  const pkg = json(pj); pkg.version = NEXT; writeFileSync(pj, JSON.stringify(pkg, null, 2) + String.fromCharCode(10));
+  c = (await H.dash(S.base, '/api/update/check', {})).j;
+  assert.equal(c.restartNeeded, true); assert.equal(c.diskVersion, NEXT); assert.equal(c.current, CUR);
+  assert.equal(c.available, false, 'nie oferuje wersji, która już jest na dysku');
+  assert.equal((await (await fetch(`${S.base}/api/update-check`)).json()).restartNeeded, true);
+  const d = await (await fetch(`${S.base}/api/data`)).json();
+  assert.equal(d.meta.restartNeeded, true); assert.equal(d.meta.diskVersion, NEXT); assert.equal(d.meta.version, CUR);
+  // ochrona zapisu
+  assert.equal((await H.dash(S.base, '/api/restart', {}, { origin: 'http://evil.example' })).status, 403);
+  assert.equal((await fetch(`${S.base}/api/restart`, { method: 'POST', headers: { Origin: S.base, 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
+  const rs = await H.dash(S.base, '/api/restart', {});
+  assert.equal(rs.status, 200); assert.equal(rs.j.restarting, true);
+  let v = '';
+  for (let i = 0; i < 120 && v !== NEXT; i++) {
+    await H.sleep(250);
+    try { v = (await (await fetch(`${S.base}/api/health`)).json()).version; } catch { /* restart w toku */ }
+  }
+  assert.equal(v, NEXT, 'serwer wstał na kodzie z dysku');
+  c = (await H.dash(S.base, '/api/update/check', {})).j;
+  assert.equal(c.restartNeeded, false);
+  await H.dash(S.base, '/api/shutdown', {});
+  A.stop(); R.close();
 });
 
 // ---------- gotowość („Pierwsze kroki”, część A) ----------

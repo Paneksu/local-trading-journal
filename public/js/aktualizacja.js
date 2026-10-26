@@ -6,6 +6,7 @@
 import { esc } from './format.js';
 import { overlay, trapTab, toast } from './modal.js';
 import { t } from './i18n.js';
+import { parseMarkdown } from './markdown.js';
 
 const TARGET_KEY = 'thq.updTarget';
 const STEP_IDS = ['backup', 'download', 'migrate', 'restart'];
@@ -48,29 +49,26 @@ function inline(parent, text) {
 export function renderMarkdown(md) {
   const root = document.createElement('div');
   root.className = 'md';
-  let list = null, para = null;
-  const close = () => { list = null; para = null; };
-  for (const raw of String(md || '').replace(/\r\n?/g, '\n').split('\n')) {
-    const line = raw.trimEnd();
-    if (!line.trim()) { close(); continue; }
-    const h = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
-    const li = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (h) {
-      close();
-      const el = document.createElement(h[1].length <= 2 ? 'h4' : 'h5');
-      inline(el, h[2].replace(/\s*#+\s*$/, ''));
-      root.append(el);
-    } else if (li) {
-      para = null;
+  const { blocks, hadImages } = parseMarkdown(md); // obrazki i HTML odpadają w parserze
+  let list = null;
+  for (const b of blocks) {
+    if (b.type === 'li') {
       if (!list) { list = document.createElement('ul'); root.append(list); }
       const el = document.createElement('li');
-      inline(el, li[1]);
+      inline(el, b.text);
       list.append(el);
-    } else {
-      list = null;
-      if (!para) { para = document.createElement('p'); root.append(para); } else para.append(document.createTextNode(' '));
-      inline(para, line.trim());
+      continue;
     }
+    list = null;
+    const el = document.createElement(b.type === 'h' ? (b.level <= 2 ? 'h4' : 'h5') : 'p');
+    inline(el, b.text);
+    root.append(el);
+  }
+  if (hadImages) {
+    const p = document.createElement('p');
+    p.className = 'fhint';
+    p.textContent = t('Zrzuty ekranu są na stronie wydania na GitHubie.');
+    root.append(p);
   }
   return root;
 }
@@ -81,18 +79,25 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
   let win = null;           // { root, dlg, opener }
   let plan = null, planErr = '', planLoading = false;
   let run = null;           // { status, error, waiting, phase }
+  let rst = null;           // ponowne uruchomienie bez aktualizacji: { waiting, error }
   let onChange = () => {};
 
   const available = () => !!(info && info.available && !info.disabled && !info.skipped);
+  // pliki na dysku są nowsze niż działający proces (np. po git pull): zamiast oferty aktualizacji prosimy o restart
+  const restartNeeded = () => !!(info && info.restartNeeded);
 
   // ---------- pigułka w pasku statusu i kropka przy kole zębatym (na telefonie pasek statusu jest ukryty) ----------
   function renderPill() {
     const b = document.getElementById('upd');
     const gear = document.getElementById('gear');
-    const on = available();
+    const rs = restartNeeded();
+    const on = rs || available();
     if (b) {
       b.hidden = !on;
-      if (on) {
+      if (rs) {
+        b.querySelector('.upd-t').textContent = t('Uruchom ponownie');
+        b.setAttribute('aria-label', t('Dashboard działa na starszej wersji. Otwórz okno ponownego uruchomienia'));
+      } else if (on) {
         b.querySelector('.upd-t').textContent = t('Nowa wersja {v}', { v: info.latest });
         b.setAttribute('aria-label', t('Nowa wersja {v}. Otwórz okno aktualizacji', { v: info.latest }));
       }
@@ -239,12 +244,36 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
     return box;
   }
 
+  const restartText = () => t('Pliki są już w wersji {v}, ale dashboard działa na starszej. Uruchom go ponownie.', { v: info?.diskVersion || '?' });
+  function paintRestart(dlg, body) {
+    const ver = document.createElement('div');
+    ver.className = 'um-ver';
+    const cur = document.createElement('span'); cur.className = 'mono'; cur.textContent = info?.current || getMeta()?.version || '?';
+    const arr = document.createElement('span'); arr.className = 'um-arr'; arr.setAttribute('aria-hidden', 'true'); arr.textContent = '→';
+    const nxt = document.createElement('b'); nxt.className = 'mono'; nxt.textContent = info?.diskVersion || '?';
+    ver.append(cur, arr, nxt);
+    body.append(ver);
+    const p = document.createElement('p'); p.className = 'um-why'; p.id = 'um-restart-msg'; p.textContent = restartText();
+    body.append(p);
+    if (rst?.waiting) {
+      const w = document.createElement('p'); w.className = 'fhint'; w.textContent = t('Dashboard uruchamia się ponownie. Strona odświeży się sama, nie zamykaj tej karty.'); body.append(w);
+    }
+    if (rst?.error) {
+      const e = document.createElement('p'); e.className = 'ferr'; e.setAttribute('role', 'alert'); e.textContent = rst.error; body.append(e);
+    }
+    const foot = dlg.querySelector('.mf');
+    foot.innerHTML = rst?.waiting
+      ? `<span class="fmsg">${esc(t('Trwa ponowne uruchomienie. Nie zamykaj tej karty.'))}</span>`
+      : `<span class="grow"></span><button type="button" class="btn ghost" data-u="close">${esc(t('Później'))}</button><button type="button" class="btn primary" data-u="restart">${esc(t('Uruchom ponownie'))}</button>`;
+  }
+
   function paint() {
     if (!win) return;
     const { dlg } = win;
     const body = dlg.querySelector('.mb');
     const keep = body.scrollTop;
     body.textContent = '';
+    if (restartNeeded()) { paintRestart(dlg, body); body.scrollTop = keep; return; }
     // wersje
     const ver = document.createElement('div');
     ver.className = 'um-ver';
@@ -299,7 +328,7 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
   }
 
   function open(opener) {
-    if (win || !info?.latest) return;
+    if (win || !(info?.latest || restartNeeded())) return;
     const root = document.createElement('div');
     root.className = 'scrim';
     root.innerHTML = `<div class="modal um" role="dialog" aria-modal="true" aria-labelledby="um-t">
@@ -314,12 +343,12 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
     run = null;
     paint();
     win.dlg.querySelector('[data-u="close"]').focus();
-    loadPlan();
+    if (!restartNeeded()) loadPlan();
   }
 
   function close() {
     if (!win) return;
-    const busy = run && !run.error && !run.status?.error && !run.status?.done;
+    const busy = (run && !run.error && !run.status?.error && !run.status?.done) || rst?.waiting;
     if (busy) return; // w trakcie aktualizacji okno zostaje (strona i tak przeładuje się po restarcie)
     win.root.remove();
     overlay.current = null;
@@ -343,6 +372,7 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
         close();
       } catch (err) { toast(t('Nie udało się pominąć wersji: {msg}', { msg: err.message }), { error: true }); }
     } else if (act === 'run') startRun();
+    else if (act === 'restart') restartNow();
     else if (act === 'copy') {
       try { await navigator.clipboard.writeText(b.dataset.cmd); toast(t('Skopiowano polecenie.')); } catch { toast(t('Nie udało się skopiować. Zaznacz polecenie i skopiuj ręcznie.'), { error: true }); }
     }
@@ -377,7 +407,21 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
     await waitForHealth(target);
   }
 
-  async function waitForHealth(target) {
+  // restart bez aktualizacji: serwer odpowiada, po chwili wstaje nowy proces na kodzie z dysku, strona czeka na /api/health i przeładowuje się
+  async function restartNow() {
+    const target = info?.diskVersion;
+    rst = { waiting: true, error: '' };
+    paint();
+    try { await post('/api/restart'); }
+    catch (e) { rst = { waiting: false, error: e.status === 409 ? t('Aktualizacja już trwa w innym oknie.') : e.message }; paint(); return; }
+    const ok = await waitForHealth(target, true);
+    if (!ok) {
+      rst = { waiting: false, error: t('Dashboard nie wrócił po restarcie w ciągu minuty. Uruchom go ręcznie (Dashboard.vbs albo start.sh).') };
+      paint();
+    }
+  }
+
+  async function waitForHealth(target, quiet) {
     const until = Date.now() + HEALTH_LIMIT_MS;
     while (Date.now() < until) {
       await sleep(1000);
@@ -385,10 +429,11 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
         const r = await fetch('/api/health', { cache: 'no-store' });
         if (r.ok) {
           const j = await r.json();
-          if (j.version === target) { location.reload(); return; }
+          if (j.version === target) { location.reload(); return true; }
         }
       } catch { /* serwer jeszcze wstaje */ }
     }
+    if (quiet) return false;
     run.waiting = false;
     run.error = {
       message: t('Dashboard nie wrócił po restarcie w ciągu minuty. Uruchom go ręcznie (Dashboard.vbs albo start.sh).'),
@@ -406,18 +451,19 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
     if (disabled) line = t('Sprawdzanie aktualizacji jest wyłączone.');
     else if (checking) line = t('Sprawdzam…');
     else if (!info) line = t('Jeszcze nie sprawdzono.');
+    else if (info.restartNeeded) line = restartText();
     else if (info.offline) line = t('Brak połączenia z GitHub. Spróbuj później.');
     else if (info.available) line = info.skipped ? t('Dostępna wersja {v} (pominięta).', { v: info.latest }) : t('Dostępna wersja {v}.', { v: info.latest });
     else line = t('Masz najnowszą wersję.');
     const when = info?.checkedAt ? ` ${t('Sprawdzono {time}.', { time: new Date(info.checkedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) })}` : '';
     return `<div class="sp-f"><span class="lbl">${esc(t('Aktualizacje'))}</span>
       <p class="upd-line">${esc(t('Wersja {v}', { v: m.version || '?' }))} · ${esc(line)}${esc(when)}</p>
-      <div class="upd-actions"><button type="button" class="btn sm" data-act="upd-check-now" data-fk="upd-now" ${checking ? 'disabled' : ''}>${esc(t('Sprawdź teraz'))}</button>${info?.available && info.latest ? `<button type="button" class="btn primary sm" data-act="upd-open" data-fk="upd-open">${esc(t('Zobacz wersję {v}', { v: info.latest }))}</button>` : ''}</div></div>`;
+      <div class="upd-actions"><button type="button" class="btn sm" data-act="upd-check-now" data-fk="upd-now" ${checking ? 'disabled' : ''}>${esc(t('Sprawdź teraz'))}</button>${info?.restartNeeded ? `<button type="button" class="btn primary sm" data-act="upd-open" data-fk="upd-open">${esc(t('Uruchom ponownie'))}</button>` : ''}${info?.available && info.latest ? `<button type="button" class="btn primary sm" data-act="upd-open" data-fk="upd-open">${esc(t('Zobacz wersję {v}', { v: info.latest }))}</button>` : ''}</div></div>`;
   }
 
   function handle(act, el) {
     if (act === 'upd-open') { open(el); return true; }
-    if (act === 'upd-check-now') { check(true).then(() => { if (info && !info.available && !info.offline) toast(t('Masz najnowszą wersję.')); }); onChange(); return true; }
+    if (act === 'upd-check-now') { check(true).then(() => { if (info && !info.available && !info.offline && !info.restartNeeded) toast(t('Masz najnowszą wersję.')); }); onChange(); return true; }
     return false;
   }
 
