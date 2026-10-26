@@ -1,5 +1,5 @@
 @echo off
-rem Local Trading Journal: instalacja (Windows). Sprawdza Node.js, tworzy skrot na pulpicie, uruchamia dashboard w tle
+rem JustJournal: instalacja (Windows). Sprawdza Node.js, tworzy skrot na pulpicie, uruchamia dashboard w tle
 rem i otwiera przegladarke na kreatorze "Pierwsze kroki" (token Notion, strona, utworzenie dziennika).
 rem Instalacja w terminalu (zapasowo): Instaluj.cmd --cli
 rem Installer (Windows): checks Node.js, creates a desktop shortcut, starts the dashboard and opens the setup wizard.
@@ -13,7 +13,7 @@ if errorlevel 1 goto nonode
 node -e "process.exit(+process.versions.node.split('.')[0]>=22?0:1)"
 if errorlevel 1 goto oldnode
 
-echo Tworze skrot "Local Trading Journal" na pulpicie...
+echo Tworze skrot "JustJournal" na pulpicie...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0narzedzia\utworz-skrot.ps1" >nul 2>nul
 echo Uruchamiam dashboard i otwieram kreator w przegladarce: http://127.0.0.1:4321
 echo Starting the dashboard and opening the setup wizard: http://127.0.0.1:4321

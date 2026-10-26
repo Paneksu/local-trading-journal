@@ -1,4 +1,4 @@
-# Local Trading Journal
+# JustJournal
 
 [Polski](README.md) · **English**
 
@@ -37,6 +37,7 @@ Screenshots come from the mock with sample data.
   - breakdowns: setup, instrument, session, weekday, direction, entry time (each trade at its minute), duration, nth trade of the day, R distribution;
   - Trades (sortable table), Prop (accounts, payouts, ROI, balance) and Gallery tabs;
   - add and edit trades, accounts and finance entries, saved straight to Notion;
+  - share results as an image ("Share" button): a card for a trade, day, week, month or year in 9:16, 4:5, 1:1 and 16:9, result in R, $ or %, theme background or your own photo; download a PNG, copy it or share from a phone; set the "JustJournal × nickname" signature in Settings;
   - Onyx and Platinum themes, data palettes (including colour-blind friendly), Polish and English;
   - an update module and "Getting started" (installation check and a guided tour).
 
@@ -60,7 +61,7 @@ Pick one:
 - Windows: double-click **`Instaluj.cmd`**. Without Node.js the installer offers to install it with `winget` (type "y"). On the first run Windows may show a SmartScreen warning: "More info" → "Run anyway".
 - macOS / Linux: in a terminal inside the app folder run `./install.sh` (or `sh install.sh`).
 
-The installer creates a "Local Trading Journal" desktop shortcut, starts the dashboard in the background and opens the "Getting started" wizard in your browser. Then you do three things:
+The installer creates a "JustJournal" desktop shortcut, starts the dashboard in the background and opens the "Getting started" wizard in your browser. Then you do three things:
 
 1. **Language** is detected from the browser; change it with one click. It sets the database and property names in Notion.
 2. **Token:** the "Create the integration in Notion" button opens the integrations page. Create an Internal integration (copy the name with one click), copy the "Internal Integration Secret" and paste it into the wizard. The wizard checks it right away and stores it locally in `.env`.
@@ -181,7 +182,7 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 
 4. The installer window opens. Type 1 (Polish) or 2 (English) and press Enter.
 
-   <img src="docs/img/poradnik/smartscreen/04-en.webp" alt="Black console window with the Local Trading Journal setup header and the language question." width="600">
+   <img src="docs/img/poradnik/smartscreen/04-en.webp" alt="Black console window with the JustJournal setup header and the language question." width="600">
 
 </details>
 
@@ -194,7 +195,7 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 
 2. The installer starts in the same window. Type 1 (Polish) or 2 (English) and press Enter.
 
-   <img src="docs/img/poradnik/macos-open/02-en.webp" alt="Terminal with the Local Trading Journal setup header and the language question." width="600">
+   <img src="docs/img/poradnik/macos-open/02-en.webp" alt="Terminal with the JustJournal setup header and the language question." width="600">
 
 3. Without typing commands: right-click install.sh, choose Open With and then Terminal.
 
@@ -217,7 +218,7 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 
    <img src="docs/img/poradnik/notion-integracja/01-en.webp" alt="The Notion Integrations page with the New integration button." width="600">
 
-2. Enter the name Local Trading Journal, pick your workspace and the Internal type, then click Save.
+2. Enter the name JustJournal, pick your workspace and the Internal type, then click Save.
 
    <img src="docs/img/poradnik/notion-integracja/02-en.webp" alt="New integration form: name, workspace, Internal type and the Save button." width="600">
 
@@ -234,9 +235,9 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 <details>
 <summary><b>Copying the integration secret</b></summary>
 
-1. In the integrations list, click Local Trading Journal.
+1. In the integrations list, click JustJournal (older installs: Local Trading Journal).
 
-   <img src="docs/img/poradnik/notion-token/01-en.webp" alt="The Notion integrations list with the Local Trading Journal card." width="600">
+   <img src="docs/img/poradnik/notion-token/01-en.webp" alt="The Notion integrations list with the JustJournal card." width="600">
 
 2. Next to Internal Integration Secret, click Copy. If you do not see it, click Show first.
 
@@ -259,13 +260,13 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 
    <img src="docs/img/poradnik/notion-polaczenia/02-en.webp" alt="The Notion page menu with Connections highlighted." width="600">
 
-3. Type Local and choose Local Trading Journal from the list.
+3. Type Just and choose JustJournal from the list (older installs: type Local, choose Local Trading Journal).
 
-   <img src="docs/img/poradnik/notion-polaczenia/03-en.webp" alt="The Connections submenu with search and the Local Trading Journal integration." width="600">
+   <img src="docs/img/poradnik/notion-polaczenia/03-en.webp" alt="The Connections submenu with search and the JustJournal integration." width="600">
 
 4. Click Confirm. The integration gets access only to this page and its sub-pages.
 
-   <img src="docs/img/poradnik/notion-polaczenia/04-en.webp" alt="Confirmation dialog for Local Trading Journal access to the Trading page." width="600">
+   <img src="docs/img/poradnik/notion-polaczenia/04-en.webp" alt="Confirmation dialog for JustJournal access to the Trading page." width="600">
 
 5. Copy the page link: click Share, then Copy link.
 
@@ -320,9 +321,9 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 <details>
 <summary><b>Moving with the token, without a code</b></summary>
 
-1. Open notion.so/profile/integrations and click the Local Trading Journal integration, the same one as on the first device.
+1. Open notion.so/profile/integrations and click the JustJournal integration (older installs: Local Trading Journal), the same one as on the first device.
 
-   <img src="docs/img/poradnik/notion-token/01-en.webp" alt="The Notion integrations list with the Local Trading Journal card." width="600">
+   <img src="docs/img/poradnik/notion-token/01-en.webp" alt="The Notion integrations list with the JustJournal card." width="600">
 
 2. Next to Internal Integration Secret, click Show and then Copy. Do not create a new integration, the same token is enough.
 

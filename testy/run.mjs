@@ -78,6 +78,93 @@ test('i18n: każdy tekst interfejsu i serwera ma tłumaczenie EN', () => {
   assert.deepEqual(missing, []);
 });
 
+// ---------- karty Udostępnij: dane ----------
+test('udostepnij: dane kart (tydzień, pusty okres, % bez rozmiaru, tylko Live)', async () => {
+  const S = await import('../public/js/stats.js');
+  const U = await import('../public/js/udostepnij-dane.js');
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001', B = 'bbbbbbbb-0000-4000-8000-000000000002', C = 'cccccccc-0000-4000-8000-000000000003';
+  const konta = S.normalizeKonta([{ _id: A, name: 'A 50k', size: 50000 }, { _id: B, name: 'B bez rozmiaru', size: null }, { _id: C, name: 'C 100k', size: 100000 }]);
+  let i = 0;
+  // data jako sam dzień (bez godziny i strefy): wynik testu nie zależy od strefy czasowej maszyny
+  const row = (date, r, pnl, o = {}) => ({ _id: `t${++i}`, _created: `${date}T12:0${i % 10}:00.000Z`, title: '', typ: { name: o.typ || 'Live' }, date, r, pnl, konta: o.konta || [A], dir: { name: o.dir || 'Long' }, instrument: { name: 'NQ' } });
+  // tydzień od poniedziałku 19.10.2026 (jak w inspiracji: Pn, Wt, Śr, Cz z wynikiem, Pt bez trade'ów)
+  const rows = [
+    row('2026-10-19', 0.3, 50), row('2026-10-20', 2.4, 600),
+    row('2026-10-21', 3, 1000), row('2026-10-21', -0.5, -125), row('2026-10-22', 1.2, 300),
+    row('2026-10-23', 5, null, { typ: 'Backtest', konta: [] }), // nie Live: poza recapem
+    row('2026-10-23', null, null, { dir: 'NO TRADE' }), // dzień bez trade'u: nie liczy się
+    row('2026-10-16', 9, 2000), // poprzedni tydzień
+  ];
+  const trades = S.normalizeTrades(rows);
+  const w = U.weekCard(trades, konta, '2026-10-22', 'R');
+  assert.equal(w.from, '2026-10-19'); assert.equal(w.to, '2026-10-25');
+  assert.equal(w.n, 5);
+  assert.equal(w.winRate, 80);
+  assert.equal(w.greenDays, 4); assert.equal(w.tradingDays, 4);
+  assert.equal(w.bestDay.date, '2026-10-21'); // 3 − 0,5 = 2,5R > 2,4R
+  assert.ok(Math.abs(w.v.R - 6.4) < 1e-9);
+  assert.equal(w.v.$, 1825);
+  assert.ok(Math.abs(w.v['%'] - 3.65) < 1e-9); // 1825 $ / 50 000 $ (konto A liczone raz)
+  assert.deepEqual(w.days.map((d) => d.n), [1, 1, 2, 1, 0]); // Pn–Pt, weekend bez trade'ów pominięty
+  // pusty okres
+  const e = U.weekCard(trades, konta, '2026-11-04', 'R');
+  assert.equal(e.n, 0); assert.equal(e.v.R, null); assert.equal(e.v.$, null); assert.equal(e.v['%'], null);
+  assert.equal(e.bestDay, null); assert.equal(e.greenDays, 0);
+  // % bez rozmiaru konta → null (trade i cały okres), dwa konta z rozmiarem → suma rozmiarów
+  const tB = S.normalizeTrades([row('2026-10-20', 1, 400, { konta: [B] })]);
+  assert.equal(U.tradeCard(tB[0], konta).v['%'], null);
+  assert.equal(U.weekCard([...trades, ...tB], konta, '2026-10-20', 'R').v['%'], null);
+  const tC = S.normalizeTrades([row('2026-10-20', 1, 300, { konta: [C] })]);
+  assert.ok(Math.abs(U.weekCard([...trades, ...tC], konta, '2026-10-20', '%').v['%'] - (2125 / 150000) * 100) < 1e-9);
+  // karta trade'a: Backtest dostaje etykietę i nie ma kwot; Live ma % konta
+  const bt = trades.find((t) => t.typ === 'Backtest');
+  const bc = U.tradeCard(bt, konta);
+  assert.equal(bc.tag, 'Backtest'); assert.equal(bc.v.$, null); assert.equal(bc.v['%'], null); assert.equal(bc.v.R, 5);
+  assert.ok(Math.abs(U.tradeCard(trades[1], konta).v['%'] - 1.2) < 1e-9); // 600 / 50 000
+  // dzień, miesiąc, rok
+  const d = U.dayCard(trades, konta, '2026-10-21', '$');
+  assert.equal(d.n, 2); assert.equal(d.wins, 1); assert.equal(d.losses, 1); assert.equal(d.best.v.$, 1000);
+  const m = U.monthCard(trades, konta, 2026, 10, 'R');
+  assert.equal(m.n, 6); assert.equal(m.weeks[0].from, '2026-10-01'); assert.equal(m.weeks.at(-1).to, '2026-10-31');
+  assert.equal(m.bestDay.date, '2026-10-16');
+  const y = U.yearCard(trades, konta, 2026, 'R');
+  assert.equal(y.months[9].n, 6); assert.equal(y.bestMonth.m, 10); assert.equal(y.greenMonths, 1); assert.equal(y.tradingMonths, 1);
+  // % konta: trade na dwóch kontach, z których jedno nie ma rozmiaru → null (nie 1000/50 000) i dla trade'a, i dla okresu
+  const tAB = S.normalizeTrades([row('2026-10-20', 1, 1000, { konta: [A, B] })]);
+  assert.equal(U.pctOf(tAB, new Map(konta.map((k) => [k.id, k]))), null);
+  assert.equal(U.tradeCard(tAB[0], konta).v['%'], null);
+  assert.equal(U.weekCard(tAB, konta, '2026-10-20', 'R').v['%'], null);
+  // margines BE jak w aplikacji: dzień +0,05R przy beR 0,1 nie jest zielony (ani najlepszy); +0,3R jest
+  const oldBe = { ...S.cfg };
+  try {
+    S.cfg.beR = 0.1; S.cfg.beUsd = 0;
+    const tBe = S.normalizeTrades([row('2026-11-02', 0.05, null), row('2026-11-03', 0.3, null)]);
+    const wBe = U.weekCard(tBe, konta, '2026-11-02', 'R');
+    assert.equal(wBe.greenDays, 1); assert.equal(wBe.bestDay.date, '2026-11-03');
+    assert.equal(U.signOf({ R: 0.05, $: null, '%': null }, 'R'), 'be'); assert.equal(U.signOf({ R: -0.05 }, 'R'), 'be'); assert.equal(U.signOf({ R: 0.11 }, 'R'), 'win');
+    const tOnlyBe = S.normalizeTrades([row('2026-11-09', 0.05, null)]);
+    assert.equal(U.weekCard(tOnlyBe, konta, '2026-11-09', 'R').bestDay, null);
+    S.cfg.beR = 0; S.cfg.beUsd = 50;
+    assert.equal(U.signOf({ R: null, $: 40, '%': 0.08 }, '%'), 'be'); // % o znaku decyduje $ z marginesem $
+    assert.equal(U.signOf({ R: null, $: 60, '%': 0.1 }, '%'), 'win');
+  } finally { Object.assign(S.cfg, oldBe); }
+  // przycięcie tygodnia (komórka kalendarza na przełomie miesięcy): tylko dni z zakresu
+  const tClip = S.normalizeTrades([row('2026-10-29', 1, 100), row('2026-10-31', 2, 200), row('2026-11-01', 4, 400)]);
+  const wc = U.weekCard(tClip, konta, '2026-10-29', 'R', { from: '2026-10-26', to: '2026-10-31' });
+  assert.equal(wc.n, 2); assert.equal(wc.to, '2026-10-31'); assert.ok(Math.abs(wc.v.R - 3) < 1e-9);
+  assert.equal(U.weekCard(tClip, konta, '2026-10-29', 'R').n, 3);
+});
+
+test('udostepnij: sanitizeShare nie przepuszcza kluczy z prototypu ani złych typów', async () => {
+  const { sanitizeShare, SHARE_DEFAULTS } = await import('../public/js/udostepnij.js');
+  for (const bad of ['toString', 'constructor', '__proto__', 'hasOwnProperty', null, 5, {}, ['9:16'], undefined, '']) assert.equal(sanitizeShare({ format: bad }).format, SHARE_DEFAULTS.format, String(bad));
+  assert.equal(sanitizeShare({ format: '1:1' }).format, '1:1');
+  assert.equal(sanitizeShare({ format: '16:9', metric: '%', numberColor: 'neutral', nick: '  Trader  ' }).metric, '%');
+  assert.equal(sanitizeShare({ metric: 'toString' }).metric, SHARE_DEFAULTS.metric);
+  assert.equal(sanitizeShare(null).nick, ''); assert.equal(sanitizeShare({ nick: 5 }).nick, '');
+  assert.equal(sanitizeShare({ nick: 'a'.repeat(90) }).nick.length, 40);
+});
+
 // ---------- instalacja od zera ----------
 for (const lang of ['pl', 'en']) {
   test(`setup ${lang.toUpperCase()} na pustej atrapie: bazy, widoki, DEMO, dashboard działa`, async () => {

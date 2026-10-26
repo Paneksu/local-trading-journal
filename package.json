@@ -1,7 +1,7 @@
 {
-  "name": "local-trading-journal",
-  "version": "1.1.0",
-  "description": "Lokalny dashboard statystyk tradingowych z dziennikiem w Notion. / Local trading statistics dashboard with the journal in Notion.",
+  "name": "justjournal",
+  "version": "1.2.0",
+  "description": "JustJournal: lokalny dashboard statystyk tradingowych z dziennikiem w Notion. / JustJournal: local trading statistics dashboard with the journal in Notion.",
   "type": "module",
   "private": true,
   "license": "MIT",

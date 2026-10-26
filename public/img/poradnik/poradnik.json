@@ -494,8 +494,8 @@
             "en": "The installer window opens. Type 1 (Polish) or 2 (English) and press Enter."
           },
           "alt": {
-            "pl": "Czarne okno konsoli z nagłówkiem Local Trading Journal setup i pytaniem o język.",
-            "en": "Black console window with the Local Trading Journal setup header and the language question."
+            "pl": "Czarne okno konsoli z nagłówkiem JustJournal setup i pytaniem o język.",
+            "en": "Black console window with the JustJournal setup header and the language question."
           },
           "illustration": true,
           "markers": [
@@ -591,8 +591,8 @@
             "en": "The installer starts in the same window. Type 1 (Polish) or 2 (English) and press Enter."
           },
           "alt": {
-            "pl": "Terminal z nagłówkiem Local Trading Journal setup i pytaniem o język.",
-            "en": "Terminal with the Local Trading Journal setup header and the language question."
+            "pl": "Terminal z nagłówkiem JustJournal setup i pytaniem o język.",
+            "en": "Terminal with the JustJournal setup header and the language question."
           },
           "illustration": true,
           "markers": [
@@ -775,8 +775,8 @@
           "w": 1200,
           "h": 720,
           "caption": {
-            "pl": "Wpisz nazwę Local Trading Journal, wybierz swój obszar roboczy i typ Internal, potem kliknij Save.",
-            "en": "Enter the name Local Trading Journal, pick your workspace and the Internal type, then click Save."
+            "pl": "Wpisz nazwę JustJournal, wybierz swój obszar roboczy i typ Internal, potem kliknij Save.",
+            "en": "Enter the name JustJournal, pick your workspace and the Internal type, then click Save."
           },
           "alt": {
             "pl": "Formularz nowej integracji: nazwa, obszar roboczy, typ Internal i przycisk Save.",
@@ -932,12 +932,12 @@
           "w": 1200,
           "h": 720,
           "caption": {
-            "pl": "Na liście integracji kliknij Local Trading Journal.",
-            "en": "In the integrations list, click Local Trading Journal."
+            "pl": "Na liście integracji kliknij JustJournal.",
+            "en": "In the integrations list, click JustJournal."
           },
           "alt": {
-            "pl": "Lista integracji Notion z kartą Local Trading Journal.",
-            "en": "The Notion integrations list with the Local Trading Journal card."
+            "pl": "Lista integracji Notion z kartą JustJournal.",
+            "en": "The Notion integrations list with the JustJournal card."
           },
           "illustration": true,
           "markers": [
@@ -1115,12 +1115,12 @@
           "w": 1200,
           "h": 720,
           "caption": {
-            "pl": "Wpisz Local, wybierz Local Trading Journal z listy.",
-            "en": "Type Local and choose Local Trading Journal from the list."
+            "pl": "Wpisz Just, wybierz JustJournal z listy.",
+            "en": "Type Just and choose JustJournal from the list."
           },
           "alt": {
-            "pl": "Podmenu Connections z wyszukiwarką i integracją Local Trading Journal.",
-            "en": "The Connections submenu with search and the Local Trading Journal integration."
+            "pl": "Podmenu Connections z wyszukiwarką i integracją JustJournal.",
+            "en": "The Connections submenu with search and the JustJournal integration."
           },
           "illustration": true,
           "markers": [
@@ -1154,8 +1154,8 @@
             "en": "Click Confirm. The integration gets access only to this page and its sub-pages."
           },
           "alt": {
-            "pl": "Okno potwierdzenia dostępu integracji Local Trading Journal do strony Trading.",
-            "en": "Confirmation dialog for Local Trading Journal access to the Trading page."
+            "pl": "Okno potwierdzenia dostępu integracji JustJournal do strony Trading.",
+            "en": "Confirmation dialog for JustJournal access to the Trading page."
           },
           "illustration": true,
           "markers": [
@@ -1587,12 +1587,12 @@
           "w": 1200,
           "h": 720,
           "caption": {
-            "pl": "Otwórz notion.so/profile/integrations i kliknij integrację Local Trading Journal, tę samą co na pierwszym urządzeniu.",
-            "en": "Open notion.so/profile/integrations and click the Local Trading Journal integration, the same one as on the first device."
+            "pl": "Otwórz notion.so/profile/integrations i kliknij integrację JustJournal, tę samą co na pierwszym urządzeniu.",
+            "en": "Open notion.so/profile/integrations and click the JustJournal integration, the same one as on the first device."
           },
           "alt": {
-            "pl": "Lista integracji Notion z kartą Local Trading Journal.",
-            "en": "The Notion integrations list with the Local Trading Journal card."
+            "pl": "Lista integracji Notion z kartą JustJournal.",
+            "en": "The Notion integrations list with the JustJournal card."
           },
           "illustration": true,
           "markers": [

@@ -1,4 +1,4 @@
-/* Trading HQ: "biurko tradera" w stylu Onyx / Platinum (spec: styl-aplikacji-onyx-platinum.md).
+/* JustJournal: "biurko tradera" w stylu Onyx / Platinum (spec: styl-aplikacji-onyx-platinum.md).
    Jedna warstwa głębi, kolor tylko dla danych (zysk / strata / remis). Dwa motywy na jednym zestawie tokenów.
    Odstępstwa od specyfikacji (kontrast AA, 25.10.2026): strata w Onyx jaśniejsza niż #ef4444 (3,6:1 na kaflu),
    remis w Onyx #7aa7ff zamiast #003FA3 (1,7:1), remis w Platinum #1a3da8 zamiast #3B82F6 (2,8:1); Platinum: zysk #00560f, strata #9a0013, tekst drugorzędny #3c4044 (AA także na ramie #bfbfbf). */

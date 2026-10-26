@@ -12,6 +12,7 @@ const PORT = process.env.TEST_PORT || '4331';
 const env = {
   ...process.env,
   PORT,
+  THQ_TEST_PAGES: '1', // serwer poda strony robocze z testy/ pod /__testy/ (tylko dashboard testowy)
   NOTION_API_BASE: `http://127.0.0.1:${MOCK_PORT}`,
   NOTION_TOKEN: 'test-token-atrapa',
   NOTION_VERSION: '2026-03-11',

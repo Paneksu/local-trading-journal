@@ -46,7 +46,7 @@ const BUILD_STEP = { page: 'Strona dziennika', databases: 'Bazy', relations: 'Re
 // wait: sprawdzenie zależy od czegoś, co trzeba poprawić wcześniej (np. token); nie liczy się jako osobny problem
 const STATUS_WORD = { ok: 'gotowe', warn: 'uwaga', error: 'błąd', info: 'informacja', run: 'sprawdzam', wait: 'czeka' };
 const INTEGRATIONS_URL = 'https://www.notion.so/profile/integrations';
-const INTEGRATION_NAME = 'Local Trading Journal';
+const INTEGRATION_NAME = 'JustJournal';
 const RESUME_KEY = 'thq.obResume';
 
 async function call(url, body) {
@@ -156,7 +156,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const access = cur() === 'dostep';
     const pages = pg.pages || [];
     const waiting = `<p class="ob-wait live"><span class="pulse" aria-hidden="true"></span>${L('Czekam na udostępnienie strony…')}</p>`;
-    const how = `<ol class="ck-how ob-how"><li>${L('Otwórz w Notion dowolną stronę na dziennik (może być pusta).')}</li><li>${L('Kliknij ••• → Połączenia (Connections) i wybierz integrację Local Trading Journal.')}</li></ol>`;
+    const how = `<ol class="ck-how ob-how"><li>${L('Otwórz w Notion dowolną stronę na dziennik (może być pusta).')}</li><li>${L('Kliknij ••• → Połączenia (Connections) i wybierz integrację JustJournal.')}</li></ol>`;
     if (pg.err) return `<p class="ob-status err" role="alert">${ICON.error}${esc(pg.err)}</p>${how}`;
     if (pg.pages === null) return `<p class="ob-wait"><span class="spin" aria-hidden="true"></span>${L('Szukam stron udostępnionych integracji…')}</p>`;
     if (!pages.length || (access && !pages.some((p) => p.journal))) return `${how}${waiting}${poradnikLink(['notion-polaczenia'])}`;

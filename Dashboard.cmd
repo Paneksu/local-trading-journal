@@ -1,5 +1,5 @@
 @echo off
-rem Local Trading Journal: start dashboardu z oknem konsoli (do diagnozy). Zamkniecie okna zatrzymuje serwer.
+rem JustJournal: start dashboardu z oknem konsoli (do diagnozy). Zamkniecie okna zatrzymuje serwer.
 rem Starts the dashboard with a console window. Closing the window stops the server.
 setlocal
 cd /d "%~dp0"
@@ -24,6 +24,6 @@ if %errorlevel%==0 (
   exit /b 0
 )
 start "" /b cmd /c "timeout /t 1 /nobreak >nul & start "" http://127.0.0.1:%PORT%"
-title Local Trading Journal (zamknij okno, aby zatrzymac / close to stop)
+title JustJournal (zamknij okno, aby zatrzymac / close to stop)
 node server.mjs
 pause

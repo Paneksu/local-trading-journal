@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: podgląd kart Udostępnij (strona robocza)</title>
+<!-- Strona robocza fazy A (makiety kart). Nie jest podpięta do menu aplikacji. Plik leży w testy/, nie w public/ (nie trafia do wydania); serwer podaje go tylko dla dashboardu testowego (testy/start-test.mjs, THQ_TEST_PAGES=1): http://127.0.0.1:4331/__testy/udostepnij-podglad.html -->
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body { padding: 24px; background: #777; color: #111; font-family: var(--font); }
+  h1 { font-size: 18px; margin-bottom: 12px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+  figure canvas { height: 320px; width: auto; display: block; box-shadow: 0 2px 10px rgb(0 0 0 / .3); }
+  figcaption { font: 500 12px/1.3 var(--mono); color: #111; }
+  #status { margin-bottom: 12px; font: 500 13px var(--mono); }
+</style>
+</head>
+<body>
+<h1>Karty Udostępnij: 5 rodzajów × 4 formaty × 2 motywy + warianty</h1>
+<div id="status">Rysuję…</div>
+<div class="grid" id="grid"></div>
+<script type="module">
+import { normalizeTrades, normalizeKonta } from '/js/stats.js';
+import { tradeCard, dayCard, weekCard, monthCard, yearCard, liveOnly, weekStart } from '/js/udostepnij-dane.js';
+import { renderCard, readTokens, ensureFonts, FORMATS } from '/js/udostepnij-render.js';
+import { PALETTES } from '/js/palety.js';
+import { addDays } from '/js/format.js';
+
+const root = document.documentElement;
+const status = document.getElementById('status');
+const grid = document.getElementById('grid');
+window.__cards = [];
+
+// Testowe „zdjęcie” rysowane w przeglądarce (bez cudzych plików): zachód słońca z jasnym słońcem i ciemnymi górami,
+// czyli najgorszy przypadek dla kontrastu (bardzo jasne i bardzo ciemne miejsca na jednym kadrze) + ziarno.
+function testPhoto() {
+  const c = document.createElement('canvas'); c.width = 1600; c.height = 1200;
+  const x = c.getContext('2d');
+  const sky = x.createLinearGradient(0, 0, 0, 1200);
+  sky.addColorStop(0, '#1d2b6b'); sky.addColorStop(0.45, '#e2734a'); sky.addColorStop(0.62, '#ffd27a'); sky.addColorStop(1, '#2a1a24');
+  x.fillStyle = sky; x.fillRect(0, 0, 1600, 1200);
+  const sun = x.createRadialGradient(1050, 640, 10, 1050, 640, 420);
+  sun.addColorStop(0, 'rgba(255,255,240,1)'); sun.addColorStop(0.18, 'rgba(255,248,214,.95)'); sun.addColorStop(1, 'rgba(255,200,120,0)');
+  x.fillStyle = sun; x.fillRect(0, 0, 1600, 1200);
+  const ridge = (y0, amp, col, seed) => { x.fillStyle = col; x.beginPath(); x.moveTo(0, 1200); for (let i = 0; i <= 1600; i += 20) x.lineTo(i, y0 - amp * Math.abs(Math.sin(i / (180 + seed * 40) + seed)) - amp * 0.4 * Math.sin(i / 57 + seed)); x.lineTo(1600, 1200); x.fill(); };
+  ridge(820, 160, '#4a2f45', 1); ridge(900, 140, '#24182a', 2); ridge(1010, 90, '#0d0a12', 3);
+  const d = x.getImageData(0, 0, 1600, 1200); let s = 9;
+  for (let i = 0; i < d.data.length; i += 4) { s = (s * 1664525 + 1013904223) >>> 0; const n = ((s >>> 24) - 128) / 10; d.data[i] += n; d.data[i + 1] += n; d.data[i + 2] += n; }
+  x.putImageData(d, 0, 0);
+  return c;
+}
+
+function setTheme(theme, palette = 'color') {
+  root.setAttribute('data-theme', theme);
+  for (const k of ['--profit', '--loss', '--be']) root.style.removeProperty(k);
+  if (palette !== 'color') { const p = PALETTES.find((q) => q.id === palette).colors[theme]; root.style.setProperty('--profit', p.profit); root.style.setProperty('--loss', p.loss); root.style.setProperty('--be', p.be); }
+  return readTokens();
+}
+
+function add(name, opts, tokens) {
+  const fig = document.createElement('figure');
+  const cv = document.createElement('canvas');
+  const info = renderCard(cv, { ...opts, tokens });
+  const cap = document.createElement('figcaption');
+  cap.textContent = `${name} · ${info.width}×${info.height}${info.scrim != null ? ` · zasłona ${info.scrim.toFixed(2)}` : ''}${info.scale < 1 ? ` · skala ${info.scale.toFixed(2)}` : ''}`;
+  fig.append(cv, cap); grid.append(fig);
+  window.__cards.push({ name, canvas: cv, info, theme: tokens.theme, tokens: info.tokens, baseTokens: tokens, opts, photo: opts.photo || null });
+}
+
+try {
+  await ensureFonts();
+  const j = await (await fetch('/api/data')).json();
+  const trades = normalizeTrades(j.data.trades);
+  const konta = normalizeKonta(j.data.konta);
+  const live = liveOnly(trades);
+  const lastDate = live.reduce((a, t) => (t.date > a ? t.date : a), '');
+
+  // trade: największy zysk $ z godziną wejścia i wyjścia w ostatnich 30 dniach
+  const recent = live.filter((t) => t.date >= addDays(lastDate, -30) && t.pnl != null && t.dur != null);
+  const tr = recent.sort((a, b) => b.pnl - a.pnl)[0];
+  const bt = trades.filter((t) => t.typ === 'Backtest' && t.counted && t.r != null && t.dur != null).sort((a, b) => b.date.localeCompare(a.date))[0];
+  // dzień: najświeższy dzień z co najmniej 3 trade'ami Live
+  const counts = new Map(); live.forEach((t) => counts.set(t.date, (counts.get(t.date) || 0) + 1));
+  const dayKey = [...counts.entries()].filter(([, n]) => n >= 3).map(([d]) => d).sort().pop() || lastDate;
+  // tydzień: najświeższy pełny tydzień z co najmniej 4 trade'ami i 3 dniami
+  let wk = weekStart(lastDate);
+  for (let i = 0; i < 10; i++) { const w = weekCard(trades, konta, wk, '%'); if (w.n >= 4 && w.tradingDays >= 3 && w.to < lastDate) break; wk = addDays(wk, -7); }
+  const [ly, lm] = lastDate.split('-').map(Number);
+  const pm = lm === 1 ? { y: ly - 1, m: 12 } : { y: ly, m: lm - 1 };
+
+  const NICK = 'Trader';
+  const sets = [
+    { kind: 'trade', metric: '$', data: () => tradeCard(tr, konta) },
+    { kind: 'day', metric: 'R', data: (m) => dayCard(trades, konta, dayKey, m) },
+    { kind: 'week', metric: '%', data: (m) => weekCard(trades, konta, wk, m) },
+    { kind: 'month', metric: 'R', data: (m) => monthCard(trades, konta, pm.y, pm.m, m) },
+    { kind: 'year', metric: '$', data: (m) => yearCard(trades, konta, ly, m) },
+  ];
+  for (const theme of ['onyx', 'platinum']) {
+    const tokens = setTheme(theme);
+    for (const s of sets) for (const f of Object.keys(FORMATS)) {
+      add(`${theme}-${s.kind}-${f.replace(':', 'x')}`, { kind: s.kind, format: f, metric: s.metric, data: s.data(s.metric), nick: NICK }, tokens);
+    }
+  }
+  // warianty: zdjęcie (oba motywy), liczba neutralna, backtest, pusty okres, paleta dla daltonistów, bez nicku, inne jednostki
+  const photo = testPhoto();
+  const wkD = (m) => weekCard(trades, konta, wk, m);
+  let tk = setTheme('onyx');
+  add('foto-onyx-week-9x16', { kind: 'week', format: '9:16', metric: '%', data: wkD('%'), nick: NICK, photo }, tk);
+  add('foto-onyx-trade-16x9', { kind: 'trade', format: '16:9', metric: '$', data: tradeCard(tr, konta), nick: NICK, photo }, tk);
+  add('foto-onyx-trade-9x16-neutral', { kind: 'trade', format: '9:16', metric: '$', numberColor: 'neutral', data: tradeCard(tr, konta), nick: NICK, photo }, tk);
+  add('neutral-onyx-week-16x9', { kind: 'week', format: '16:9', metric: '%', numberColor: 'neutral', data: wkD('%'), nick: NICK }, tk);
+  add('neutral-onyx-trade-9x16', { kind: 'trade', format: '9:16', metric: '$', numberColor: 'neutral', data: tradeCard(tr, konta), nick: NICK }, tk);
+  add('neutral-onyx-year-1x1', { kind: 'year', format: '1:1', metric: '$', numberColor: 'neutral', data: yearCard(trades, konta, ly, '$'), nick: NICK }, tk);
+  if (bt) add('onyx-trade-backtest-4x5', { kind: 'trade', format: '4:5', metric: 'R', data: tradeCard(bt, konta), nick: NICK }, tk);
+  add('onyx-week-pusty-1x1', { kind: 'week', format: '1:1', metric: 'R', data: weekCard(trades, konta, addDays(lastDate, 70), 'R'), nick: NICK }, tk);
+  add('onyx-trade-bez-nicku-1x1', { kind: 'trade', format: '1:1', metric: 'R', data: tradeCard(tr, konta), nick: '' }, tk);
+  add('onyx-week-R-9x16', { kind: 'week', format: '9:16', metric: 'R', data: wkD('R'), nick: NICK }, tk);
+  tk = setTheme('onyx', 'dalton');
+  add('dalton-onyx-week-16x9', { kind: 'week', format: '16:9', metric: 'R', data: wkD('R'), nick: NICK }, tk);
+  tk = setTheme('platinum');
+  add('foto-platinum-week-9x16', { kind: 'week', format: '9:16', metric: '%', data: wkD('%'), nick: NICK, photo }, tk);
+  add('foto-platinum-trade-16x9', { kind: 'trade', format: '16:9', metric: '$', data: tradeCard(tr, konta), nick: NICK, photo }, tk);
+  add('foto-platinum-day-1x1', { kind: 'day', format: '1:1', metric: 'R', data: dayCard(trades, konta, dayKey, 'R'), nick: NICK, photo }, tk);
+  add('neutral-platinum-week-4x5', { kind: 'week', format: '4:5', metric: '%', numberColor: 'neutral', data: wkD('%'), nick: NICK }, tk);
+  add('neutral-platinum-trade-1x1', { kind: 'trade', format: '1:1', metric: 'R', numberColor: 'neutral', data: tradeCard(tr, konta), nick: NICK }, tk);
+  setTheme('onyx');
+  status.textContent = `Gotowe: ${window.__cards.length} kart (trade ${tr?.date}, dzień ${dayKey}, tydzień ${wk}, miesiąc ${pm.y}-${pm.m}, rok ${ly}).`;
+  window.__ready = true;
+} catch (e) {
+  status.textContent = 'Błąd: ' + e.message;
+  window.__error = e.message;
+  throw e;
+}
+</script>
+</body>
+</html>

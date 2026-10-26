@@ -2,6 +2,16 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.2.0] · 2026-10-26
+
+### PL
+- Udostępnianie wyników jako obraz: karta z jednego trade'a, dnia, tygodnia, miesiąca albo roku. Formaty 9:16, 4:5, 1:1 i 16:9, wynik w R, $ albo % konta, tło z motywu (Onyx lub Platinum) albo własne zdjęcie. Pobierz PNG, kopiuj do schowka lub udostępnij z telefonu. W Ustawieniach pole „Nick do podpisu”.
+- Nowa nazwa: JustJournal (wcześniej Trading HQ / Local Trading Journal). Repozytorium na GitHubie, adres, ustawienia zapisane w Notion i aktualizacje działają bez zmian; instalator zastępuje stary skrót na pulpicie nowym.
+
+### EN
+- Share results as an image: a card for a single trade, day, week, month or year. 9:16, 4:5, 1:1 and 16:9 formats, result in R, $ or % of the account, theme background (Onyx or Platinum) or your own photo. Download PNG, copy to the clipboard or share from a phone. A "Signature nickname" field in Settings.
+- New name: JustJournal (formerly Trading HQ / Local Trading Journal). The GitHub repository, its address, the settings stored in Notion and updates work as before; the installer replaces the old desktop shortcut with the new one.
+
 ## [1.1.0] · 2026-10-26
 
 ### PL

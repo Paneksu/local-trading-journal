@@ -1,5 +1,5 @@
 @echo off
-rem Local Trading Journal: aktualizacja (Windows). Najpierw kopia baz Notion, potem nowa wersja i migracje (tylko dodajace).
+rem JustJournal: aktualizacja (Windows). Najpierw kopia baz Notion, potem nowa wersja i migracje (tylko dodajace).
 rem Update (Windows): Notion backup first, then the new version and add-only migrations.
 setlocal
 cd /d "%~dp0"

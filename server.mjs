@@ -1,4 +1,4 @@
-// Local Trading Journal: lokalny serwer dashboardu. Zero zależności, Node 22+.
+// JustJournal: lokalny serwer dashboardu. Zero zależności, Node 22+.
 // Czyta .env i config.local.json, odpytuje Notion API, normalizuje dane (po rolach pól, nie po nazwach) i serwuje public/.
 // Token nigdy nie trafia do frontendu ani do logów. / The token never reaches the browser or the logs.
 import http from 'node:http';
@@ -443,7 +443,7 @@ Object.assign(ACTIONS, {
       options: config.options || {}, lang: config.lang, schemaVersion: config.schemaVersion || 0, custom: out, from: config.deviceName,
     }, { now: now() });
     const stamp = new Date(now()).toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    return { code: pack.code, pin: pack.pin, expiresAt: pack.expiresAt, fileName: `local-trading-journal-${stamp}.ltj`, skipped };
+    return { code: pack.code, pin: pack.pin, expiresAt: pack.expiresAt, fileName: `justjournal-${stamp}.ltj`, skipped };
   },
   '/api/transfer/import': async (body) => {
     let head;
@@ -533,6 +533,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/ping') return sendJson(res, 200, { ok: true, app: 'trading-hq', version: APP_VERSION, img: stats });
     if (url.pathname === '/api/img') return await handleImg(url, res);
 
+    // Strony robocze z testy/ (np. podgląd kart Udostępnij) tylko dla dashboardu testowego: testy/start-test.mjs ustawia THQ_TEST_PAGES=1.
+    if (process.env.THQ_TEST_PAGES === '1' && url.pathname.startsWith('/__testy/') && url.pathname.endsWith('.html')) {
+      const tf = path.normalize(path.join(ROOT, 'testy', path.basename(url.pathname)));
+      if (existsSync(tf) && statSync(tf).isFile()) { res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', ...SEC_HEADERS }); return createReadStream(tf).pipe(res); }
+    }
     let rel = decodeURIComponent(url.pathname);
     if (rel === '/') rel = '/index.html';
     const file = path.normalize(path.join(PUBLIC, rel));
@@ -557,5 +562,5 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-server.listen(PORT, HOST, () => console.log(`Local Trading Journal ${APP_VERSION}: http://${HOST}:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`JustJournal ${APP_VERSION}: http://${HOST}:${PORT}`));
 void DBS;

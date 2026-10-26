@@ -107,7 +107,7 @@ export function createDevices({ getMeta, onConfig, onChange = () => {} }) {
         <div class="upd-actions"><button type="button" class="btn primary sm" data-act="dv-add" data-fk="dv-add">${L('Dodaj kolejne urządzenie')}</button></div>
         <details class="dv-remove" ${removeOpen ? 'open' : ''}><summary data-act="dv-remove-toggle">${L('Usuń urządzenie')}</summary>
           <p class="note">${L('Wszystkie urządzenia używają tego samego tokenu integracji, więc odłączenie jednego oznacza nowy token dla pozostałych:')}</p>
-          <ol class="ck-how"><li>${L('W Notion otwórz integrację Local Trading Journal i odśwież secret (Refresh).')}</li><li>${L('Na urządzeniach, które zostają, wklej nowy token przez „Zmień token”.')}</li><li>${L('Stare urządzenie traci dostęp, bo jego token przestaje działać.')}</li></ol></details></div>`;
+          <ol class="ck-how"><li>${L('W Notion otwórz integrację JustJournal i odśwież secret (Refresh).')}</li><li>${L('Na urządzeniach, które zostają, wklej nowy token przez „Zmień token”.')}</li><li>${L('Stare urządzenie traci dostęp, bo jego token przestaje działać.')}</li></ol></details></div>`;
   }
 
   async function rename(id, root) {

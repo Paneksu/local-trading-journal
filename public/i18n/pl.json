@@ -20,5 +20,6 @@
   "API Notion nie utworzyło {n} widoków: ": { "one": "API Notion nie utworzyło {n} widoku: ", "few": "API Notion nie utworzyło {n} widoków: ", "many": "API Notion nie utworzyło {n} widoków: ", "other": "API Notion nie utworzyło {n} widoku: " },
 
   "Zły PIN, zostało {n} prób.": { "one": "Zły PIN, została {n} próba.", "few": "Zły PIN, zostały {n} próby.", "many": "Zły PIN, zostało {n} prób.", "other": "Zły PIN, zostało {n} próby." },
-  "Ważny jeszcze {n} min.": { "one": "Ważny jeszcze {n} min.", "few": "Ważny jeszcze {n} min.", "many": "Ważny jeszcze {n} min.", "other": "Ważny jeszcze {n} min." }
+  "Ważny jeszcze {n} min.": { "one": "Ważny jeszcze {n} min.", "few": "Ważny jeszcze {n} min.", "many": "Ważny jeszcze {n} min.", "other": "Ważny jeszcze {n} min." },
+  "+{n} kolejnych": { "one": "+{n} kolejny", "few": "+{n} kolejne", "many": "+{n} kolejnych", "other": "+{n} kolejnego" }
 }

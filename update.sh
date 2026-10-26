@@ -1,5 +1,5 @@
 #!/bin/sh
-# Local Trading Journal: aktualizacja (macOS / Linux). Najpierw kopia baz Notion, potem nowa wersja i migracje.
+# JustJournal: aktualizacja (macOS / Linux). Najpierw kopia baz Notion, potem nowa wersja i migracje.
 # Update (macOS / Linux): Notion backup first, then the new version and add-only migrations.
 cd "$(dirname "$0")" || exit 1
 if ! command -v node >/dev/null 2>&1 || ! node -e "process.exit(+process.versions.node.split('.')[0]>=22?0:1)"; then

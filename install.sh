@@ -1,5 +1,5 @@
 #!/bin/sh
-# Local Trading Journal: instalacja (macOS / Linux). Sprawdza Node.js, tworzy skrót na pulpicie, uruchamia dashboard
+# JustJournal: instalacja (macOS / Linux). Sprawdza Node.js, tworzy skrót na pulpicie, uruchamia dashboard
 # w tle i otwiera przeglądarkę na kreatorze „Pierwsze kroki”. Instalacja w terminalu (zapasowo): ./install.sh --cli
 # Installer (macOS / Linux): checks Node.js, creates a desktop shortcut, starts the dashboard and opens the setup wizard.
 cd "$(dirname "$0")" || exit 1
@@ -21,12 +21,14 @@ if [ "$1" = "--cli" ]; then shift; exec node setup.mjs --cli "$@"; fi
 DESK="$HOME/Desktop"
 [ -d "$DESK" ] || DESK="$(xdg-user-dir DESKTOP 2>/dev/null)"
 if [ -n "$DESK" ] && [ -d "$DESK" ]; then
+  # stare skróty z poprzedniej nazwy (Local Trading Journal) usuwamy, żeby nie zostały sieroty
+  rm -f "$DESK/Local Trading Journal.command" "$DESK/local-trading-journal.desktop"
   if [ "$(uname)" = "Darwin" ]; then
-    printf '#!/bin/sh\nexec "%s/start.sh"\n' "$DIR" > "$DESK/Local Trading Journal.command"
-    chmod +x "$DESK/Local Trading Journal.command"
+    printf '#!/bin/sh\nexec "%s/start.sh"\n' "$DIR" > "$DESK/JustJournal.command"
+    chmod +x "$DESK/JustJournal.command"
   else
-    printf '[Desktop Entry]\nType=Application\nName=Local Trading Journal\nExec=sh "%s/start.sh"\nTerminal=false\n' "$DIR" > "$DESK/local-trading-journal.desktop"
-    chmod +x "$DESK/local-trading-journal.desktop"
+    printf '[Desktop Entry]\nType=Application\nName=JustJournal\nExec=sh "%s/start.sh"\nTerminal=false\n' "$DIR" > "$DESK/justjournal.desktop"
+    chmod +x "$DESK/justjournal.desktop"
   fi
 fi
 echo "Uruchamiam dashboard i otwieram kreator: http://127.0.0.1:4321 / Starting the dashboard and the setup wizard."

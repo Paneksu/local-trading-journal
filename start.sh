@@ -1,5 +1,5 @@
 #!/bin/sh
-# Local Trading Journal: start dashboardu (macOS / Linux) w tle, log w dashboard.log, otwiera przeglądarkę.
+# JustJournal: start dashboardu (macOS / Linux) w tle, log w dashboard.log, otwiera przeglądarkę.
 # Starts the dashboard in the background (log in dashboard.log) and opens the browser.
 # Na pierwszym planie (z logami w terminalu) / in the foreground: ./start.sh --foreground
 cd "$(dirname "$0")" || exit 1

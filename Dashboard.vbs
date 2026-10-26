@@ -1,4 +1,4 @@
-' Trading HQ: uruchomienie BEZ okna konsoli.
+' JustJournal: uruchomienie BEZ okna konsoli.
 ' Jeśli dashboard już działa, tylko otwiera przeglądarkę. Jeśli nie, startuje serwer w ukryciu (logi: dashboard.log),
 ' czeka aż odpowie i dopiero wtedy otwiera przeglądarkę. Zatrzymanie: przycisk „Zatrzymaj serwer” w pasku statusu.
 Option Explicit
@@ -28,7 +28,7 @@ End Function
 Dim rc
 rc = sh.Run("cmd /c node -e ""process.exit(+process.versions.node.split('.')[0]>=22?0:1)""", 0, True)
 If rc <> 0 Then
-  MsgBox "Potrzebny jest Node.js 22 lub nowszy: https://nodejs.org" & vbCrLf & "Node.js 22 or newer is required: https://nodejs.org", 48, "Local Trading Journal"
+  MsgBox "Potrzebny jest Node.js 22 lub nowszy: https://nodejs.org" & vbCrLf & "Node.js 22 or newer is required: https://nodejs.org", 48, "JustJournal"
   WScript.Quit 1
 End If
 

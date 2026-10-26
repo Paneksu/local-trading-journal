@@ -5,6 +5,7 @@ import * as F from './format.js';
 import { BE_DEFAULTS } from './stats.js';
 import { PALETTES, THEMES, SWATCHES, SURFACES, normHex, ratioOn, fixContrast, defaultCustom, resolve } from './palety.js';
 import { t, getLang } from './i18n.js';
+import { sanitizeShare } from './udostepnij.js';
 
 const { esc } = F;
 const L = (s) => esc(t(s));
@@ -89,6 +90,10 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     return `<div class="sp-f"><span class="lbl" id="sp-lang">${L('Język')}</span>
       <div class="seg full" role="group" aria-labelledby="sp-lang"><button type="button" data-act="sp-lang" data-v="pl" data-fk="lang-pl" aria-pressed="${lang === 'pl'}" lang="pl">Polski</button><button type="button" data-act="sp-lang" data-v="en" data-fk="lang-en" aria-pressed="${lang === 'en'}" lang="en">English</button></div>
       <p class="note">${L('Język interfejsu. Nazwy baz i pól w Notion zostają bez zmian.')}</p></div>
+    <div class="rule-x"></div>
+    <div class="sp-f"><label class="lbl" for="sp-nick">${L('Nick do podpisu')}</label>
+      <input id="sp-nick" class="sp-in sp-nick" type="text" maxlength="40" value="${esc(settings.share?.nick || '')}" placeholder="JustJournal" autocomplete="off" spellcheck="false" aria-describedby="sp-nick-d">
+      <p class="note" id="sp-nick-d">${L('Podpis na kartach z okna Udostępnij: „JustJournal × nick”. Puste pole oznacza sam podpis JustJournal.')}</p></div>
     <div class="rule-x"></div>
     <div class="sp-f"><label class="check"><input type="checkbox" data-act="sp-upd" data-fk="upd" ${upd ? 'checked' : ''}> ${L('Sprawdzaj aktualizacje')}</label>
       <p class="note">${L('Raz na dobę serwer pyta publiczne API GitHub o najnowsze wydanie. To jedyne połączenie poza Notion; nie wysyła żadnych danych.')}</p></div>
@@ -218,6 +223,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     const el = ev.target;
     if (el.matches('#be-r')) { onBe('beR', el.value); return true; }
     if (el.matches('#be-usd')) { onBe('beUsd', el.value); return true; }
+    if (el.matches('#sp-nick')) { settings.share = settings.share || sanitizeShare(); settings.share.nick = sanitizeShare({ nick: el.value }).nick; save(); return true; }
     if (el.matches('.hexin')) {
       const k = el.dataset.k, hex = normHex(el.value);
       const err = pop.querySelector(`#hexe-${k}`);

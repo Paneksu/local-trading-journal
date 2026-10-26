@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Instalator Local Trading Journal: tworzy w Notion gotowy obszar roboczy (strona główna, 4 bazy z relacjami, formułami
+// Instalator JustJournal: tworzy w Notion gotowy obszar roboczy (strona główna, 4 bazy z relacjami, formułami
 // i widokami, opcjonalnie wpisy DEMO) i zapisuje lokalną konfigurację (.env, config.local.json). Zero zależności.
 // Installer: creates a ready Notion workspace (home page, 4 databases with relations, formulas and views, optional DEMO
 // entries) and writes the local configuration (.env, config.local.json). No dependencies.
@@ -77,7 +77,7 @@ if (!flag('cli') && !yes && !opt('token') && !opt('parent')) {
   bye(0);
 }
 line();
-console.log('Local Trading Journal · setup');
+console.log('JustJournal · setup');
 line();
 if (!lang) {
   const a = await ask('Język / Language: [1] Polski  [2] English  (1/2): ', '1');

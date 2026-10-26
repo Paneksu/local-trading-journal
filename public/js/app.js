@@ -1,4 +1,4 @@
-// Trading HQ: interfejs dashboardu. Cała logika po stronie przeglądarki, dane z /api/data.
+// JustJournal: interfejs dashboardu. Cała logika po stronie przeglądarki, dane z /api/data.
 // Układ "biurka": górny pasek, lewy panel DESK (filtry), karta treści, prawy panel (dzień), pasek statusu.
 import * as F from './format.js';
 import * as S from './stats.js';
@@ -15,6 +15,7 @@ import { createUpdater } from './aktualizacja.js';
 import { createOnboarding } from './pierwsze-kroki.js';
 import { createGuide } from './przewodnik.js';
 import { createSync, createDevices } from './urzadzenia.js';
+import { createShare, sanitizeShare } from './udostepnij.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -66,7 +67,7 @@ const isClosed = (key) => (key in state.ui.closed ? !!state.ui.closed[key] : CLO
 
 // ustawienia (ikona koła zębatego): paleta danych (gotowa albo własna, osobno dla Onyx i Platinum) i marginesy BE
 function loadSettings() {
-  const out = { palette: 'color', custom: defaultCustom(), customSeeded: false, ...S.BE_DEFAULTS };
+  const out = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), ...S.BE_DEFAULTS };
   try {
     const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (PALETTE_IDS.includes(o.palette)) out.palette = o.palette; // stare „color” i „mono” zostają bez zmian
@@ -74,6 +75,7 @@ function loadSettings() {
     if (typeof o.beUsd === 'number') out.beUsd = o.beUsd;
     if (o.custom) out.custom = sanitizeCustom(o.custom);
     out.customSeeded = o.customSeeded === true;
+    out.share = sanitizeShare(o.share); // karty „Udostępnij”: nick, format, jednostka, kolor liczby
   } catch { /* brak lub uszkodzone */ }
   return out;
 }
@@ -118,6 +120,7 @@ const ICON = {
   close: (s) => svg('<path d="M6 6l12 12M18 6 6 18"/>', s, 2),
   gear: (s) => svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>', s),
   plus: (s) => svg('<path d="M12 5v14M5 12h14"/>', s, 2),
+  share: (s) => svg('<path d="M12 15V4M8 8l4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>', s),
   edit: (s) => svg('<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>', s),
   sortUp: (s) => svg('<path d="m6 15 6-6 6 6"/>', s, 2),
   sortDown: (s) => svg('<path d="m6 9 6 6 6-6"/>', s, 2),
@@ -352,7 +355,7 @@ function sectionKpi(c, p, range, cur) {
     <div><span class="lbl">${L('Seria wygranych')}</span><span class="v">${c.maxWinStreak}</span></div>
     <div><span class="lbl">${L('Seria strat')}</span><span class="v">${c.maxLossStreak}</span></div>
   </div>`;
-  const hero = `<div class="card hero"><div class="hero-main"><span class="lbl">${L('Suma R')}</span>
+  const hero = `<div class="card hero"><div class="hero-main"><div class="hero-top"><span class="lbl">${L('Suma R')}</span>${isLive() ? `<button type="button" class="btn" data-act="share-open" data-kind="week">${ICON.share(13)}${L('Udostępnij')}</button>` : ''}</div>
       <span class="hero-val ${cls(c.sumR)}">${fmtR(c.sumR)}</span>
       <span class="hero-sub">${P("{n} trade'ów z wynikiem w R", c.nR)}</span>${d(c.sumR, pr?.sumR, { fmt: (x) => fmtR(x, { plus: false }) })}</div>${strip}</div>`;
   return `<section class="sec" aria-label="${L('Najważniejsze wskaźniki')}">${hero}<div class="gr tiles n${tiles.length}">${tiles.join('')}</div>${sectionLeft(range)}</section>`;
@@ -456,17 +459,25 @@ function renderCalendar() {
         body = `<span class="cv muted">${DASH}</span><span class="cn">${L('{n} tr.', { n: d.n })}</span>`;
       } else body = '<span class="cv"></span><span class="cn"></span>';
       const label = v != null ? `${F.dayMonth(key)}: ${fmtVal(v, u)}, ${nTrades(d.n)}` : `${F.dayMonth(key)}: ${t("brak trade'ów")}`;
-      cells += `<div class="cell ${kind}${key === today ? ' today' : ''}" style="${style}" role="img" aria-label="${esc(label)}" title="${esc(label)}"><span class="d">${dn}</span>${body}</div>`;
+      // dzień z trade'ami Live otwiera okno „Udostępnij” na karcie dnia (klawiatura i dotyk: prawdziwy przycisk)
+      if (d && isLive()) cells += `<button type="button" class="cell ${kind}${key === today ? ' today' : ''}" style="${style}" data-act="share-open" data-kind="day" data-v="${key}" aria-label="${esc(`${label}. ${t('Udostępnij kartę dnia')}`)}" title="${esc(`${label}. ${t('Kliknij, aby udostępnić kartę dnia')}`)}"><span class="d">${dn}</span>${body}</button>`;
+      else cells += `<div class="cell ${kind}${key === today ? ' today' : ''}" style="${style}" role="img" aria-label="${esc(label)}" title="${esc(label)}"><span class="d">${dn}</span>${body}</div>`;
     }
+    // zakres komórki „Tydz.”: tylko dni bieżącego miesiąca z tego wiersza; karta tygodnia dostaje ten sam zakres (clip), więc na przełomie miesięcy
+    // liczby karty i komórki są zgodne (słowa użytkownika 26.10.2026: «To samo co komórka»)
+    const rowDay = `${y}-${F.pad(m)}-${F.pad(Math.min(dim, Math.max(1, r * 7 - off + 1)))}`;
+    const rowFrom = rowDay, rowTo = `${y}-${F.pad(m)}-${F.pad(Math.min(dim, r * 7 - off + 7))}`;
     cells += wkAny
-      ? `<div class="cell wk" role="img" aria-label="${L('Suma tygodnia {v}', { v: fmtVal(wkSum, u) })}"><span class="d">${L('T{n}', { n: r + 1 })}</span><span class="cv ${cls(wkSum)}">${F.compactVal(wkSum, u)}</span><span class="cn"></span></div>`
+      ? (isLive()
+        ? `<button type="button" class="cell wk" data-act="share-open" data-kind="week" data-v="${rowDay}" data-from="${rowFrom}" data-to="${rowTo}" aria-label="${esc(`${t('Suma tygodnia {v}', { v: fmtVal(wkSum, u) })}. ${t('Udostępnij kartę tygodnia')}`)}" title="${esc(t('Kliknij, aby udostępnić kartę tygodnia'))}"><span class="d">${L('T{n}', { n: r + 1 })}</span><span class="cv ${cls(wkSum)}">${F.compactVal(wkSum, u)}</span><span class="cn"></span></button>`
+        : `<div class="cell wk" role="img" aria-label="${L('Suma tygodnia {v}', { v: fmtVal(wkSum, u) })}"><span class="d">${L('T{n}', { n: r + 1 })}</span><span class="cv ${cls(wkSum)}">${F.compactVal(wkSum, u)}</span><span class="cn"></span></div>`)
       : '<div class="cell wk"><span class="d"></span><span class="cv"></span><span class="cn"></span></div>';
   }
   return `<div class="card-h">
       <h3>${L('Kalendarz P&L')} <span class="sub">${L('jednostka {u}', { u })}</span></h3>
       <div class="cal-nav"><button class="icon-btn" type="button" data-act="month-prev" aria-label="${L('Poprzedni miesiąc')}">‹</button>
         <span class="ttl" aria-live="polite">${esc(F.monthTitle(y, m))}</span>
-        <button class="icon-btn" type="button" data-act="month-next" aria-label="${L('Następny miesiąc')}">›</button></div></div>
+        <button class="icon-btn" type="button" data-act="month-next" aria-label="${L('Następny miesiąc')}">›</button>${isLive() ? `<button class="icon-btn" type="button" data-act="share-open" data-kind="month" data-v="${first}" aria-label="${L('Udostępnij kartę miesiąca')}" title="${L('Udostępnij kartę miesiąca')}">${ICON.share(15)}</button>` : ''}</div></div>
     <div class="cal has-wk">${cells}</div>
     <div class="cal-sum">${tr ? `<span>${L('Miesiąc')}: <b class="${cls(total)}">${fmtVal(total, u)}</b></span><span>${L('Dni na plusie')}: <b>${green}</b></span><span>${L('Na minusie')}: <b>${red}</b></span><span>${L("Trade'ów")}: <b>${tr}</b></span>` : `<span>${L("Brak trade'ów w tym miesiącu.")}</span>`}</div>`;
 }
@@ -1092,7 +1103,7 @@ function lbEl() {
         <div class="lb-empty" hidden><span class="ico-box">${ICON.image(22)}</span><h3>${L('Ten trade nie ma zrzutu')}</h3><p>${L('Dodaj plik w polu „Zrzut” w Notion albo wklej link do TradingView w polu „Wykres” (przycisk „Edytuj”).')}</p></div></div>
       <button type="button" class="lb-nav next" data-act="lb-next" aria-label="${L('Następny')}">›</button></div>
     <div class="lb-info"><div class="lb-cap"></div><dl class="lb-facts"></dl><div class="lb-notes"></div>
-      <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a></div></div>`;
+      <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><button type="button" class="btn lb-share" data-act="share-trade">${ICON.share(14)}${L('Udostępnij')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a></div></div>`;
   document.body.appendChild(d);
   const img = d.querySelector('.lb-img');
   img.addEventListener('error', () => d.querySelector('.lb-frame').classList.add('failed'));
@@ -1146,6 +1157,7 @@ function showLightbox() {
   d.querySelector('.lb-notes').hidden = !tt.notes;
   d.querySelector('.lb-link').href = tt.url;
   d.querySelector('.lb-edit').dataset.id = tt.id;
+  d.querySelector('.lb-share').dataset.id = tt.id;
   d.querySelector('.prev').disabled = lb.idx === 0;
   d.querySelector('.next').disabled = lb.idx === lb.items.length - 1;
   // wczytaj z wyprzedzeniem sąsiednie zrzuty
@@ -1233,6 +1245,18 @@ const prop = prop_;
 const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyPalette(settings, getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh() });
 upd.onChange = () => { if (ust.isOpen()) ust.rerender(); };
 
+// ---------- karty do udostępnienia (udostepnij.js) ----------
+// Karty okresów biorą te same filtry co kalendarz i statystyki (baseTrades: konta, setupy, wyszukiwarka; tylko Live), decyzja 26.10.2026,
+// słowa użytkownika «To samo co komórka» (odwraca wcześniejszą decyzję gustu „okno ignoruje filtry”). allTrades: karta pojedynczego trade'a.
+const shareModel = () => (model ? { ...model, trades: baseTrades('Live'), allTrades: model.trades, filtered: !!(state.konta || state.setups || state.q.trim()) } : null);
+const share = createShare({ getModel: shareModel, prefs: settings.share, save: saveSettings, onClose: () => flushPending() });
+// Dzień startowy okna ze Statystyk: ostatni trade Live w bieżącym zakresie dat (bez niego okno wybierze ostatni okres z trade'ami Live).
+function shareAnchor() {
+  const to = ctx?.range?.to;
+  const live = (model ? baseTrades('Live') : []).filter((x) => (!to || x.date <= to)).map((x) => x.date).sort();
+  return live.length ? live[live.length - 1] : undefined;
+}
+
 // ---------- zatrzymanie serwera (dodatek 37) ----------
 async function stopServer(opener) {
   const ok = await confirmDialog({
@@ -1298,6 +1322,8 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'add-trade': form.open(null, t); break;
+    case 'share-trade': share.open({ tradeId: t.dataset.id, opener: t }); break;
+    case 'share-open': share.open({ kind: t.dataset.kind, anchor: t.dataset.v || shareAnchor(), clip: t.dataset.from && t.dataset.to ? { from: t.dataset.from, to: t.dataset.to } : null, opener: t }); break;
     case 'sort': {
       if (state.sortK === v) state.sortD = state.sortD === 'asc' ? 'desc' : 'asc';
       else { state.sortK = v; state.sortD = ['name', 'instrument', 'dir', 'setup'].includes(v) ? 'asc' : 'desc'; }
@@ -1440,6 +1466,7 @@ async function applyRemoteSettings(r = {}) {
   if (typeof r.customSeeded === 'boolean') settings.customSeeded = r.customSeeded;
   if (typeof r.beR === 'number') settings.beR = Math.min(0.5, Math.max(0, r.beR));
   if (typeof r.beUsd === 'number') settings.beUsd = Math.max(0, r.beUsd);
+  if (r.share) Object.assign(settings.share, sanitizeShare(r.share));
   S.setBeMargins(settings.beR, settings.beUsd);
   saveSettings(); // sync.applying blokuje zapis zwrotny
   if ((r.theme === 'onyx' || r.theme === 'platinum') && r.theme !== getTheme()) { try { localStorage.setItem(THEME_KEY, r.theme); } catch { /* brak */ } paintTheme(r.theme); }
@@ -1456,7 +1483,7 @@ async function applyRemoteSettings(r = {}) {
 }
 sync = createSync({
   getMeta: () => meta,
-  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false }),
+  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, share: settings.share, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false }),
   apply: (r) => applyRemoteSettings(r),
 });
 const devices = createDevices({ getMeta: () => meta, onConfig: (p) => saveConfig(p), onChange: () => { if (ust.isOpen()) ust.rerender(); } });

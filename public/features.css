@@ -1,4 +1,4 @@
-/* Trading HQ: style funkcji dodanych 25.10.2026 (zakładka Trade'y, formularz, szczegóły, wykresy, paleta Mono, zatrzymanie).
+/* JustJournal: style funkcji dodanych 25.10.2026 (zakładka Trade'y, formularz, szczegóły, wykresy, paleta Mono, zatrzymanie).
    Wyłącznie istniejące tokeny, promienie 6/10/18 i komponenty z styles.css. */
 
 :root, :root[data-theme="onyx"] {
@@ -773,3 +773,41 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
 }
 @media (prefers-reduced-motion: reduce) { .dv-exp .um-bar i, .ob-drop { transition: none !important; } }
 .fld textarea.dv-code { resize: none; min-height: 0; height: auto; }
+
+/* ---------- okno Udostępnij (udostepnij.js): podgląd karty po lewej, ustawienia po prawej; na telefonie arkusz ---------- */
+.modal.sh { width: min(1000px, 100%); }
+.sh-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; overflow: hidden; padding-bottom: 14px; }
+.sh-prev { height: min(64dvh, 640px); min-width: 0; border-radius: 10px; background: var(--well); padding: 14px; }
+.sh-stage { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; min-height: 0; }
+/* canvas wypełnia pole podglądu, obraz wpasowany object-fit (procentowe max-height nie działa w siatce); cień idzie po narysowanych pikselach */
+.sh-stage canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; box-shadow: var(--pop-shadow), 0 0 0 1px rgb(var(--fg-rgb) / .22); /* karta jest prostokątem, więc cień z tokenu motywu zamiast filter: drop-shadow z czarnym na sztywno */ }
+.sh-stage canvas[hidden], .sh-empty[hidden] { display: none; }
+.sh-empty { max-width: 300px; margin: 0; text-align: center; color: var(--fg-2); font-size: var(--t-base); font-weight: 500; line-height: 1.5; }
+.sh-ctl { display: flex; flex-direction: column; gap: 14px; min-width: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: rgb(var(--fg-rgb) / .22) transparent; padding: 3px; margin: -3px; }
+.sh-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sh-f .seg { align-self: stretch; }
+.sh-per { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px; border-radius: 9px; background: var(--seg-track); }
+.sh-per-t { flex: 1; min-width: 0; text-align: center; font-weight: 700; font-size: var(--t-base); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-per .icon-btn { font-size: 18px; line-height: 1; }
+.sh-per .icon-btn:disabled { opacity: .35; cursor: not-allowed; }
+.sh-ph { display: flex; gap: 8px; align-items: center; }
+.sh-ctl .note { margin: 0; }
+.mf .btn svg { flex: none; }
+.sh .mf { flex-wrap: wrap; }
+@media (max-width: 1023px) {
+  .sh-body { grid-template-columns: minmax(0, 1fr); overflow-y: auto; gap: 14px; }
+  /* wąski ekran: wysokość podglądu wynika z proporcji formatu (--sh-ar ustawia udostepnij.js), a nie jest stała */
+  .sh-prev { height: auto; width: min(100%, calc(46dvh * var(--sh-ar, 0.5625))); aspect-ratio: var(--sh-ar, 0.5625); justify-self: center; padding: 8px; }
+  .sh-ctl { overflow: visible; }
+  .sh-per .icon-btn { width: 44px; height: 36px; }
+  .seg.sm.full button { height: 34px; }
+  .sh .mf .fmsg { display: none; }
+  .sh .mf .btn { min-width: 0; padding: 0 8px; }
+}
+.hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hero-top .btn { height: 24px; padding: 0 9px; font-size: var(--t-sm); }
+button.cell { border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+button.cell .cv, button.cell .cn { width: 100%; }
+@media (hover: hover) { button.cell:hover { box-shadow: inset 0 0 0 1.5px rgb(var(--fg-rgb) / .5); } }
+@media (prefers-reduced-motion: reduce) { .sh * { transition: none !important; } }
+.sp .sp-nick { width: 100%; }
