@@ -623,6 +623,29 @@ test('kolejne urządzenie: kod i PIN, zły PIN, 5 prób, wygaśnięcie, plik, sy
   A.stop();
 });
 
+test('blok ustawień: nazwa w języku instalacji, po zmianie nazwy dalej rozpoznawany po ID', async () => {
+  const A = await H.atrapa(nextPort(), { ATRAPA_PUSTA: '1' });
+  const dir = H.tmp();
+  const r = await H.run(path.join(ROOT, 'setup.mjs'), ['--lang', 'en', '--token', 'test', '--parent', H.PARENT_URL, '--yes'], H.cleanEnv({ NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dir }));
+  assert.equal(r.code, 0, r.err);
+  const rootId = json(path.join(dir, 'config.local.json')).rootPageId;
+  const tog = (await A.get('/__test/loose')).find((p) => p.id === rootId).children.find((c) => c.type === 'toggle');
+  assert.equal(tog.toggle.rich_text[0].text.content, 'Dashboard settings (do not edit)');
+  const S = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dir });
+  assert.equal((await H.dash(S.base, '/api/sync', { settings: { palette: 'mono' }, updatedAt: new Date().toISOString() })).j.written, true);
+  await H.sleep(150);
+  assert.ok(json(path.join(dir, 'config.local.json')).settingsBlock?.codeId, 'ID bloku zapamiętane');
+  // użytkownik zmienia nazwę bloku w Notion
+  await fetch(`${A.base}/v1/blocks/${tog.id}`, { method: 'PATCH', headers: { Authorization: 'Bearer x', 'Content-Type': 'application/json' }, body: JSON.stringify({ toggle: { rich_text: [{ type: 'text', text: { content: 'My stuff' } }] } }) });
+  const s = await (await fetch(`${S.base}/api/sync?force`)).json();
+  assert.equal(s.remote?.settings?.palette, 'mono', JSON.stringify(s));
+  const h = await H.dash(S.base, '/api/health/full', { quick: true });
+  assert.equal(h.j.checks.find((c) => c.id === 'settings').status, 'ok');
+  const fix = await H.dash(S.base, '/api/health/fix-all', {});
+  assert.ok(!fix.j.changes.some((c) => c.kind === 'block'), 'nie proponuje drugiego bloku');
+  S.stop(); A.stop();
+});
+
 test('migracja 002: blok ustawień na istniejącej stronie, treść nietknięta, drugi przebieg bez zmian', async () => {
   const A = await H.atrapa(nextPort());
   const dir = H.tmp();

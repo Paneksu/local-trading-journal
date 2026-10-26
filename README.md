@@ -308,6 +308,52 @@ Te same kadry pokazuje kreator pod linkiem „Pokaż krok po kroku”. To ilustr
 
 </details>
 
+<details>
+<summary><b>Przeniesienie na nowe urządzenie kodem</b></summary>
+
+1. Na urządzeniu, na którym masz już dashboard, otwórz Ustawienia (koło zębate), zakładkę Urządzenia, i kliknij Dodaj kolejne urządzenie.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/01-pl.webp" alt="Ustawienia dashboardu, zakładka Urządzenia, wskazany przycisk Dodaj kolejne urządzenie." width="600">
+
+2. Kliknij Wygeneruj kod. Skopiuj kod albo zapisz go jako plik .ltj, a PIN przepisz ręcznie. Kod działa 15 minut i tylko raz.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/02-pl.webp" alt="Okno Dodaj kolejne urządzenie z kodem, sześciocyfrowym PIN-em i paskiem ważności." width="600">
+
+3. Na nowym urządzeniu zainstaluj dashboard. W pierwszym kroku wybierz Mam już dziennik na innym urządzeniu i kliknij Dalej.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/03-pl.webp" alt="Pierwsze kroki, ekran powitalny z trzema wyborami, wskazany wybór Mam już dziennik na innym urządzeniu." width="600">
+
+4. Wklej kod (albo upuść plik .ltj), wpisz PIN i kliknij Dalej. Dashboard sam połączy się z dziennikiem i pobierze Twoje ustawienia.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/04-pl.webp" alt="Krok Kod z wklejonym kodem, wpisanym PIN-em 482 913 i przyciskiem Dalej." width="600">
+
+   _Kod daje dostęp do Twojego Notion. Nie wysyłaj go nikomu, zwłaszcza przez czat. Kod i PIN na tym obrazku są zmyślone._
+
+</details>
+
+<details>
+<summary><b>Przeniesienie tokenem, bez kodu</b></summary>
+
+1. Otwórz notion.so/profile/integrations i kliknij integrację Local Trading Journal, tę samą co na pierwszym urządzeniu.
+
+   <img src="docs/img/poradnik/notion-token/01-pl.webp" alt="Lista integracji Notion z kartą Local Trading Journal." width="600">
+
+2. Przy Internal Integration Secret kliknij Show, a potem Copy. Nie twórz nowej integracji, wystarczy ten sam token.
+
+   <img src="docs/img/poradnik/notion-token/02-pl.webp" alt="Pole Internal Integration Secret z ukrytym kluczem i przyciskiem Copy." width="600">
+
+3. Na nowym urządzeniu wybierz Mam już dziennik na innym urządzeniu, rozwiń Nie mam kodu i kliknij Połącz tokenem.
+
+   <img src="docs/img/poradnik/przeniesienie-tokenem/03-pl.webp" alt="Krok Kod z rozwiniętą sekcją Nie mam kodu i przyciskiem Połącz tokenem." width="600">
+
+4. Wklej token w pole. Dashboard sam sprawdzi token, znajdzie Twój dziennik i pobierze ustawienia z Notion.
+
+   <img src="docs/img/poradnik/przeniesienie-tokenem/04-pl.webp" alt="Krok Token w Pierwszych krokach z polem Wklej token." width="600">
+
+   _Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam._
+
+</details>
+
 ## Uruchamianie
 
 - **Windows:** `Dashboard.vbs` (bez okna konsoli; logi w `dashboard.log`) albo `Dashboard.cmd` (z oknem konsoli, do diagnozy). Skrót na pulpicie z ikoną: `powershell -ExecutionPolicy Bypass -File narzedzia\utworz-skrot.ps1`.

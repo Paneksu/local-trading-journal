@@ -130,6 +130,7 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
   function planItemText(p) {
     if (p.kind === 'option') return t('Nowa opcja „{name}” w bazie {db}', { name: p.name, db: dbName(p.db) });
     if (p.kind === 'view') return t('Nowy widok „{name}” w bazie {db}', { name: p.name, db: dbName(p.db) });
+    if (p.kind === 'block') return t('Nowy blok „{name}” na stronie dziennika', { name: p.name });
     return t('Nowe pole „{name}” w bazie {db}', { name: p.name, db: dbName(p.db) });
   }
 

@@ -1372,6 +1372,356 @@
           }
         }
       ]
+    },
+    "przeniesienie-kodem": {
+      "title": {
+        "pl": "Przeniesienie na nowe urządzenie kodem",
+        "en": "Moving to a new device with a code"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/przeniesienie-kodem/01-pl.webp",
+            "en": "poradnik/przeniesienie-kodem/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Na urządzeniu, na którym masz już dashboard, otwórz Ustawienia (koło zębate), zakładkę Urządzenia, i kliknij Dodaj kolejne urządzenie.",
+            "en": "On the device that already has the dashboard, open Settings (the gear icon), the Devices tab, and click Add another device."
+          },
+          "alt": {
+            "pl": "Ustawienia dashboardu, zakładka Urządzenia, wskazany przycisk Dodaj kolejne urządzenie.",
+            "en": "Dashboard settings, Devices tab, with the Add another device button pointed out."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.8776,
+              "y": 0.4087
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.766,
+              "y": 0.3902,
+              "w": 0.0956,
+              "h": 0.037
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720). Kod i PIN są zmyślone.",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720). The code and PIN are made up."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/przeniesienie-kodem/02-pl.webp",
+            "en": "poradnik/przeniesienie-kodem/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Kliknij Wygeneruj kod. Skopiuj kod albo zapisz go jako plik .ltj, a PIN przepisz ręcznie. Kod działa 15 minut i tylko raz.",
+            "en": "Click Generate code. Copy the code or save it as a .ltj file, and copy the PIN by hand. The code works for 15 minutes and only once."
+          },
+          "alt": {
+            "pl": "Okno Dodaj kolejne urządzenie z kodem, sześciocyfrowym PIN-em i paskiem ważności.",
+            "en": "The Add another device window with the code, the six-digit PIN and the validity bar."
+          },
+          "note": {
+            "pl": "Kod daje dostęp do Twojego Notion. Nie wysyłaj go nikomu, zwłaszcza przez czat. Kod i PIN na tym obrazku są zmyślone.",
+            "en": "The code gives access to your Notion. Do not send it to anyone, especially over chat. The code and PIN in this picture are made up."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6825,
+              "y": 0.4118
+            },
+            {
+              "n": 2,
+              "x": 0.6825,
+              "y": 0.5305
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.3335,
+              "y": 0.3691,
+              "w": 0.333,
+              "h": 0.0853
+            },
+            {
+              "x": 0.3335,
+              "y": 0.5088,
+              "w": 0.333,
+              "h": 0.0433
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720). Kod i PIN są zmyślone.",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720). The code and PIN are made up."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/przeniesienie-kodem/03-pl.webp",
+            "en": "poradnik/przeniesienie-kodem/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Na nowym urządzeniu zainstaluj dashboard. W pierwszym kroku wybierz Mam już dziennik na innym urządzeniu i kliknij Dalej.",
+            "en": "Install the dashboard on the new device. In the first step choose I already have a journal on another device and click Next."
+          },
+          "alt": {
+            "pl": "Pierwsze kroki, ekran powitalny z trzema wyborami, wskazany wybór Mam już dziennik na innym urządzeniu.",
+            "en": "Getting started welcome screen with three choices, I already have a journal on another device pointed out."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.705,
+              "y": 0.5849
+            },
+            {
+              "n": 2,
+              "x": 0.705,
+              "y": 0.8386
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.311,
+              "y": 0.5518,
+              "w": 0.378,
+              "h": 0.0661
+            },
+            {
+              "x": 0.6477,
+              "y": 0.818,
+              "w": 0.0413,
+              "h": 0.0412
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720). Kod i PIN są zmyślone.",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720). The code and PIN are made up."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/przeniesienie-kodem/04-pl.webp",
+            "en": "poradnik/przeniesienie-kodem/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wklej kod (albo upuść plik .ltj), wpisz PIN i kliknij Dalej. Dashboard sam połączy się z dziennikiem i pobierze Twoje ustawienia.",
+            "en": "Paste the code (or drop the .ltj file), enter the PIN and click Next. The dashboard connects to your journal and pulls your settings by itself."
+          },
+          "alt": {
+            "pl": "Krok Kod z wklejonym kodem, wpisanym PIN-em 482 913 i przyciskiem Dalej.",
+            "en": "The Code step with the pasted code, the PIN 482 913 and the Next button."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.705,
+              "y": 0.4883
+            },
+            {
+              "n": 2,
+              "x": 0.4725,
+              "y": 0.6013
+            },
+            {
+              "n": 3,
+              "x": 0.705,
+              "y": 0.6898
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.311,
+              "y": 0.4456,
+              "w": 0.378,
+              "h": 0.0853
+            },
+            {
+              "x": 0.311,
+              "y": 0.5787,
+              "w": 0.1455,
+              "h": 0.0453
+            },
+            {
+              "x": 0.6477,
+              "y": 0.6692,
+              "w": 0.0413,
+              "h": 0.0412
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720). Kod i PIN są zmyślone.",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720). The code and PIN are made up."
+          }
+        }
+      ]
+    },
+    "przeniesienie-tokenem": {
+      "title": {
+        "pl": "Przeniesienie tokenem, bez kodu",
+        "en": "Moving with the token, without a code"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/notion-token/01-pl.webp",
+            "en": "poradnik/notion-token/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otwórz notion.so/profile/integrations i kliknij integrację Local Trading Journal, tę samą co na pierwszym urządzeniu.",
+            "en": "Open notion.so/profile/integrations and click the Local Trading Journal integration, the same one as on the first device."
+          },
+          "alt": {
+            "pl": "Lista integracji Notion z kartą Local Trading Journal.",
+            "en": "The Notion integrations list with the Local Trading Journal card."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2458,
+              "y": 0.4472
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2625,
+              "y": 0.3889,
+              "w": 0.3583,
+              "h": 0.1167
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-token/02-pl.webp",
+            "en": "poradnik/notion-token/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Przy Internal Integration Secret kliknij Show, a potem Copy. Nie twórz nowej integracji, wystarczy ten sam token.",
+            "en": "Next to Internal Integration Secret, click Show and then Copy. Do not create a new integration, the same token is enough."
+          },
+          "alt": {
+            "pl": "Pole Internal Integration Secret z ukrytym kluczem i przyciskiem Copy.",
+            "en": "The Internal Integration Secret field with a hidden key and the Copy button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6098,
+              "y": 0.4083
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.6264,
+              "y": 0.3792,
+              "w": 0.0722,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam. Klucz to hasło do Twoich danych w Notion. Wklejasz go tylko w instalatorze, nigdzie nie publikujesz."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/przeniesienie-tokenem/03-pl.webp",
+            "en": "poradnik/przeniesienie-tokenem/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Na nowym urządzeniu wybierz Mam już dziennik na innym urządzeniu, rozwiń Nie mam kodu i kliknij Połącz tokenem.",
+            "en": "On the new device choose I already have a journal on another device, open I don't have a code and click Connect with the token."
+          },
+          "alt": {
+            "pl": "Krok Kod z rozwiniętą sekcją Nie mam kodu i przyciskiem Połącz tokenem.",
+            "en": "The Code step with I don't have a code expanded and the Connect with the token button."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.4173,
+              "y": 0.641
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.311,
+              "y": 0.6225,
+              "w": 0.0903,
+              "h": 0.037
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720). Kod i PIN są zmyślone.",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720). The code and PIN are made up."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/przeniesienie-tokenem/04-pl.webp",
+            "en": "poradnik/przeniesienie-tokenem/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wklej token w pole. Dashboard sam sprawdzi token, znajdzie Twój dziennik i pobierze ustawienia z Notion.",
+            "en": "Paste the token into the field. The dashboard checks it, finds your journal and pulls your settings from Notion by itself."
+          },
+          "alt": {
+            "pl": "Krok Token w Pierwszych krokach z polem Wklej token.",
+            "en": "The Token step in Getting started with the Paste the token field."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.705,
+              "y": 0.6217
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.311,
+              "y": 0.5969,
+              "w": 0.378,
+              "h": 0.0495
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720). Kod i PIN są zmyślone.",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720). The code and PIN are made up."
+          }
+        }
+      ]
     }
   }
 }

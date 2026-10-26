@@ -729,3 +729,47 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
   .pulse::after { animation: none !important; opacity: .5; transform: scale(1.3); }
   .pr-toggle svg { transition: none !important; }
 }
+
+/* ---------- kilka urządzeń: lista w Ustawieniach, okno „Dodaj kolejne urządzenie”, ścieżki w kreatorze ---------- */
+.dv-list { list-style: none; margin: 6px 0 10px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dv { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 0; }
+.dv-ico { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--float); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
+.dv-txt { display: flex; flex-direction: column; min-width: 0; }
+.dv-txt b { font-size: var(--t-base); font-weight: 600; overflow-wrap: anywhere; }
+.dv-txt > span { color: var(--fg-2); font-size: var(--t-sm); }
+.dv-edit { grid-column: 2 / 4; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dv-edit .sp-in { flex: 1; min-width: 140px; width: auto; }
+.dv-act { display: flex; gap: 6px; }
+.dv-remove { margin-top: 10px; font-size: var(--t-sm); color: var(--fg-2); }
+.dv-remove summary { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; width: max-content; }
+.dv-remove .ck-how { margin-top: 6px; font-size: var(--t-sm); }
+.modal.dvm { width: min(560px, 100%); }
+.dvm .mb { display: flex; flex-direction: column; gap: 14px; }
+.dvm .ob-lead { margin: 0; }
+.dv-code {
+  width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: var(--input); box-shadow: var(--well-shadow); color: var(--fg);
+  font-family: var(--mono); font-size: var(--t-sm); line-height: 1.5; resize: none; overflow-wrap: anywhere;
+}
+.dv-code:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.dvm .upd-actions .btn, .dv-code + .upd-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.dv-pin-wrap { display: flex; flex-direction: column; gap: 4px; }
+.dv-pin { font-family: var(--mono); font-size: var(--t-kpi); font-weight: 500; letter-spacing: .28em; line-height: 1.2; color: var(--fg); }
+.dv-exp .note { margin: 6px 0 0; }
+.dv-exp.gone .um-bar i { width: 0 !important; }
+.dv-warn { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); font-size: var(--t-base); font-weight: 500; line-height: 1.45; }
+.dv-warn svg { color: var(--warn); margin-top: 1px; }
+.dv-warn p { margin: 0; }
+.ob-paths { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 14px; }
+.ob-paths .lbl { margin-bottom: 2px; }
+.ob-drop { transition: box-shadow .15s var(--card-ease); border-radius: 10px; }
+.ob-drop.over { box-shadow: 0 0 0 2px var(--fg); }
+.ob-pin { width: 100%; max-width: 220px; height: 44px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--input); box-shadow: var(--well-shadow); color: var(--fg); font-family: var(--mono); font-size: 20px; letter-spacing: .2em; }
+.ob-pin:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.ob-link { padding: 0; border: 0; background: none; color: var(--fg); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+@media (max-width: 1023px) {
+  .dvm .upd-actions .btn { height: 44px; flex: 1; }
+  .dv-pin { font-size: 22px; letter-spacing: .22em; }
+  .dv-act .btn { height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .dv-exp .um-bar i, .ob-drop { transition: none !important; } }
+.fld textarea.dv-code { resize: none; min-height: 0; height: auto; }

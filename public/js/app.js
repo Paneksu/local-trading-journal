@@ -14,6 +14,7 @@ import { t, getLang, bootMeta, rememberLang, translateStatic } from './i18n.js';
 import { createUpdater } from './aktualizacja.js';
 import { createOnboarding } from './pierwsze-kroki.js';
 import { createGuide } from './przewodnik.js';
+import { createSync, createDevices } from './urzadzenia.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -78,8 +79,12 @@ function loadSettings() {
 }
 const settings = loadSettings();
 // „resolved” to gotowe kolory obu motywów: skrypt w <head> stosuje je przed pierwszym malowaniem (bez błysku domyślnych kolorów)
+// sync: synchronizacja ustawień między urządzeniami (urzadzenia.js); przypisywana niżej, po utworzeniu modułów
+let sync = null;
+let langOverride = '';
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, resolved: resolvedAll(settings) })); } catch { /* localStorage niedostępny */ }
+  sync?.changed();
 }
 S.setBeMargins(settings.beR, settings.beUsd);
 
@@ -131,6 +136,7 @@ function paintTheme(t) {
 function setTheme(t, origin) {
   if (t === getTheme()) return;
   try { localStorage.setItem(THEME_KEY, t); } catch { /* localStorage niedostępny */ }
+  setTimeout(() => sync?.changed(), 0); // motyw zapisany w localStorage przed odczytem przez collect()
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!reduce && typeof document.startViewTransition === 'function') {
     const r = origin ? origin.getBoundingClientRect() : null;
@@ -870,8 +876,10 @@ async function saveConfig(patch) {
     if (!r.ok) throw new Error(String(r.status));
     const j = await r.json();
     meta = { ...meta, ...j };
-    if (patch.lang) { rememberLang(patch.lang); location.reload(); return; }
-    if ('updateCheck' in patch) upd.check();
+    if (patch.lang) { langOverride = patch.lang; await sync?.changed({ now: true }); rememberLang(patch.lang); location.reload(); return; }
+    if ('updateCheck' in patch) { upd.check(); sync?.changed(); }
+    if ('syncEnabled' in patch && patch.syncEnabled) { const r = await sync.pull(); if (!r?.applied) sync.changed({ now: true }); }
+    if ('syncEnabled' in patch) devices.refresh();
     toast(t('Zapisano ustawienia.'));
   } catch {
     toast(t('Nie udało się zapisać ustawień. Sprawdź, czy dashboard działa.'), { error: true });
@@ -1222,7 +1230,7 @@ const prop_ = createProp({ state, getModel: () => model, reload: (f) => load(f),
 const prop = prop_;
 
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
-const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyPalette(settings, getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml() });
+const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyPalette(settings, getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh() });
 upd.onChange = () => { if (ust.isOpen()) ust.rerender(); };
 
 // ---------- zatrzymanie serwera (dodatek 37) ----------
@@ -1339,6 +1347,7 @@ document.addEventListener('click', (ev) => {
     case 'upd-open': if (ust.isOpen()) ust.toggle(); upd.handle(a, $('#upd') && !$('#upd').hidden ? $('#upd') : $('#gear')); break;
     case 'upd-check-now': upd.handle(a, t); break;
     case 'ob-open': if (ust.isOpen()) ust.toggle(); if (tour.active) break; ob.show({ at: 0, from: t }); break;
+    case 'dv-add': case 'dv-rename': case 'dv-cancel': case 'dv-save': case 'dv-remove-toggle': devices.handle(a, v, t, $('.sp')); break;
     case 'ob-attn': if (tour.active) break; ob.show({ at: 'gotowosc', from: t }); break;
     case 'ob-token': {
       if (ust.isOpen()) ust.toggle();
@@ -1408,9 +1417,9 @@ document.addEventListener('pointerdown', (ev) => { if (!tour.active) ust.onPoint
 
 // automatyczne odświeżanie (dodatek 4): powrót do karty i co 5 minut, po cichu
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && lastCheck && Date.now() - lastCheck.getTime() > 20_000) load(false, { silent: true });
+  if (document.visibilityState === 'visible' && lastCheck && Date.now() - lastCheck.getTime() > 20_000) { load(false, { silent: true }); sync.pull(); }
 });
-timers.push(setInterval(() => { if (!document.hidden) load(false, { silent: true }); }, REFRESH_MS));
+timers.push(setInterval(() => { if (!document.hidden) { load(false, { silent: true }); sync.pull(); } }, REFRESH_MS));
 
 let lastW = 0;
 new ResizeObserver((entries) => {
@@ -1422,6 +1431,35 @@ new ResizeObserver((entries) => {
 $('.refresh-ico').innerHTML = ICON.refresh(14);
 $('.add-ico').innerHTML = ICON.plus(14);
 $('#gear').innerHTML = ICON.gear(16);
+
+// ---------- kilka urządzeń: synchronizacja ustawień przez Notion i dodawanie urządzeń (urzadzenia.js) ----------
+// Zdalne ustawienia: paleta i marginesy BE, motyw, sprawdzanie aktualizacji; inny język zapisuje się w konfiguracji i przeładowuje stronę.
+async function applyRemoteSettings(r = {}) {
+  if (PALETTE_IDS.includes(r.palette)) settings.palette = r.palette;
+  if (r.custom) settings.custom = sanitizeCustom(r.custom);
+  if (typeof r.customSeeded === 'boolean') settings.customSeeded = r.customSeeded;
+  if (typeof r.beR === 'number') settings.beR = Math.min(0.5, Math.max(0, r.beR));
+  if (typeof r.beUsd === 'number') settings.beUsd = Math.max(0, r.beUsd);
+  S.setBeMargins(settings.beR, settings.beUsd);
+  saveSettings(); // sync.applying blokuje zapis zwrotny
+  if ((r.theme === 'onyx' || r.theme === 'platinum') && r.theme !== getTheme()) { try { localStorage.setItem(THEME_KEY, r.theme); } catch { /* brak */ } paintTheme(r.theme); }
+  applyPalette(settings, getTheme());
+  if (typeof r.updateCheck === 'boolean' && r.updateCheck !== (meta.updateCheck !== false)) {
+    try { await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ updateCheck: r.updateCheck }) }); meta.updateCheck = r.updateCheck; upd.check(); } catch { /* następnym razem */ }
+  }
+  if ((r.lang === 'pl' || r.lang === 'en') && r.lang !== getLang()) {
+    try { await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ lang: r.lang }) }); } catch { /* brak */ }
+    rememberLang(r.lang); location.reload(); return;
+  }
+  if (ust.isOpen()) ust.rerender();
+  if (model) renderMain();
+}
+sync = createSync({
+  getMeta: () => meta,
+  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false }),
+  apply: (r) => applyRemoteSettings(r),
+});
+const devices = createDevices({ getMeta: () => meta, onConfig: (p) => saveConfig(p), onChange: () => { if (ust.isOpen()) ust.rerender(); } });
 
 // ---------- pierwsze kroki (pierwsze-kroki.js) i przewodnik na danych przykładowych (przewodnik.js) ----------
 const tour = createGuide({
@@ -1447,6 +1485,7 @@ const ob = createOnboarding({
   onConfigured: async (what = {}) => {
     try { const r = await fetch('/api/meta', { cache: 'no-store' }); if (r.ok) meta = { ...meta, ...(await r.json()) }; } catch { /* zostaje poprzednia */ }
     if (what.token) return; // sam token: baz jeszcze nie ma, dane wczytamy po utworzeniu dziennika
+    if (what.sync) await sync.pull(); // przeniesienie z innego urządzenia albo połączenie: ustawienia z Notion
     await load(true);
   },
   // szybkie sprawdzenie w tle: przy błędzie pigułka „Wymaga uwagi” w pasku statusu i kropka przy kole zębatym
@@ -1480,6 +1519,7 @@ async function start() {
     }
   }
   await load(false);
+  sync.pull();
   return ob.auto({ loadFailed: !model });
 }
 start();

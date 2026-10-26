@@ -33,7 +33,14 @@ const ICON = {
   ext: svg('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>', 13, 1.8),
   copy: svg('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>', 13, 1.8),
 };
-const STEP_NAME = { witaj: 'Witaj', token: 'Token', strona: 'Strona', dostep: 'Dostęp', dziennik: 'Dziennik', gotowosc: 'Gotowość', przewodnik: 'Przewodnik' };
+const STEP_NAME = { witaj: 'Witaj', token: 'Token', strona: 'Strona', dostep: 'Dostęp', dziennik: 'Dziennik', gotowosc: 'Gotowość', przewodnik: 'Przewodnik', kod: 'Kod', gotowe: 'Gotowe' };
+const PATH_KEY = 'thq.obPath';
+// trzy ścieżki pierwszego uruchomienia
+const PATHS = [
+  ['nowy', 'Nowy dziennik', 'Utworzymy w Twoim Notion nowy dziennik z czterema bazami.'],
+  ['kod', 'Mam już dziennik na innym urządzeniu', 'Wklejasz kod z pierwszego urządzenia i PIN. Dane i ustawienia przyjdą same.'],
+  ['polacz', 'Mam dziennik w Notion, ale bez dashboardu', 'Wklejasz token, a dashboard sam znajdzie dziennik w Notion.'],
+];
 const DB_NAME = { trades: "Trade'y", konta: 'Konta', dziennik: 'Dziennik', finanse: 'Wydatki i payouty' };
 const BUILD_STEP = { page: 'Strona dziennika', databases: 'Bazy', relations: 'Relacje', formulas: 'Formuły', views: 'Widoki', demo: 'Dane przykładowe', save: 'Zapis konfiguracji' };
 // wait: sprawdzenie zależy od czegoś, co trzeba poprawić wcześniej (np. token); nie liczy się jako osobny problem
@@ -46,7 +53,7 @@ async function call(url, body) {
   const r = await fetch(url, body === undefined ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify(body) });
   let j = {};
   try { j = await r.json(); } catch { /* brak treści */ }
-  if (!r.ok) throw Object.assign(new Error(j.error || t('Błąd {status}', { status: r.status })), { status: r.status, code: j.code, fields: j.fields });
+  if (!r.ok) throw Object.assign(new Error(j.error || t('Błąd {status}', { status: r.status })), { status: r.status, code: j.code, fields: j.fields, body: j });
   return j;
 }
 const post = (url, body = {}) => call(url, body);
@@ -64,6 +71,21 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   const pg = { pages: null, err: '', sel: '', timer: 0, sig: '', autoNext: 0 };
   const mk = { pageId: '', title: '', demo: true, job: null, starting: false, err: '', timer: 0, done: false };
   let tests = 0;
+  let path = 'nowy';                        // wybrana ścieżka świeżej instalacji
+  const kd = { code: '', pin: '', busy: false, err: '', left: null, ok: null };
+  // przebieg po kroku „Witaj” dla wybranej ścieżki
+  function pathFlow(p) {
+    const tokenStep = setup?.hasToken ? [] : ['token'];
+    if (p === 'kod') return ['kod', 'gotowosc', 'gotowe'];
+    if (p === 'polacz') return [...tokenStep, 'strona', 'gotowosc', 'gotowe'];
+    return [...tokenStep, 'strona', 'dziennik', 'gotowosc', 'przewodnik'];
+  }
+  function setPath(p, { keepStep = false } = {}) {
+    path = p;
+    try { sessionStorage.setItem(PATH_KEY, p); } catch { /* brak */ }
+    const head = keepStep ? flow.slice(0, step) : ['witaj'];
+    flow = [...head, ...pathFlow(p)];
+  }
 
   const cur = () => flow[step];
   const stopTimers = () => { clearTimeout(tok.timer); clearInterval(pg.timer); pg.timer = 0; clearTimeout(pg.autoNext); clearInterval(mk.timer); mk.timer = 0; };
@@ -83,6 +105,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
         ${row(LOGO.lock, 'Działa tylko na tym komputerze', 'Serwer słucha na 127.0.0.1, a token Notion nie trafia do przeglądarki.')}
         ${row(LOGO.github, 'Aktualizacje bez utraty danych', 'Nowe wersje z GitHub. Przed zmianami w Notion zawsze powstaje kopia baz.')}
       </ul>
+      ${fresh ? `<div class="ob-paths" role="radiogroup" aria-label="${L('Jak zaczynasz?')}"><span class="lbl">${L('Jak zaczynasz?')}</span>${PATHS.map(([id, title, text]) => `<button type="button" class="pg ob-path" role="radio" aria-checked="${path === id}" data-ob="path" data-v="${id}"><span class="ck-logo">${id === 'nowy' ? LOGO.notion : id === 'kod' ? LOGO.lock : LOGO.db}</span><span class="ck-txt"><b>${L(title)}</b><span>${L(text)}</span></span></button>`).join('')}</div>` : ''}
       <div class="ob-help"><span class="lbl">${L('Pomoc z instalacją')}</span>${help.map(([id, label]) => poradnikLink([id], { label: t(label) })).join('')}</div>`;
   }
 
@@ -161,7 +184,13 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       if (sig !== pg.sig) { pg.sig = sig; const z = card?.querySelector('.pg-zone'); if (z) { z.innerHTML = pagesZoneHtml(); bindPoradniki(z); } paintFoot(); }
       // przejście dalej bez klikania: dostęp przywrócony albo pierwsza udostępniona strona (jedna, bez dziennika)
       if (cur() === 'dostep' && pg.pages.some((p) => p.journal)) { stopTimers(); toast(t('Integracja widzi dziennik.')); goTo('gotowosc', { recheck: true }); return; }
-      if (cur() === 'strona' && before === 0 && pg.pages.length === 1 && !pg.pages[0].journal) {
+      // ścieżka „dziennik w Notion”: jedyny znaleziony dziennik łączy się sam
+      const journals = pg.pages.filter((p) => p.journal);
+      if (cur() === 'strona' && path === 'polacz' && journals.length === 1 && !pg.autoConnect) {
+        pg.autoConnect = true; pg.sel = journals[0].id;
+        clearTimeout(pg.autoNext);
+        pg.autoNext = setTimeout(() => { if (cur() === 'strona') choosePage(); }, 900);
+      } else if (cur() === 'strona' && path !== 'polacz' && before === 0 && pg.pages.length === 1 && !pg.pages[0].journal) {
         clearTimeout(pg.autoNext);
         pg.autoNext = setTimeout(() => { if (cur() === 'strona') choosePage(); }, 900);
       }
@@ -228,9 +257,72 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       }
     }, 700);
   }
-  async function afterInstall(lang) {
+  // ---------- krok: Kod z innego urządzenia ----------
+  function codeStatusHtml() {
+    if (kd.busy) return `<p class="ob-status run"><span class="spin" aria-hidden="true"></span>${L('Sprawdzam kod…')}</p>`;
+    if (kd.ok) return `<p class="ob-status ok">${ICON.ok}${L('Połączono z {name}', { name: kd.ok.workspace || 'Notion' })}</p>`;
+    if (kd.err) return `<p class="ob-status err" role="alert">${ICON.error}${esc(kd.err)}</p>`;
+    return '';
+  }
+  function codeHtml() {
+    return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Kod z innego urządzenia')}</h1>
+      <p class="ob-lead">${L('Na urządzeniu, na którym masz już dashboard, otwórz Ustawienia, zakładkę Urządzenia, i kliknij „Dodaj kolejne urządzenie”. Wklej tu kod i wpisz PIN.')}</p>
+      ${poradnikLink(['przeniesienie-kodem'])}
+      <div class="fld ob-field ob-drop" id="ob-drop"><label class="lbl" for="ob-code">${L('Wklej kod')}</label>
+        <textarea id="ob-code" class="dv-code" rows="3" spellcheck="false" autocomplete="off" placeholder="LTJ1.…" aria-describedby="ob-code-h">${esc(kd.code)}</textarea>
+        <p class="fhint" id="ob-code-h">${L('Możesz też upuścić tu plik .ltj albo')} <button type="button" class="ob-link" data-ob="pick-file">${L('wybrać go z dysku')}</button>.</p>
+        <input id="ob-file" type="file" accept=".ltj,text/plain" hidden></div>
+      <div class="fld ob-field"><label class="lbl" for="ob-pin">${L('PIN (6 cyfr)')}</label>
+        <input id="ob-pin" class="ob-pin" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" value="${esc(kd.pin)}" aria-describedby="ob-code-st"></div>
+      <div id="ob-code-st" aria-live="polite">${codeStatusHtml()}</div>
+      <details class="ob-more"><summary>${L('Nie mam kodu')}</summary><p>${L('Wystarczy ten sam token integracji co na pierwszym urządzeniu. Dashboard sam znajdzie dziennik, a ustawienia pobierze z Notion.')}</p>
+        <div class="ck-act"><button type="button" class="btn sm" data-ob="no-code">${L('Połącz tokenem')}</button></div>${poradnikLink(['przeniesienie-tokenem'])}</details>`;
+  }
+  const pinDigits = () => kd.pin.replace(/\D/g, '');
+  const codeReady = () => kd.code.trim().length > 10 && pinDigits().length === 6;
+  async function importCode() {
+    if (!codeReady() || kd.busy) return;
+    kd.busy = true; kd.err = ''; paintCodeStatus();
+    try {
+      const r = await post('/api/transfer/import', { code: kd.code.trim(), pin: pinDigits() });
+      kd.ok = r; kd.code = ''; kd.pin = '';
+      const ta = card?.querySelector('#ob-code'); if (ta) ta.value = '';
+      const pi = card?.querySelector('#ob-pin'); if (pi) pi.value = '';
+      kd.busy = false; paintCodeStatus();
+      await afterInstall(r.lang, { sync: true });
+    } catch (e) {
+      kd.busy = false;
+      kd.err = e.code === 'bad-pin' ? t.p('Zły PIN, zostało {n} prób.', Number(e.body?.left ?? 0))
+        : e.code === 'bad-code' ? t('To nie jest poprawny kod. Skopiuj go jeszcze raz w całości.')
+          : e.code === 'expired' ? t('Kod wygasł: wygeneruj nowy na pierwszym urządzeniu.')
+            : e.code === 'locked' ? t('Za dużo prób: wygeneruj nowy kod.')
+              : e.code === 'used' ? t('Ten kod został już użyty: wygeneruj nowy na pierwszym urządzeniu.')
+                : e.code === 'configured' ? t('To urządzenie ma już skonfigurowany dziennik.') : e.message;
+      if (e.code === 'bad-pin') { kd.pin = ''; const pi = card?.querySelector('#ob-pin'); if (pi) { pi.value = ''; pi.focus(); } }
+      paintCodeStatus();
+      // token z kodu przestał działać: od razu pokazujemy ścieżkę „Nie mam kodu”
+      if (e.code === 'token') { const d = card?.querySelector('.ob-more'); if (d) d.open = true; }
+    }
+  }
+  function paintCodeStatus() { const el = card?.querySelector('#ob-code-st'); if (el) el.innerHTML = codeStatusHtml(); paintFoot(); }
+  async function readFile(file) {
+    if (!file) return;
+    if (file.size > 256 * 1024) { kd.err = t('To nie wygląda na plik .ltj.'); paintCodeStatus(); return; }
+    kd.code = (await file.text()).trim();
+    const ta = card?.querySelector('#ob-code'); if (ta) ta.value = kd.code;
+    kd.err = ''; paintCodeStatus();
+    card?.querySelector('#ob-pin')?.focus();
+  }
+  function doneHtml() {
+    return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Gotowe, masz tu wszystkie swoje dane')}</h1>
+      <p class="ob-lead">${L('Dziennik z Notion i Twoje ustawienia (paleta, marginesy BE, język, motyw) są już na tym urządzeniu. Filtry i układ paneli ustawisz tu osobno.')}</p>
+      <ul class="ck-list plain"><li class="ck"><span class="ck-logo">${LOGO.notion}</span><span class="ck-txt"><b>${L('Te same dane na każdym urządzeniu')}</b><span>${L('Wpisy dodane tutaj od razu widać na pozostałych urządzeniach po odświeżeniu.')}</span></span></li></ul>`;
+  }
+
+  async function afterInstall(lang, { sync = false } = {}) {
+    void sync;
     if (lang && lang !== getLang()) { rememberLang(lang); try { sessionStorage.setItem(RESUME_KEY, 'gotowosc'); } catch { /* brak */ } location.reload(); return; }
-    await onConfigured({ installed: true });
+    await onConfigured({ installed: true, sync: true });
     setup = await get('/api/setup/state').catch(() => setup);
     goTo('gotowosc', { recheck: true });
   }
@@ -244,11 +336,11 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       <span class="ck-txt"><b>${esc(title)}</b><span>${text}</span></span>${statusHtml(st)}
       ${fix || action ? `<div class="ck-fix">${fix}${action ? `<div class="ck-act">${action}</div>` : ''}</div>` : ''}</li>`;
   }
-  const kindWord = (k) => t(k === 'option' ? 'opcja' : k === 'view' ? 'widok' : 'pole');
+  const kindWord = (k) => t(k === 'option' ? 'opcja' : k === 'view' ? 'widok' : k === 'block' ? 'blok' : 'pole');
   function changesList(changes) {
     const seen = new Set();
     const ch = (changes || []).filter((c) => { const k = `${c.db}|${c.kind}|${c.name}`; if (seen.has(k)) return false; seen.add(k); return true; });
-    return ch.length ? `<ul class="ck-changes">${ch.map((c) => `<li${c.status === 'conflict' ? ' class="conflict"' : ''}><span class="um-add">${c.status === 'conflict' ? L('konflikt') : L('dodane')}</span>${esc(kindWord(c.kind))} „${esc(c.name)}” · ${esc(t(DB_NAME[c.db] || c.db))}${c.detail && !/^[a-z_]+$/.test(String(c.detail)) ? `<small>${esc(c.detail)}</small>` : ''}</li>`).join('')}</ul>` : '';
+    return ch.length ? `<ul class="ck-changes">${ch.map((c) => `<li${c.status === 'conflict' ? ' class="conflict"' : ''}><span class="um-add">${c.status === 'conflict' ? L('konflikt') : L('dodane')}</span>${esc(kindWord(c.kind))} ${L('„{name}”', { name: c.name })}${c.db ? ` · ${esc(t(DB_NAME[c.db] || c.db))}` : ""}${c.detail && !/^[a-z_]+$/.test(String(c.detail)) ? `<small>${esc(c.detail)}</small>` : ''}</li>`).join('')}</ul>` : '';
   }
   function fixAllHtml() {
     const s = open.fix;
@@ -320,6 +412,12 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const vm = vw.missing || [];
     rows.push(row({ key: 'views', ...rowBase('views'), st: scBlocked ? 'wait' : vw.status,
       text: scBlocked ? L('Najpierw popraw token i bazy.') : vw.status === 'ok' ? L('Widoki dziennika są w Notion.') : esc(t.p('Brakuje {n} widoków: ', vm.length) + vm.map((v) => `${v.name} (${t(DB_NAME[v.db] || v.db)})`).join(', ')) }));
+    // blok ustawień w Notion (synchronizacja między urządzeniami); brak naprawia „Napraw wszystko”
+    if (by.settings) {
+      const sg = c('settings');
+      rows.push(row({ key: 'settings', logo: LOGO.views, title: t('Ustawienia w Notion'), st: sg.status === 'ok' ? 'ok' : sg.status,
+        text: sg.status === 'ok' ? L('Ustawienia synchronizują się między urządzeniami przez Notion.') : sg.code === 'missing' ? L('Brak bloku ustawień w Notion. „Napraw wszystko” go doda.') : esc(sg.detail || '') }));
+    }
     const wr = c('write');
     rows.push(row({ key: 'write', ...rowBase('write'), st: wr.code === 'skipped' ? 'info' : blockedSt(wr), text: wr.code === 'skipped' ? L('Sprawdzane przy pełnym sprawdzeniu.') : esc(wr.detail),
       fix: wr.status === 'error' && wr.code !== 'blocked' ? `<p>${L('W ustawieniach integracji w Notion zaznacz Insert content i Update content, a potem kliknij „Sprawdź ponownie”.')}</p>` : '' }));
@@ -356,6 +454,8 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const back = step && !['dziennik'].includes(id) && !(id === 'gotowosc' && fresh) ? `<button type="button" class="btn ghost" data-ob="back">${L('Wstecz')}</button>` : '';
     let main;
     if (id === 'token') main = `<button type="button" class="btn primary" data-ob="next" ${tok.ok ? '' : 'disabled'}>${L('Dalej')}</button>`;
+    else if (id === 'kod') main = `<button type="button" class="btn primary" data-ob="import" ${codeReady() && !kd.busy ? '' : 'disabled'}>${kd.busy ? L('Łączę…') : L('Dalej')}</button>`;
+    else if (id === 'gotowe') main = `<button type="button" class="btn" data-ob="guide">${L('Pokaż przewodnik')}</button><button type="button" class="btn primary" data-ob="finish">${L('Przejdź do dashboardu')}</button>`;
     else if (id === 'strona') {
       const sel = (pg.pages || []).find((p) => p.id === pg.sel);
       main = `<button type="button" class="btn primary" data-ob="choose" ${sel ? '' : 'disabled'}>${sel?.journal ? L('Połącz istniejący dziennik') : L('Dalej')}</button>`;
@@ -368,7 +468,10 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     } else if (last && id === 'przewodnik') main = `<button type="button" class="btn" data-ob="finish">${L('Przejdź do dashboardu')}</button><button type="button" class="btn primary" data-ob="guide">${L('Pokaż przewodnik')}</button>`;
     else if (last) main = `<button type="button" class="btn primary" data-ob="finish">${L('Zakończ')}</button>`;
     else main = `<button type="button" class="btn primary" data-ob="next">${L('Dalej')}</button>`;
-    card.querySelector('.ob-foot').innerHTML = `${last && id === 'przewodnik' ? '' : `<button type="button" class="ob-skip" data-ob="skip">${L('Pomiń')}</button>`}<span class="grow"></span>${back}${main}`;
+    const html = `${last && (id === 'przewodnik' || id === 'gotowe') ? '' : `<button type="button" class="ob-skip" data-ob="skip">${L('Pomiń')}</button>`}<span class="grow"></span>${back}${main}`;
+    // bez przerysowania, gdy nic się nie zmieniło: zdarzenie change przy opuszczaniu pola nie podmienia klikanego przycisku
+    const foot = card.querySelector('.ob-foot');
+    if (foot.dataset.html !== html) { foot.innerHTML = html; foot.dataset.html = html; }
   }
   function paint({ focusTitle = false } = {}) {
     if (!card) return;
@@ -377,11 +480,11 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const keep = focusTitle ? 0 : body.scrollTop;
     card.querySelector('.ob-steps').innerHTML = flow.map((s, i) => `<li class="${i < step ? 'done' : i === step ? 'on' : ''}"${i === step ? ' aria-current="step"' : ''}><i></i><span>${L(STEP_NAME[s])}</span></li>`).join('');
     card.querySelector('.ob-count').textContent = t('Krok {a} z {b}', { a: step + 1, b: flow.length });
-    body.innerHTML = id === 'witaj' ? welcomeHtml() : id === 'token' ? tokenHtml() : id === 'strona' || id === 'dostep' ? pagesHtml() : id === 'dziennik' ? buildHtml() : id === 'gotowosc' ? checksHtml() : guideHtml();
+    body.innerHTML = id === 'kod' ? codeHtml() : id === 'gotowe' ? doneHtml() : id === 'witaj' ? welcomeHtml() : id === 'token' ? tokenHtml() : id === 'strona' || id === 'dostep' ? pagesHtml() : id === 'dziennik' ? buildHtml() : id === 'gotowosc' ? checksHtml() : guideHtml();
     bindPoradniki(body);
     body.scrollTop = keep;
     paintFoot();
-    if (focusTitle) (id === 'token' ? card.querySelector('#ob-token') : card.querySelector('#ob-title'))?.focus({ preventScroll: true });
+    if (focusTitle) (id === 'token' ? card.querySelector('#ob-token') : id === 'kod' ? card.querySelector('#ob-code') : card.querySelector('#ob-title'))?.focus({ preventScroll: true });
   }
 
   async function runChecks({ quick = false } = {}) {
@@ -431,7 +534,11 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const b = e.target.closest('[data-ob]');
     if (!b) return;
     const a = b.dataset.ob;
-    if (a === 'next') next();
+    if (a === 'next') { if (cur() === 'witaj' && fresh) setPath(path); next(); }
+    else if (a === 'path') { path = b.dataset.v; card.querySelectorAll('[data-ob="path"]').forEach((x) => x.setAttribute('aria-checked', String(x.dataset.v === path))); b.focus(); }
+    else if (a === 'import') importCode();
+    else if (a === 'no-code') { setPath('polacz', { keepStep: true }); go(step); }
+    else if (a === 'pick-file') card.querySelector('#ob-file')?.click();
     else if (a === 'back') go(step - 1);
     else if (a === 'skip' || a === 'finish') finish(true);
     else if (a === 'guide') { await finish(true); onGuide(); }
@@ -487,15 +594,28 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       const v = e.target.value;
       tok.timer = setTimeout(() => checkToken(v), 300);
     } else if (e.target.id === 'ob-demo') mk.demo = e.target.checked;
+    else if (e.target.id === 'ob-code') { kd.code = e.target.value; kd.err = ''; paintCodeStatus(); }
+    else if (e.target.id === 'ob-pin') {
+      // tylko cyfry, z odstępem po trzeciej dla czytelności
+      const d = e.target.value.replace(/\D/g, '').slice(0, 6);
+      const v = d.length > 3 ? `${d.slice(0, 3)} ${d.slice(3)}` : d;
+      if (e.target.value !== v) e.target.value = v;
+      kd.pin = v; kd.err = ''; paintCodeStatus();
+    } else if (e.target.id === 'ob-file' && e.type === 'change') readFile(e.target.files?.[0]);
   }
 
   // Ustala przebieg kreatora na podstawie stanu instalacji.
   function planFlow({ mode }) {
     if (mode === 'token-replace') { fresh = false; tok.replace = true; return ['token', 'gotowosc']; }
+    // powrót po przeładowaniu (zmiana języka po przeniesieniu albo połączeniu): ta sama ścieżka do końca
+    let saved = '';
+    try { saved = sessionStorage.getItem(PATH_KEY) || ''; } catch { /* brak */ }
+    if (setup?.configured && mode === 'resume' && (saved === 'kod' || saved === 'polacz')) { fresh = true; path = saved; return ['gotowosc', 'gotowe']; }
     if (!setup || setup.configured) { fresh = false; return ['witaj', 'gotowosc', 'przewodnik']; }
+    if (saved) path = saved;
     fresh = true;
     if (setup.resumable && setup.parentPageId) { mk.pageId = setup.parentPageId; mk.title = mk.title || t('wybrana strona'); return ['witaj', 'dziennik', 'gotowosc', 'przewodnik']; }
-    return ['witaj', ...(setup.hasToken ? [] : ['token']), 'strona', 'dziennik', 'gotowosc', 'przewodnik'];
+    return ['witaj', ...pathFlow(path)];
   }
 
   async function show({ at = 0, from = null, mode = '' } = {}) {
@@ -520,6 +640,11 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     root.addEventListener('input', onInput);
     root.addEventListener('paste', (e) => { if (e.target.id === 'ob-token') { clearTimeout(tok.timer); setTimeout(() => checkToken(e.target.value), 0); } });
     root.addEventListener('change', onInput);
+    // plik .ltj upuszczony na pole kodu; Enter w polu PIN to „Dalej”
+    root.addEventListener('dragover', (e) => { if (e.target.closest('#ob-drop')) { e.preventDefault(); e.target.closest('#ob-drop').classList.add('over'); } });
+    root.addEventListener('dragleave', (e) => { e.target.closest('#ob-drop')?.classList.remove('over'); });
+    root.addEventListener('drop', (e) => { const z = e.target.closest('#ob-drop'); if (!z) return; e.preventDefault(); z.classList.remove('over'); readFile(e.dataTransfer?.files?.[0]); });
+    root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'ob-pin') { e.preventDefault(); importCode(); } });
     const idx = typeof at === 'string' ? Math.max(0, flow.indexOf(at)) : Math.min(at, flow.length - 1);
     if (typeof at === 'string' && flow.indexOf(at) < 0) { goToInit(at); return; }
     step = idx;
@@ -552,7 +677,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       if (!asked && !resume && m.onboarded === false && want !== getLang()) {
         try { await post('/api/config', { lang: want }); rememberLang(want); location.reload(); return true; } catch { /* zostaje bieżący */ }
       }
-      await show({ at: resume || 0 });
+      await show({ at: resume || 0, mode: resume ? 'resume' : '' });
       return true;
     }
     let r = null;

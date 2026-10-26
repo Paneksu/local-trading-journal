@@ -17,7 +17,8 @@ const svgI = (body, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 
 
 // getMeta(): { lang, version, updateCheck } z serwera; onConfig(patch): zapis do config.local.json (język, sprawdzanie aktualizacji)
 // updateHtml(): sekcja „Aktualizacje” z modułu aktualizacja.js (wersja, stan, „Sprawdź teraz”, przycisk okna aktualizacji)
-export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '' }) {
+// devicesHtml(): zakładka „Urządzenia” (synchronizacja ustawień, lista urządzeń, dodanie urządzenia) z modułu urzadzenia.js
+export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {} }) {
   let pop = null, scrim = null;
   let tab = 'dane';
   let editTheme = getTheme();
@@ -113,8 +114,8 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function html() {
     const tabBtn = (v, label) => `<button type="button" role="tab" data-act="sp-tab" data-v="${v}" data-fk="tab-${v}" aria-selected="${tab === v}">${L(label)}</button>`;
     return `<div class="sp-h"><h2 id="sp-t">${L('Ustawienia')}</h2><button type="button" class="icon-btn" data-act="settings" aria-label="${L('Zamknij ustawienia')}">${svgI('<path d="M6 6l12 12M18 6 6 18"/>')}</button></div>
-      <div class="seg full sp-tabs" role="tablist" aria-label="${L('Sekcje ustawień')}">${tabBtn('dane', 'Dane · kolory')}${tabBtn('be', 'Wynik BE')}${tabBtn('ogolne', 'Ogólne')}</div>
-      <div id="sp-body" role="tabpanel">${tab === 'dane' ? daneHtml() : tab === 'be' ? beHtml() : ogolneHtml()}</div>`;
+      <div class="seg full sp-tabs" role="tablist" aria-label="${L('Sekcje ustawień')}">${tabBtn('dane', 'Kolory')}${tabBtn('be', 'Wynik BE')}${tabBtn('ogolne', 'Ogólne')}${tabBtn('urzadzenia', 'Urządzenia')}</div>
+      <div id="sp-body" role="tabpanel">${tab === 'dane' ? daneHtml() : tab === 'be' ? beHtml() : tab === 'urzadzenia' ? devicesHtml() : ogolneHtml()}</div>`;
   }
 
   // odświeża zawartość, zachowując fokus (po kluczu data-fk)
@@ -126,10 +127,10 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   }
 
   // ---------- otwieranie i zamykanie ----------
-  function open() {
+  function open(at) {
     if (pop) return;
     editTheme = getTheme();
-    tab = 'dane';
+    tab = typeof at === 'string' ? at : 'dane';
     picker = null;
     pop = document.createElement('div');
     pop.className = 'sp';
@@ -141,7 +142,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     scrim.addEventListener('click', () => close());
     document.body.append(scrim, pop);
     gear().setAttribute('aria-expanded', 'true');
-    pop.querySelector('[data-fk="tab-dane"]').focus();
+    pop.querySelector(`[data-fk="tab-${tab}"]`).focus();
   }
   function close({ restore = true } = {}) {
     if (!pop) return;
@@ -150,7 +151,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     gear().setAttribute('aria-expanded', 'false');
     if (restore) gear().focus();
   }
-  const toggle = () => (pop ? close() : open());
+  const toggle = (at) => (pop ? close() : open(at));
 
   // ---------- zmiany kolorów ----------
   function setColor(k, hex) {
@@ -181,7 +182,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function handle(act, v, el) {
     switch (act) {
       case 'settings': toggle(); return true;
-      case 'sp-tab': tab = v; picker = null; rerender(); return true;
+      case 'sp-tab': tab = v; picker = null; rerender(); if (v === 'urzadzenia') onTab(v); return true;
       case 'palette': {
         if (v === 'wlasna' && !settings.customSeeded) {
           // pierwsze wejście w „Własną”: zaczynamy od kolorów aktualnie używanej palety
@@ -257,7 +258,9 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   }
   // checkbox „Sprawdzaj aktualizacje” (zdarzenie change)
   function onChange(ev) {
-    if (!pop || !ev.target.matches('[data-act="sp-upd"]')) return false;
+    if (!pop) return false;
+    if (ev.target.matches('[data-act="sync-toggle"]')) { onSyncToggle(ev.target.checked); return true; }
+    if (!ev.target.matches('[data-act="sp-upd"]')) return false;
     onConfig({ updateCheck: ev.target.checked });
     return true;
   }

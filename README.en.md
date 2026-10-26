@@ -294,6 +294,50 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 
 </details>
 
+<details>
+<summary><b>Moving to a new device with a code</b></summary>
+
+1. On the device that already has the dashboard, open Settings (the gear icon), the Devices tab, and click Add another device.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/01-en.webp" alt="Dashboard settings, Devices tab, with the Add another device button pointed out." width="600">
+
+2. Click Generate code. Copy the code or save it as a .ltj file, and copy the PIN by hand. The code works for 15 minutes and only once.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/02-en.webp" alt="The Add another device window with the code, the six-digit PIN and the validity bar." width="600">
+
+3. Install the dashboard on the new device. In the first step choose I already have a journal on another device and click Next.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/03-en.webp" alt="Getting started welcome screen with three choices, I already have a journal on another device pointed out." width="600">
+
+4. Paste the code (or drop the .ltj file), enter the PIN and click Next. The dashboard connects to your journal and pulls your settings by itself.
+
+   <img src="docs/img/poradnik/przeniesienie-kodem/04-en.webp" alt="The Code step with the pasted code, the PIN 482 913 and the Next button." width="600">
+
+   _The code gives access to your Notion. Do not send it to anyone, especially over chat. The code and PIN in this picture are made up._
+
+</details>
+
+<details>
+<summary><b>Moving with the token, without a code</b></summary>
+
+1. Open notion.so/profile/integrations and click the Local Trading Journal integration, the same one as on the first device.
+
+   <img src="docs/img/poradnik/notion-token/01-en.webp" alt="The Notion integrations list with the Local Trading Journal card." width="600">
+
+2. Next to Internal Integration Secret, click Show and then Copy. Do not create a new integration, the same token is enough.
+
+   <img src="docs/img/poradnik/notion-token/02-en.webp" alt="The Internal Integration Secret field with a hidden key and the Copy button." width="600">
+
+3. On the new device choose I already have a journal on another device, open I don't have a code and click Connect with the token.
+
+   <img src="docs/img/poradnik/przeniesienie-tokenem/03-en.webp" alt="The Code step with I don't have a code expanded and the Connect with the token button." width="600">
+
+4. Paste the token into the field. The dashboard checks it, finds your journal and pulls your settings from Notion by itself.
+
+   <img src="docs/img/poradnik/przeniesienie-tokenem/04-en.webp" alt="The Token step in Getting started with the Paste the token field." width="600">
+
+</details>
+
 ## Running
 
 - **Windows:** `Dashboard.vbs` (no console window; logs in `dashboard.log`) or `Dashboard.cmd` (with a console window, for troubleshooting). Desktop shortcut with an icon: `powershell -ExecutionPolicy Bypass -File narzedzia\utworz-skrot.ps1`.
