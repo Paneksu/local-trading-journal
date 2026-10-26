@@ -21,6 +21,7 @@ Zrzuty pochodzą z atrapy z przykładowymi danymi.
 - [Poradnik krok po kroku](#poradnik-krok-po-kroku)
 - [Uruchamianie](#uruchamianie)
 - [Aktualizacja](#aktualizacja)
+- [Wiele urządzeń](#wiele-urządzeń)
 - [Kopia i przywracanie](#kopia-i-przywracanie)
 - [Zasady liczenia](#zasady-liczenia)
 - [FAQ](#faq)
@@ -329,6 +330,27 @@ Skąd nowa wersja:
 Migracje dodają wyłącznie nowe pola, opcje i widoki. Nie usuwają, nie zmieniają typów, nie zmieniają nazw pól z danymi i nie dotykają wartości we wpisach. Zasady: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Sprawdzanie aktualizacji wyłączysz w Ustawieniach → Ogólne.
+
+## Wiele urządzeń
+
+Dane są w Notion, więc każde urządzenie widzi te same trade'y, konta i wpisy. Na nowe urządzenie przenosisz tylko konfigurację.
+
+**Z kodem przeniesienia (zalecane, trzy ruchy):**
+1. Na pierwszym urządzeniu: Ustawienia → „Dodaj kolejne urządzenie”. Dashboard pokazuje kod przeniesienia i osobno 6-cyfrowy PIN. Kod jest ważny 15 minut. Możesz go skopiować albo zapisać jako plik `.ltj`.
+2. Na nowym urządzeniu pobierz aplikację i uruchom `Instaluj.cmd` albo `./install.sh`. W kreatorze wybierz „Mam już dziennik na innym urządzeniu”.
+3. Wklej kod (albo upuść plik `.ltj`), wpisz PIN i kliknij „Dalej”. Token, strona główna, mapowanie pól, własne logo i ustawienia są na miejscu.
+
+**Bez kodu:** wybierz „Mam dziennik w Notion, ale bez dashboardu”, wklej ten sam token (Notion → integracja → „Show”) i udostępnij stronę dziennika; kreator sam go znajdzie. Ustawienia i tak dociągną się z Notion.
+
+**Synchronizacja ustawień:** paleta (osobno dla Onyx i Platinum), marginesy BE, język, motyw i sprawdzanie aktualizacji są zapisywane w zwiniętym bloku „Ustawienia dashboardu (nie edytuj)” na końcu strony głównej w Notion, bez tokenu. Dashboard zapisuje je 2 s po zmianie i czyta przy starcie oraz przy automatycznym odświeżaniu; przy konflikcie wygrywa ostatnia zmiana. Filtry (typ, okres, konta, setup) zostają osobno na każdym urządzeniu, bo to wygoda lokalna. Wyłącznik: Ustawienia → „Synchronizuj ustawienia między urządzeniami”. Istniejące instalacje dostają blok przy aktualizacji do 1.1.0 (migracja dodaje go na końcu strony i nie rusza innej treści).
+
+**Lista urządzeń** (Ustawienia): nazwa (domyślnie nazwa komputera), ostatnio widziane, zmiana nazwy. Usunięcie urządzenia: token jest wspólny dla wszystkich urządzeń, więc wygeneruj nowy token w Notion (integracja → odśwież secret) i wklej go na urządzeniach, które mają zostać („Zmień token”). Pozostałe tracą dostęp.
+
+**Zabezpieczenia i ograniczenia:**
+- Kod zawiera token do Twojego Notion. Jest zaszyfrowany (AES-256-GCM, klucz z PIN-u przez PBKDF2-SHA256, 210 000 iteracji, losowa sól), ale 6-cyfrowy PIN chroni tylko krótko. Dlatego kod wygasa po 15 minutach, działa jeden raz, a po 5 złych PIN-ach jest blokowany. Nie wysyłaj kodu przez czat ani e-mail: przenieś go sam, np. plikiem `.ltj` na pendrive.
+- PIN jest losowany kryptograficznie i pokazywany osobno. Kod i PIN nie trafiają do logów ani do pamięci przeglądarki.
+- Eksport i import mają tę samą ochronę co zapis: tylko 127.0.0.1, Host i Origin dashboardu, nagłówek `X-THQ`.
+- Własne logo z `public/img/firmy/custom/` przenoszą się, jeśli są małe (do 60 KB każde, 150 KB razem); większe dashboard wypisze jako pominięte.
 
 ## Kopia i przywracanie
 

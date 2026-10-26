@@ -15,6 +15,7 @@ Dozwolone operacje (jedyne, które przyjmuje `lib/migrate.mjs`):
 | `addProperty` | dodaje pole, jeśli nie ma go jeszcze pod żadną znaną nazwą |
 | `addOption` | dodaje opcję do pola wyboru, wysyłając wszystkie dotychczasowe opcje plus nową |
 | `addView` | dodaje widok bazy, jeśli nie ma widoku o tej nazwie |
+| `addPageBlock` | dopisuje znany blok (obecnie tylko `settings`) na końcu strony głównej, jeśli go nie ma; nie rusza innej treści strony |
 
 Zakazane: usuwanie pól, opcji i widoków, zmiana typu pola, zmiana nazwy pola z danymi, nadpisywanie wartości we wpisach, relacje dwustronne w migracjach (zmieniają drugą bazę).
 
@@ -72,7 +73,7 @@ Instalacje z ZIP pobierają archiwum wyłącznie z `codeload.github.com` (HTTPS)
 
 Users keep their trades, accounts and expenses in Notion. Every Notion schema change reaches them through a migration, so migrations are **additive and idempotent only**.
 
-Allowed operations (the only ones `lib/migrate.mjs` accepts): `addProperty`, `addOption` (sends all existing options plus the new one), `addView`.
+Allowed operations (the only ones `lib/migrate.mjs` accepts): `addProperty`, `addOption` (sends all existing options plus the new one), `addView`, `addPageBlock` (appends a known block, currently only `settings`, to the end of the home page if missing).
 
 Forbidden: deleting properties, options or views, changing a property type, renaming a property that holds data, overwriting values, two-way relations in migrations.
 

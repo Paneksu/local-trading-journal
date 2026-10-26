@@ -1,6 +1,6 @@
 {
   "$comment": "Jedno źródło prawdy o schemacie Notion: strona główna, 4 bazy, pola, opcje, relacje, formuły i widoki. Używa go setup.mjs (nowa instalacja), a aktualizacje dokładają różnice migracjami z migrations/. Zmiany tylko addytywne, patrz CONTRIBUTING.md. Formuły: {{p:rola}} to prop(\"nazwa pola\"), {{o:rola:token}} to nazwa opcji w języku instalacji, {{x:baza.rola}} to sama nazwa pola z innej bazy. / Single source of truth for the Notion workspace; additive changes only.",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "rootPage": {
     "icon": "📊",
     "title": { "pl": "Dziennik tradingowy", "en": "Trading Journal" },
@@ -9,7 +9,8 @@
       "en": "Your trading journal. Log trades, prop accounts, expenses and payouts here or in the local dashboard; the dashboard calculates the statistics."
     },
     "dashboardLabel": { "pl": "Dashboard (działa tylko na Twoim komputerze): ", "en": "Dashboard (runs only on your computer): " },
-    "dashboardUrl": "http://127.0.0.1:4321"
+    "dashboardUrl": "http://127.0.0.1:4321",
+    "settingsBlock": true
   },
   "order": ["konta", "dziennik", "trades", "finanse"],
   "databases": {

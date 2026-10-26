@@ -2,6 +2,22 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.1.0] · 2026-10-26
+
+### PL
+- „Kolejne urządzenie”: kod przeniesienia z PIN-em (AES-256-GCM, PBKDF2, ważny 15 minut, jednorazowy, 5 prób) albo plik `.ltj`; w kreatorze wybór „Mam już dziennik na innym urządzeniu”.
+- Synchronizacja ustawień (paleta, marginesy BE, język, motyw, aktualizacje) przez zwinięty blok na stronie głównej w Notion; wygrywa ostatnia zmiana, filtry zostają na urządzeniu.
+- Lista urządzeń w Ustawieniach ze zmianą nazwy i instrukcją odłączenia.
+- Migracja 002 dodaje blok ustawień do istniejących dzienników (na końcu strony, bez zmian w innej treści).
+- Saldo konta liczone rollupem „P&L trade'ów” (API Notion odrzuca map() po relacji w formułach).
+
+### EN
+- "Another device": a transfer code with a PIN (AES-256-GCM, PBKDF2, valid 15 minutes, single use, 5 attempts) or a `.ltj` file; the wizard offers "I already have a journal on another device".
+- Settings sync (palette, BE margins, language, theme, updates) through a collapsed block on the Notion home page; the latest change wins, filters stay per device.
+- Device list in Settings with rename and disconnect instructions.
+- Migration 002 adds the settings block to existing journals (at the end of the page, nothing else changes).
+- Account balance computed with a "Trades P&L" rollup (the Notion API rejects map() over relations in formulas).
+
 ## [1.0.0] · 2026-10-26
 
 ### PL

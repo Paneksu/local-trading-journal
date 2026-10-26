@@ -21,6 +21,7 @@ Screenshots come from the mock with sample data.
 - [Step-by-step guide](#step-by-step-guide)
 - [Running](#running)
 - [Updating](#updating)
+- [Multiple devices](#multiple-devices)
 - [Backup and restore](#backup-and-restore)
 - [How numbers are calculated](#how-numbers-are-calculated)
 - [FAQ](#faq)
@@ -315,6 +316,27 @@ Where the new version comes from:
 Migrations only add new properties, options and views. They never delete, change types, rename properties that hold data or touch entry values. Rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Turn update checks off in Settings → General.
+
+## Multiple devices
+
+Your data lives in Notion, so every device sees the same trades, accounts and entries. Only the configuration moves to a new device.
+
+**With a transfer code (recommended, three moves):**
+1. On the first device: Settings → "Add another device". The dashboard shows a transfer code and, separately, a 6-digit PIN. The code is valid for 15 minutes. Copy it or save it as a `.ltj` file.
+2. On the new device download the app and run `Instaluj.cmd` or `./install.sh`. In the wizard choose "I already have a journal on another device".
+3. Paste the code (or drop the `.ltj` file), type the PIN and click "Next". The token, home page, property mapping, custom logos and settings are all in place.
+
+**Without a code:** choose "I have a journal in Notion but no dashboard", paste the same token (Notion → integration → "Show") and share the journal page; the wizard finds it. Settings still come from Notion.
+
+**Settings sync:** palette (separately for Onyx and Platinum), BE margins, language, theme and update checks are stored in a collapsed "Dashboard settings (do not edit)" block at the end of the Notion home page, without the token. The dashboard writes it 2 s after a change and reads it on start and on auto-refresh; on conflict the latest change wins. Filters (type, period, accounts, setup) stay per device, as a local convenience. Switch: Settings → "Sync settings between devices". Existing installs get the block when updating to 1.1.0 (the migration appends it to the end of the page and leaves everything else alone).
+
+**Device list** (Settings): name (the computer name by default), last seen, rename. Removing a device: the token is shared by all devices, so generate a new token in Notion (integration → refresh the secret) and paste it on the devices that stay ("Change token"). The others lose access.
+
+**Security and limits:**
+- The code carries the token to your Notion. It is encrypted (AES-256-GCM, key from the PIN via PBKDF2-SHA256, 210,000 iterations, random salt), but a 6-digit PIN only protects it briefly. That is why the code expires after 15 minutes, works once and is locked after 5 wrong PINs. Do not send the code over chat or e-mail: carry it yourself, e.g. as a `.ltj` file on a USB stick.
+- The PIN is generated cryptographically and shown separately. Neither the code nor the PIN goes to logs or browser storage.
+- Export and import have the same protection as writes: 127.0.0.1 only, the dashboard Host and Origin, the `X-THQ` header.
+- Custom logos from `public/img/firmy/custom/` are included when small (up to 60 KB each, 150 KB in total); larger ones are listed as skipped.
 
 ## Backup and restore
 

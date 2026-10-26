@@ -47,7 +47,7 @@ const notion = createNotion({ token: S.token, version: S.version, base: S.base }
 const persist = () => saveConfig(config);
 
 async function migrateCtx(dryRun) {
-  return { notion, sources: S.sources, config, lang, schema: loadSchemaFile(), dryRun };
+  return { notion, sources: S.sources, config, lang, schema: loadSchemaFile(), dryRun, rootUrl: S.rootUrl };
 }
 async function runLocalMigrations(dryRun) {
   if (!S.token || !S.sources.trades) throw new Error(L('Brak konfiguracji Notion w .env.', 'No Notion configuration in .env.'));

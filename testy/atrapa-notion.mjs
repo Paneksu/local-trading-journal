@@ -203,6 +203,26 @@ const dsObject = (id) => {
 // strony poza bazami (strona nadrzędna i strony utworzone przez setup.mjs) oraz widoki baz
 const loosePages = new Map([[PARENT_PAGE, { object: 'page', id: PARENT_PAGE, url: 'https://www.notion.so/Atrapa-Parent-aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa', parent: { type: 'workspace', workspace: true }, properties: { title: { type: 'title', title: txt('Atrapa: strona nadrzędna') } }, children: [] }]]);
 const views = new Map(); // viewId -> { id, database_id, data_source_id, name, type, filter, sorts, configuration }
+// bloki treści stron (akapity, nagłówki, toggle z blokiem kodu ustawień): id -> blok; dzieci w polu children
+const blocks = new Map();
+function mkBlocks(raw, parentId) {
+  return (raw || []).map((r) => {
+    const { children, object, ...rest } = JSON.parse(JSON.stringify(r)); void object;
+    const kids = children || rest[rest.type]?.children || [];
+    if (rest[rest.type]) delete rest[rest.type].children;
+    const blk = { object: 'block', id: rest.id || randomUUID(), parent: { type: 'block_id', block_id: parentId }, ...rest, has_children: false, children: [] };
+    blocks.set(blk.id, blk);
+    blk.children = mkBlocks(kids, blk.id);
+    blk.has_children = blk.children.length > 0;
+    return blk;
+  });
+}
+const strip = (b) => { const { children, ...o } = b; void children; return o; };
+// treść użytkownika na stronie nadrzędnej (migracja bloku ustawień nie może jej ruszyć)
+loosePages.get(PARENT_PAGE).children.push(...mkBlocks([
+  { type: 'heading_2', heading_2: { rich_text: txt('Moje notatki') } },
+  { type: 'paragraph', paragraph: { rich_text: txt('Plan na tydzień: tylko A+ setupy.') } },
+], PARENT_PAGE));
 const UNSUPPORTED_VIEWS = new Set(String(process.env.ATRAPA_VIEWS_BEZ || '').split(',').filter(Boolean)); // typy widoków, których „API nie obsługuje”
 const findLoose = (id) => (shared ? [...loosePages.values()].find((p) => sameId(p.id, id)) : null);
 let shared = !process.env.ATRAPA_NIEUDOSTEPNIONA; // czy użytkownik dodał integrację do strony nadrzędnej („Connections”)
@@ -319,10 +339,11 @@ http.createServer(async (req, res) => {
       const nd = { ...remap({ ...d, pages: [] }), id: dsMap.get(id), dbId: randomUUID(), parentPage: newPageId };
       nd.pages = d.pages.map((pg) => ({ ...remap(pg), id: pageMap.get(pg.id), parent: { type: 'data_source_id', data_source_id: dsMap.get(id) } }));
       store.set(nd.id, nd);
-      children.push({ type: 'child_database', id: nd.dbId, title: nd.name });
+      children.push(...mkBlocks([{ id: nd.dbId, type: 'child_database', child_database: { title: nd.name } }], newPageId));
       for (const v of [...views.values()].filter((x) => x.data_source_id === id)) { const vid = randomUUID(); views.set(vid, { ...remap(v), id: vid, data_source_id: nd.id, parent: { type: 'database_id', database_id: nd.dbId } }); }
     }
-    loosePages.set(newPageId, { ...JSON.parse(JSON.stringify(src)), id: newPageId, url: `https://www.notion.so/Kopia-${newPageId.replace(/-/g, '')}`, parent: { type: 'page_id', page_id: PARENT_PAGE }, children });
+    const other = mkBlocks(src.children.filter((c) => c.type !== 'child_database').map(function clone(c) { const { id, children, parent, has_children, ...o } = c; void id; void parent; void has_children; return { ...o, children: (children || []).map(clone) }; }), newPageId);
+    loosePages.set(newPageId, { ...JSON.parse(JSON.stringify({ ...src, children: [] })), id: newPageId, url: `https://www.notion.so/Kopia-${newPageId.replace(/-/g, '')}`, parent: { type: 'page_id', page_id: PARENT_PAGE }, children: [...other, ...children] });
     return send(res, 200, { id: newPageId, dsIds: Object.fromEntries([...dsMap.entries()]) });
   }
   if (p === '/__test/fail' && req.method === 'POST') { failRule = await body(req); return send(res, 200, { ok: true }); }
@@ -366,7 +387,7 @@ http.createServer(async (req, res) => {
       if (def.type === 'relation' && def.relation.dual_property) { const t = store.get(def.relation.data_source_id); const sp = Object.values(t.schema).find((d) => d.id === def.relation.dual_property.synced_property_id); sp.relation.dual_property.synced_property_id = def.id; }
     }
     if (![...Object.values(ds.schema)].some((d) => d.type === 'title')) { store.delete(dsId); return send(res, 400, { message: 'A database must have a title property' }); }
-    findLoose(b.parent.page_id).children.push({ type: 'child_database', id: dbId, title });
+    findLoose(b.parent.page_id).children.push(...mkBlocks([{ id: dbId, type: 'child_database', child_database: { title } }], b.parent.page_id));
     const dv = randomUUID(); // jak w Notion: nowa baza ma widok domyślny
     views.set(dv, { object: 'view', id: dv, parent: { type: 'database_id', database_id: dbId }, data_source_id: dsId, name: 'Default view', type: 'table', filter: null, sorts: null, configuration: null });
     const out = { object: 'database', id: dbId, url: `https://www.notion.so/${dbId.replace(/-/g, '')}`, title: b.title };
@@ -426,9 +447,10 @@ http.createServer(async (req, res) => {
       if (!parent) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find page with ID. Make sure the relevant pages and databases are shared with your integration.' });
       const id = randomUUID();
       const title = (b.properties?.title?.title || []).map((x) => x.text?.content || '').join('');
-      const pg = { object: 'page', id, created_time: stamp(new Date()), last_edited_time: stamp(new Date()), archived: false, in_trash: false, url: `https://www.notion.so/${title.replace(/\W+/g, '-')}-${id.replace(/-/g, '')}`, parent: { type: 'page_id', page_id: parent.id }, icon: b.icon || null, properties: { title: { id: 'title', type: 'title', title: txt(title) } }, children: [...(b.children || [])] };
+      const pg = { object: 'page', id, created_time: stamp(new Date()), last_edited_time: stamp(new Date()), archived: false, in_trash: false, url: `https://www.notion.so/${title.replace(/\W+/g, '-')}-${id.replace(/-/g, '')}`, parent: { type: 'page_id', page_id: parent.id }, icon: b.icon || null, properties: { title: { id: 'title', type: 'title', title: txt(title) } }, children: [] };
+      pg.children = mkBlocks(b.children || [], id);
       loosePages.set(id, pg);
-      parent.children.push({ type: 'child_page', id, title });
+      parent.children.push(...mkBlocks([{ id, type: 'child_page', child_page: { title } }], parent.id));
       return send(res, 200, pg);
     }
     const ds = visibleDs(store.get(b.parent?.data_source_id));
@@ -476,11 +498,26 @@ http.createServer(async (req, res) => {
     return send(res, 200, { object: 'list', results: results.slice(start, start + size), has_more: start + size < results.length, next_cursor: start + size < results.length ? String(start + size) : null });
   }
   if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})\/children$/)) && req.method === 'PATCH') {
-    const parent = findLoose(m[1]);
+    const parent = findLoose(m[1]) || (shared ? blocks.get(m[1]) : null);
     if (!parent) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
     const b = await body(req);
-    parent.children.push(...(b.children || []));
-    return send(res, 200, { object: 'list', results: b.children || [] });
+    const made = mkBlocks(b.children || [], parent.id);
+    parent.children.push(...made);
+    if (parent.object === 'block') parent.has_children = true;
+    return send(res, 200, { object: 'list', results: made.map(strip) });
+  }
+  if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})\/children$/)) && req.method === 'GET') {
+    const parent = findLoose(m[1]) || (shared ? blocks.get(m[1]) : null);
+    if (!parent) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
+    return send(res, 200, { object: 'list', results: parent.children.map(strip), has_more: false, next_cursor: null });
+  }
+  if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})$/)) && req.method === 'PATCH') {
+    const blk = shared ? blocks.get(m[1]) : null;
+    if (!blk) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
+    const b = await body(req);
+    if (b[blk.type]) { const { children, ...rest } = b[blk.type]; void children; blk[blk.type] = { ...blk[blk.type], ...rest }; }
+    blk.last_edited_time = new Date().toISOString();
+    return send(res, 200, strip(blk));
   }
   if (p === '/v1/views' && req.method === 'POST') {
     const b = await body(req);

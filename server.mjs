@@ -2,7 +2,9 @@
 // Czyta .env i config.local.json, odpytuje Notion API, normalizuje dane (po rolach pól, nie po nazwach) i serwuje public/.
 // Token nigdy nie trafia do frontendu ani do logów. / The token never reaches the browser or the logs.
 import http from 'node:http';
-import { existsSync, statSync, createReadStream } from 'node:fs';
+import { existsSync, statSync, createReadStream, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { ROOT, CONFIG_DIR, loadEnv, envSettings, loadConfig, saveConfig, saveEnv, configExists } from './lib/env.mjs';
@@ -17,6 +19,8 @@ import { fetchLatest, isNewer } from './lib/updater.mjs';
 import { fullCheck, fixSchema, demoRemoval } from './lib/health.mjs';
 import { createWorkspace } from './lib/workspace.mjs';
 import { verifyToken, listPages, writeShortcut, hasShortcut } from './lib/wizard.mjs';
+import { createSync } from './lib/sync.mjs';
+import { sealPackage, openPackage, peekPackage, MAX_ATTEMPTS } from './lib/transfer.mjs';
 
 const PUBLIC = path.join(ROOT, 'public');
 const HOST = '127.0.0.1';
@@ -41,6 +45,7 @@ function reconfigure() {
   Object.assign(SOURCES, S.sources);
   Object.assign(notion, createNotion({ token: S.token, version: S.version, base: S.base, t }));
   data.invalidate();
+  if (typeof sync !== 'undefined') sync.invalidate();
 }
 
 // Pierwsze uruchomienie bez config.local.json (np. instalacja sprzed wersji 1.0): pola są rozpoznawane po znanych nazwach PL i EN,
@@ -248,13 +253,13 @@ function sendError(res, e) {
   const s = e instanceof NotionError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
   const status = s === 401 || s < 400 || s > 599 ? 502 : s;
-  return sendJson(res, status, { error: e.message, code: e.code });
+  return sendJson(res, status, { error: e.message, code: e.code, ...(e.left !== undefined ? { left: e.left } : {}) });
 }
 
 function meta() {
   return {
     lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
-    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false,
+    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
 
@@ -265,6 +270,7 @@ const ACTIONS = {
   '/api/config': async (body) => {
     if (typeof body.updateCheck === 'boolean') config.updateCheck = body.updateCheck;
     if (typeof body.onboarded === 'boolean') config.onboarded = body.onboarded;
+    if (typeof body.syncEnabled === 'boolean') config.syncEnabled = body.syncEnabled;
     if (body.lang === 'pl' || body.lang === 'en') { config.lang = body.lang; setLang(body.lang); }
     persistConfig();
     return { ok: true, ...meta() };
@@ -396,6 +402,80 @@ Object.assign(ACTIONS, {
   },
 });
 
+// ---------- kolejne urządzenie: synchronizacja ustawień, lista urządzeń, kod przeniesienia ----------
+// Zegar z przesunięciem tylko do testów (THQ_CLOCK_OFFSET_MS), żeby sprawdzić wygaśnięcie kodu bez czekania 15 min.
+const now = () => Date.now() + (Number(process.env.THQ_CLOCK_OFFSET_MS) || 0);
+if (!config.deviceId) { config.deviceId = randomUUID(); persistConfig(); }
+if (!config.deviceName) { config.deviceName = (hostname() || 'device').replace(/\.local$/i, '').slice(0, 24); persistConfig(); }
+const sync = createSync(() => ({ notion, config, rootUrl: S.rootUrl, now }), () => saveConfig(config));
+// Licznik prób PIN-u i zużyte kody tylko w pamięci tego serwera (urządzenie B). 5 prób na kod, potem trzeba wygenerować nowy.
+const pinTries = new Map();
+const usedCodes = new Set();
+const CUSTOM_DIR = path.join(ROOT, 'public', 'img', 'firmy', 'custom');
+const CUSTOM_RE = /^[\w.-]{1,60}\.(webp|png|jpe?g)$/i;
+function customFiles() {
+  const out = [], skipped = [];
+  let total = 0;
+  if (!existsSync(CUSTOM_DIR)) return { out, skipped };
+  for (const f of readdirSync(CUSTOM_DIR)) {
+    if (!CUSTOM_RE.test(f)) continue;
+    const buf = readFileSync(path.join(CUSTOM_DIR, f));
+    if (buf.length > 60_000 || total + buf.length > 150_000) { skipped.push(f); continue; }
+    total += buf.length;
+    out.push({ name: f, b64: buf.toString('base64') });
+  }
+  return { out, skipped };
+}
+Object.assign(ACTIONS, {
+  '/api/sync': async (body) => sync.push(body.settings, body.updatedAt),
+  '/api/devices/rename': async (body) => {
+    const name = String(body.name || '').trim();
+    if (!name || name.length > 40) throw new ValidationError({ name: t('Nazwa urządzenia: od 1 do 40 znaków.') });
+    return sync.rename(String(body.id || config.deviceId), name);
+  },
+  // Eksport tylko po jawnym kliknięciu; kod i PIN nie trafiają do logów.
+  '/api/transfer/export': async () => {
+    if (!notion.hasToken || !SOURCES.trades) throw Object.assign(new NotionError(t('Najpierw skonfiguruj dziennik na tym urządzeniu.'), 409), { code: 'not-configured' });
+    const { out, skipped } = customFiles();
+    const pack = sealPackage({
+      token: S.token, version: S.version, rootUrl: S.rootUrl, sources: { ...SOURCES },
+      rootPageId: config.rootPageId || null, databases: config.databases || null, fields: config.fields || {}, views: config.views || {},
+      options: config.options || {}, lang: config.lang, schemaVersion: config.schemaVersion || 0, custom: out, from: config.deviceName,
+    }, { now: now() });
+    const stamp = new Date(now()).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    return { code: pack.code, pin: pack.pin, expiresAt: pack.expiresAt, fileName: `local-trading-journal-${stamp}.ltj`, skipped };
+  },
+  '/api/transfer/import': async (body) => {
+    let head;
+    try { head = peekPackage(body.code); } catch (e) { throw Object.assign(new NotionError(t('To nie jest kod przeniesienia. Skopiuj go jeszcze raz z pierwszego urządzenia.'), 400), { code: 'bad-code' }); }
+    const id = head.h.id;
+    if (usedCodes.has(id)) throw Object.assign(new NotionError(t('Ten kod został już użyty. Wygeneruj nowy na pierwszym urządzeniu.'), 409), { code: 'used' });
+    if ((pinTries.get(id) || 0) >= MAX_ATTEMPTS) throw Object.assign(new NotionError(t('Za dużo prób. Wygeneruj nowy kod na pierwszym urządzeniu.'), 429), { code: 'locked' });
+    if (body.replace !== true && (await tokenWorks()) && SOURCES.trades) throw Object.assign(new NotionError(t('To urządzenie ma już skonfigurowany dziennik.'), 409), { code: 'configured' });
+    let data;
+    try { data = openPackage(body.code, String(body.pin || ''), { now: now() }); } catch (e) {
+      if (e.code === 'expired') throw Object.assign(new NotionError(t('Kod wygasł. Wygeneruj nowy na pierwszym urządzeniu.'), 410), { code: 'expired' });
+      const n = (pinTries.get(id) || 0) + 1;
+      pinTries.set(id, n);
+      if (n >= MAX_ATTEMPTS) throw Object.assign(new NotionError(t('Za dużo prób. Wygeneruj nowy kod na pierwszym urządzeniu.'), 429), { code: 'locked' });
+      const err = new NotionError(t('Zły PIN. Zostało prób: {n}.', { n: MAX_ATTEMPTS - n }), 400);
+      throw Object.assign(err, { code: 'bad-pin', left: MAX_ATTEMPTS - n });
+    }
+    const probe = createNotion({ token: data.token, version: data.version || S.version, base: S.base, t });
+    let who;
+    try { who = await verifyToken(probe); } catch { throw Object.assign(new NotionError(t('Token z kodu nie działa (może został zmieniony). Użyj ścieżki „Nie mam kodu” z aktualnym tokenem.'), 400), { code: 'token' }); }
+    usedCodes.add(id);
+    saveEnv({ NOTION_TOKEN: data.token, NOTION_VERSION: data.version || S.version });
+    finishInstall({ dsIds: data.sources, dbIds: data.databases || {}, rootUrl: data.rootUrl, rootPageId: data.rootPageId, fields: data.fields, views: data.views, lang: data.lang === 'en' ? 'en' : 'pl', schemaVersion: data.schemaVersion || 0 });
+    config.options = data.options || {};
+    mkdirSync(CUSTOM_DIR, { recursive: true });
+    for (const f of data.custom || []) if (CUSTOM_RE.test(f.name)) writeFileSync(path.join(CUSTOM_DIR, path.basename(f.name)), Buffer.from(f.b64, 'base64'));
+    saveConfig(config);
+    sync.invalidate();
+    return { ok: true, lang: config.lang, workspace: who.workspace, name: who.name, rootUrl: data.rootUrl, from: data.from || '' };
+  },
+});
+
 const server = http.createServer(async (req, res) => {
   try {
     if (!isLoopback(req.socket.remoteAddress) || !ALLOWED_HOSTS.has(req.headers.host || '')) {
@@ -446,6 +526,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/update-check') return sendJson(res, 200, await updateInfo());
     if (url.pathname === '/api/update/status') return sendJson(res, 200, upd);
     if (url.pathname === '/api/setup/status') return sendJson(res, 200, setupJob);
+    if (url.pathname === '/api/sync') return sendJson(res, 200, await sync.pull({ force: url.searchParams.has('force') }));
+    if (url.pathname === '/api/devices') return sendJson(res, 200, await sync.devices());
     if (url.pathname === '/api/setup/state') return sendJson(res, 200, { hasToken: notion.hasToken, configured: !!SOURCES.trades, lang: config.lang, onboarded: config.onboarded !== false, resumable: !!config.setupProgress?.rootPageId, parentPageId: config.setupProgress?.parentPageId || null });
     if (url.pathname === '/api/health') return sendJson(res, 200, { ok: true, version: APP_VERSION });
     if (url.pathname === '/api/ping') return sendJson(res, 200, { ok: true, app: 'trading-hq', version: APP_VERSION, img: stats });

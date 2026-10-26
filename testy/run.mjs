@@ -197,8 +197,14 @@ test('kopia i przywracanie: podgląd bez zapisu, --apply przywraca wartości i w
 });
 
 // ---------- aktualizacja ----------
+// wydanie testowe = następna wersja minor z kolejną migracją (niezależnie od bieżącego numeru)
+const CUR = json(path.join(ROOT, 'package.json')).version;
+const NEXT = CUR.replace(/^(\d+)\.(\d+)\.\d+$/, (m, a, b) => `${a}.${Number(b) + 1}.0`);
+const SV = json(path.join(ROOT, 'schema/notion-schema.json')).schemaVersion;
+const NSV = SV + 1;
+const MIGFILE = `migrations/${String(NSV).padStart(3, '0')}-test-ocena.mjs`;
 const MIG2 = `export default {
-  version: 2,
+  version: ${NSV},
   description: { pl: 'Test: pole Ocena, opcja Breaker, widok Wg oceny', en: 'Test: Rating property, Breaker option, By rating view' },
   ops: [
     { op: 'addProperty', db: 'trades', role: 'rating', spec: { type: 'number', name: { pl: 'Ocena', en: 'Rating' } } },
@@ -207,16 +213,16 @@ const MIG2 = `export default {
   ],
 };
 `;
-function releaseFiles(version = '1.1.0') {
+function releaseFiles(version = NEXT) {
   const files = H.appFiles().map((f) => {
     if (f.path === 'package.json') { const p = JSON.parse(f.data); p.version = version; return { ...f, data: Buffer.from(JSON.stringify(p, null, 2) + '\n') }; }
-    if (f.path === 'schema/notion-schema.json') { const s = JSON.parse(f.data); s.schemaVersion = 2; return { ...f, data: Buffer.from(JSON.stringify(s, null, 2)) }; }
+    if (f.path === 'schema/notion-schema.json') { const s = JSON.parse(f.data); s.schemaVersion = NSV; return { ...f, data: Buffer.from(JSON.stringify(s, null, 2)) }; }
     return f;
   });
-  files.push({ path: 'migrations/002-test-ocena.mjs', data: Buffer.from(MIG2) });
+  files.push({ path: MIGFILE, data: Buffer.from(MIG2) });
   return files;
 }
-async function release(version = '1.1.0', { badHash = false } = {}) {
+async function release(version = NEXT, { badHash = false } = {}) {
   const files = releaseFiles(version);
   const hash = badHash ? '0'.repeat(64) : treeHash(files);
   const gh = { release: { version, body: `## Zmiany\n- **Nowe** pole Ocena\n- widok \`Wg oceny\`\n\ntree-sha256: ${hash}`, tarball: H.tarGz(files, `local-trading-journal-${version}`) } };
@@ -226,13 +232,13 @@ async function release(version = '1.1.0', { badHash = false } = {}) {
 function install(dir, extraCfg = {}) {
   H.writeTree(dir, H.appFiles());
   writeFileSync(path.join(dir, '.env'), `# moje klucze\nNOTION_TOKEN=x\nDS_TRADES=${IDS.DS_TRADES}\nDS_KONTA=${IDS.DS_KONTA}\nDS_DZIENNIK=${IDS.DS_DZIENNIK}\nDS_FINANSE=${IDS.DS_FINANSE}\n`);
-  writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ schemaVersion: 1, lang: 'pl', updateCheck: true, fields: {}, options: {}, ...extraCfg }, null, 2));
+  writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ schemaVersion: SV, lang: 'pl', updateCheck: true, fields: {}, options: {}, ...extraCfg }, null, 2));
   mkdirSync(path.join(dir, 'public/img/firmy/custom'), { recursive: true });
   writeFileSync(path.join(dir, 'public/img/firmy/custom/moja-firma.webp'), 'logo użytkownika');
 }
 const stripNew = (dump) => { const o = pagesOf(dump); for (const k of Object.keys(o)) o[k] = o[k].replace(/,?"Ocena":\{[^}]*\}/, ''); return o; };
 
-test('aktualizacja 1.0.0 → 1.1.0 (ZIP): dry-run nic nie zapisuje, dane nietknięte, drugi przebieg bez zmian', async () => {
+test('aktualizacja do następnej wersji (ZIP): dry-run nic nie zapisuje, dane nietknięte, drugi przebieg bez zmian', async () => {
   const A = await H.atrapa(nextPort());
   const R = await release();
   const dir = H.tmp();
@@ -244,22 +250,22 @@ test('aktualizacja 1.0.0 → 1.1.0 (ZIP): dry-run nic nie zapisuje, dane nietkni
   const dry = await H.run(path.join(dir, 'update.mjs'), ['--dry-run', '--json'], env, { cwd: dir });
   assert.equal(dry.code, 0, dry.err || dry.out);
   const plan = dry.lines.find((l) => l.plan).plan;
-  assert.equal(plan.mode, 'zip'); assert.equal(plan.target, '1.1.0'); assert.equal(plan.hasCode, true);
+  assert.equal(plan.mode, 'zip'); assert.equal(plan.target, NEXT); assert.equal(plan.hasCode, true);
   assert.deepEqual(plan.notion.map((c) => `${c.kind}:${c.status}`).sort(), ['option:add', 'property:add', 'view:add']);
   assert.deepEqual(await A.writes(), [], 'dry-run nie zapisuje do Notion');
-  assert.equal(json(path.join(dir, 'package.json')).version, '1.0.0', 'dry-run nie podmienia plików');
+  assert.equal(json(path.join(dir, 'package.json')).version, CUR, 'dry-run nie podmienia plików');
   assert.ok(!existsSync(path.join(dir, 'backups')), 'dry-run nie robi kopii');
   // aktualizacja
   const up = await H.run(path.join(dir, 'update.mjs'), ['--yes', '--json'], env, { cwd: dir });
   assert.equal(up.code, 0, up.err || up.out);
   const done = up.lines.find((l) => l.done);
-  assert.equal(done.target, '1.1.0');
-  assert.equal(json(path.join(dir, 'package.json')).version, '1.1.0');
-  assert.ok(existsSync(path.join(dir, 'migrations/002-test-ocena.mjs')));
+  assert.equal(done.target, NEXT);
+  assert.equal(json(path.join(dir, 'package.json')).version, NEXT);
+  assert.ok(existsSync(path.join(dir, MIGFILE)));
   assert.deepEqual(readFileSync(path.join(dir, '.env')), envBefore, '.env nietknięty');
   assert.equal(readFileSync(path.join(dir, 'public/img/firmy/custom/moja-firma.webp'), 'utf8'), 'logo użytkownika');
   const cfg = json(path.join(dir, 'config.local.json'));
-  assert.equal(cfg.schemaVersion, 2);
+  assert.equal(cfg.schemaVersion, NSV);
   assert.ok(cfg.fields.trades.rating && cfg.views.trades.rating);
   assert.ok(readdirSync(path.join(dir, 'backups')).length === 1);
   const after = await A.dump();
@@ -280,14 +286,14 @@ test('aktualizacja 1.0.0 → 1.1.0 (ZIP): dry-run nic nie zapisuje, dane nietkni
 
 test('aktualizacja: zła suma archiwum przerywa bez zmian w plikach', async () => {
   const A = await H.atrapa(nextPort());
-  const R = await release('1.1.0', { badHash: true });
+  const R = await release(NEXT, { badHash: true });
   const dir = H.tmp();
   install(dir);
   const up = await H.run(path.join(dir, 'update.mjs'), ['--yes', '--json'], H.cleanEnv({ NOTION_API_BASE: A.base, ...R.env }), { cwd: dir });
   assert.notEqual(up.code, 0);
   assert.match(up.lines.find((l) => l.error).error.message, /Suma|checksum/);
-  assert.equal(json(path.join(dir, 'package.json')).version, '1.0.0');
-  assert.ok(!existsSync(path.join(dir, 'migrations/002-test-ocena.mjs')));
+  assert.equal(json(path.join(dir, 'package.json')).version, CUR);
+  assert.ok(!existsSync(path.join(dir, MIGFILE)));
   A.stop(); R.close();
 });
 
@@ -301,8 +307,8 @@ test('aktualizacja przez git: odmowa przy lokalnych zmianach, potem git pull --f
   git(seed, 'init', '-q', '-b', 'main'); git(seed, 'add', '-A'); git(seed, 'commit', '-q', '-m', 'v1.0.0'); git(seed, 'remote', 'add', 'origin', bare); git(seed, 'push', '-q', 'origin', 'main');
   git(work, 'clone', '-q', bare, '.');
   writeFileSync(path.join(work, '.env'), `NOTION_TOKEN=x\nDS_TRADES=${IDS.DS_TRADES}\nDS_KONTA=${IDS.DS_KONTA}\nDS_DZIENNIK=${IDS.DS_DZIENNIK}\nDS_FINANSE=${IDS.DS_FINANSE}\n`);
-  writeFileSync(path.join(work, 'config.local.json'), JSON.stringify({ schemaVersion: 1, lang: 'pl' }));
-  H.writeTree(seed, releaseFiles()); git(seed, 'add', '-A'); git(seed, 'commit', '-q', '-m', 'v1.1.0'); git(seed, 'push', '-q', 'origin', 'main');
+  writeFileSync(path.join(work, 'config.local.json'), JSON.stringify({ schemaVersion: SV, lang: 'pl' }));
+  H.writeTree(seed, releaseFiles()); git(seed, 'add', '-A'); git(seed, 'commit', '-q', '-m', `v${NEXT}`); git(seed, 'push', '-q', 'origin', 'main');
   const env = H.cleanEnv({ NOTION_API_BASE: A.base, ...R.env });
   // lokalna zmiana w kodzie: odmowa z wyjaśnieniem
   writeFileSync(path.join(work, 'server.mjs'), readFileSync(path.join(work, 'server.mjs'), 'utf8') + '\n// moja zmiana\n');
@@ -310,14 +316,14 @@ test('aktualizacja przez git: odmowa przy lokalnych zmianach, potem git pull --f
   assert.notEqual(dirty.code, 0);
   const e = dirty.lines.find((l) => l.error).error;
   assert.equal(e.code, 'dirty'); assert.match(e.message, /lokalne zmiany/);
-  assert.equal(json(path.join(work, 'package.json')).version, '1.0.0');
+  assert.equal(json(path.join(work, 'package.json')).version, CUR);
   git(work, 'checkout', '--', 'server.mjs');
   const dry = await H.run(path.join(work, 'update.mjs'), ['--dry-run', '--json'], env, { cwd: work });
   assert.equal(dry.lines.find((l) => l.plan).plan.notion.length, 3, dry.err || dry.out);
   const up = await H.run(path.join(work, 'update.mjs'), ['--yes', '--json'], env, { cwd: work });
   assert.equal(up.code, 0, up.err || up.out);
-  assert.equal(json(path.join(work, 'package.json')).version, '1.1.0');
-  assert.equal(json(path.join(work, 'config.local.json')).schemaVersion, 2);
+  assert.equal(json(path.join(work, 'package.json')).version, NEXT);
+  assert.equal(json(path.join(work, 'config.local.json')).schemaVersion, NSV);
   assert.ok(existsSync(path.join(work, '.env')));
   A.stop(); R.close();
 });
@@ -330,7 +336,7 @@ test('moduł aktualizacji w dashboardzie: wykrycie, obcy Origin, plan, aktualiza
   const before = await A.dump();
   const S = await H.server(nextPort(), { NOTION_API_BASE: A.base, ...R.env }, { cwd: dir });
   const chk = await H.dash(S.base, '/api/update/check', {});
-  assert.equal(chk.j.available, true); assert.equal(chk.j.latest, '1.1.0'); assert.match(chk.j.notes, /Ocena/);
+  assert.equal(chk.j.available, true); assert.equal(chk.j.latest, NEXT); assert.match(chk.j.notes, /Ocena/);
   for (const p of ['/api/update/run', '/api/update/plan', '/api/update/check', '/api/health/full', '/api/demo/remove']) {
     const bad = await H.dash(S.base, p, {}, { origin: 'http://evil.example' });
     assert.equal(bad.status, 403, p);
@@ -352,11 +358,11 @@ test('moduł aktualizacji w dashboardzie: wykrycie, obcy Origin, plan, aktualiza
   assert.equal(st.error, null, JSON.stringify(st));
   assert.deepEqual(st.steps.map((s) => s.status), ['done', 'done', 'done', 'running']);
   let v = '';
-  for (let i = 0; i < 120 && v !== '1.1.0'; i++) {
+  for (let i = 0; i < 120 && v !== NEXT; i++) {
     await H.sleep(250);
     try { v = (await (await fetch(`${S.base}/api/health`)).json()).version; } catch { /* restart w toku */ }
   }
-  assert.equal(v, '1.1.0', 'serwer wrócił w nowej wersji');
+  assert.equal(v, NEXT, 'serwer wrócił w nowej wersji');
   const d = await (await fetch(`${S.base}/api/data`)).json();
   assert.ok(d.data.trades.length > 100);
   assert.deepEqual(stripNew(await A.dump()), stripNew(before));
@@ -527,6 +533,150 @@ test('szablon: zduplikowany dziennik (nowe ID, te same nazwy) łączy się przez
   const h = await H.dash(S.base, '/api/health/full', {});
   assert.deepEqual(h.j.checks.filter((c) => c.status === 'error'), []);
   S.stop(); A.stop();
+});
+
+// ---------- kolejne urządzenie ----------
+test('kolejne urządzenie: kod i PIN, zły PIN, 5 prób, wygaśnięcie, plik, synchronizacja ustawień bez pętli, urządzenia', async () => {
+  const A = await H.atrapa(nextPort(), { ATRAPA_PUSTA: '1' });
+  const dirA = H.tmp();
+  const r = await H.run(path.join(ROOT, 'setup.mjs'), ['--lang', 'pl', '--token', 'ntn_wspolny_token_testowy_123', '--parent', H.PARENT_URL, '--demo', '--yes'], H.cleanEnv({ NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dirA }));
+  assert.equal(r.code, 0, r.err);
+  const cfgA = json(path.join(dirA, 'config.local.json'));
+  assert.equal(cfgA.schemaVersion, SV);
+  const home = (await A.get('/__test/loose')).find((p) => p.id === cfgA.rootPageId);
+  const tog = home.children.find((c) => c.type === 'toggle');
+  assert.ok(tog && tog.children[0].type === 'code', 'nowa instalacja ma blok ustawień');
+  const SA = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dirA });
+  // ustawienia A → Notion (sekret w ustawieniach jest wycinany)
+  const t1 = new Date(Date.now() - 60_000).toISOString();
+  const p1 = await H.dash(SA.base, '/api/sync', { settings: { palette: 'mono', beR: 0.2, token: 'nie-zapisuj' }, updatedAt: t1 });
+  assert.equal(p1.j.written, true, JSON.stringify(p1.j));
+  const block = JSON.stringify(await A.get('/__test/loose'));
+  assert.ok(!block.includes('nie-zapisuj') && !block.includes('ntn_wspolny'), 'w Notion nie ma tokenu ani sekretów');
+  // eksport: obcy Origin odrzucony, kod i PIN
+  assert.equal((await H.dash(SA.base, '/api/transfer/export', {}, { origin: 'http://evil.example' })).status, 403);
+  const ex = (await H.dash(SA.base, '/api/transfer/export', {})).j;
+  assert.match(ex.pin, /^\d{6}$/); assert.match(ex.code, /^LTJ1\./); assert.match(ex.fileName, /\.ltj$/);
+  assert.ok(!SA.p.out.includes(ex.pin) && !SA.p.out.includes(ex.code.slice(5, 40)) && !SA.p.err.includes(ex.code.slice(5, 40)), 'kod i PIN nie trafiają do logów');
+  const wrong = ex.pin === '000000' ? '111111' : '000000';
+  // urządzenie B: zły kod, zły PIN, dobry PIN, ponowne użycie
+  const dirB = H.tmp();
+  const SB = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dirB });
+  assert.equal((await H.dash(SB.base, '/api/transfer/import', {}, { origin: 'http://evil.example' })).status, 403);
+  assert.equal((await H.dash(SB.base, '/api/transfer/import', { code: 'cokolwiek', pin: '123456' })).j.code, 'bad-code');
+  const bad = await H.dash(SB.base, '/api/transfer/import', { code: ex.code, pin: wrong });
+  assert.equal(bad.status, 400); assert.equal(bad.j.code, 'bad-pin'); assert.equal(bad.j.left, 4);
+  const t0 = Date.now();
+  const ok = await H.dash(SB.base, '/api/transfer/import', { code: ex.code, pin: ex.pin });
+  assert.equal(ok.status, 200, JSON.stringify(ok.j)); assert.equal(ok.j.workspace, 'Atrapa Workspace');
+  console.log(`    import kodem (PIN + sprawdzenie tokenu + zapis): ${Date.now() - t0} ms`);
+  assert.equal((await H.dash(SB.base, '/api/transfer/import', { code: ex.code, pin: ex.pin, replace: true })).j.code, 'used');
+  const dB = await (await fetch(`${SB.base}/api/data`)).json();
+  assert.equal(dB.data.trades.length, 10, 'B widzi te same dane');
+  assert.equal(json(path.join(dirB, 'config.local.json')).schemaVersion, SV);
+  assert.notEqual(json(path.join(dirB, 'config.local.json')).deviceId, json(path.join(dirA, 'config.local.json')).deviceId);
+  // ustawienia A → B
+  const sB = await (await fetch(`${SB.base}/api/sync`)).json();
+  assert.equal(sB.remote.settings.palette, 'mono'); assert.equal(sB.remote.settings.token, undefined);
+  // B → A, ostatni zapis wygrywa
+  const t2 = new Date().toISOString();
+  assert.equal((await H.dash(SB.base, '/api/sync', { settings: { palette: 'dalton', beR: 0.1 }, updatedAt: t2 })).j.written, true);
+  const sA = await (await fetch(`${SA.base}/api/sync?force`)).json();
+  assert.equal(sA.remote.settings.palette, 'dalton');
+  const older = await H.dash(SA.base, '/api/sync', { settings: { palette: 'mono' }, updatedAt: t1 });
+  assert.equal(older.j.written, false); assert.equal(older.j.reason, 'older');
+  const same = await H.dash(SA.base, '/api/sync', { settings: { palette: 'dalton', beR: 0.1 }, updatedAt: new Date(Date.now() + 1000).toISOString() });
+  assert.equal(same.j.written, false, 'te same ustawienia nie są zapisywane ponownie');
+  // brak pętli: wielokrotne odczyty na obu urządzeniach nic nie zapisują
+  const w0 = (await A.writes()).length;
+  for (let i = 0; i < 5; i++) { await fetch(`${SA.base}/api/sync?force`); await fetch(`${SB.base}/api/sync?force`); }
+  assert.equal((await A.writes()).length, w0, 'odczyty ustawień nie zapisują w kółko');
+  // lista urządzeń i zmiana nazwy
+  const devB = json(path.join(dirB, 'config.local.json')).deviceId;
+  await H.dash(SB.base, '/api/devices/rename', { id: devB, name: 'Laptop testowy' });
+  const devs = await (await fetch(`${SA.base}/api/devices`)).json();
+  assert.equal(devs.devices.length, 2);
+  assert.ok(devs.devices.some((d) => d.name === 'Laptop testowy' && !d.current));
+  // wygaśnięcie (zegar przesunięty o 16 min) i plik .ltj (kod z końcem linii)
+  const ex2 = (await H.dash(SA.base, '/api/transfer/export', {})).j;
+  const SC = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: H.tmp(), THQ_CLOCK_OFFSET_MS: String(16 * 60_000) });
+  const exp = await H.dash(SC.base, '/api/transfer/import', { code: ex2.code, pin: ex2.pin });
+  assert.equal(exp.status, 410); assert.equal(exp.j.code, 'expired');
+  const SD = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: H.tmp() });
+  const file = await H.dash(SD.base, '/api/transfer/import', { code: `${ex2.code}\r\n`, pin: ex2.pin });
+  assert.equal(file.status, 200, JSON.stringify(file.j));
+  // 5 prób: po piątym złym PIN-ie kod jest zablokowany, także dla dobrego PIN-u
+  const ex3 = (await H.dash(SA.base, '/api/transfer/export', {})).j;
+  const w3 = ex3.pin === '000000' ? '111111' : '000000';
+  const SE = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: H.tmp() });
+  const codes = [];
+  for (let i = 0; i < 5; i++) codes.push((await H.dash(SE.base, '/api/transfer/import', { code: ex3.code, pin: w3 })).j.code);
+  assert.deepEqual(codes, ['bad-pin', 'bad-pin', 'bad-pin', 'bad-pin', 'locked']);
+  assert.equal((await H.dash(SE.base, '/api/transfer/import', { code: ex3.code, pin: ex3.pin })).j.code, 'locked');
+  // ścieżka bez kodu: ten sam token, połączenie istniejącego, ustawienia dociągają się z Notion
+  const SF = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: H.tmp() });
+  await H.dash(SF.base, '/api/setup/token', { token: 'ntn_wspolny_token_testowy_123' });
+  const j = (await H.dash(SF.base, '/api/setup/pages', {})).j.pages.find((p) => p.journal);
+  assert.equal((await H.dash(SF.base, '/api/setup/connect', { pageId: j.id })).j.ok, true);
+  assert.equal((await (await fetch(`${SF.base}/api/sync`)).json()).remote.settings.palette, 'dalton');
+  for (const s of [SA, SB, SC, SD, SE, SF]) s.stop();
+  A.stop();
+});
+
+test('migracja 002: blok ustawień na istniejącej stronie, treść nietknięta, drugi przebieg bez zmian', async () => {
+  const A = await H.atrapa(nextPort());
+  const dir = H.tmp();
+  writeFileSync(path.join(dir, '.env'), `NOTION_TOKEN=x\nNOTION_ROOT_URL=${H.PARENT_URL}\nDS_TRADES=${IDS.DS_TRADES}\nDS_KONTA=${IDS.DS_KONTA}\nDS_DZIENNIK=${IDS.DS_DZIENNIK}\nDS_FINANSE=${IDS.DS_FINANSE}\n`);
+  writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ schemaVersion: 1, lang: 'pl' }));
+  const env = H.cleanEnv({ NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dir });
+  const page0 = (await A.get('/__test/loose'))[0];
+  const dry = await H.run(path.join(ROOT, 'update.mjs'), ['--migrate-only', '--dry-run', '--json'], env);
+  assert.deepEqual(dry.lines.find((l) => l.migrations).migrations.changes.map((c) => `${c.kind}:${c.status}`), ['block:add']);
+  assert.deepEqual(await A.writes(), []);
+  const run1 = await H.run(path.join(ROOT, 'update.mjs'), ['--migrate-only', '--json'], env);
+  assert.equal(run1.code, 0, run1.err);
+  const page1 = (await A.get('/__test/loose'))[0];
+  assert.equal(page1.children.length, page0.children.length + 1);
+  assert.deepEqual(page1.children.slice(0, page0.children.length), page0.children, 'treść strony bez zmian');
+  assert.equal(page1.children.at(-1).type, 'toggle');
+  assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, SV);
+  const w = (await A.writes()).length;
+  const run2 = await H.run(path.join(ROOT, 'update.mjs'), ['--migrate-only', '--json'], H.cleanEnv({ NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dir }));
+  assert.equal(run2.code, 0);
+  assert.equal((await A.writes()).length, w, 'drugi przebieg niczego nie zapisuje');
+  // nawet od wersji 0 (ponowne przejście wszystkich migracji) blok nie powstaje drugi raz
+  writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ schemaVersion: 0, lang: 'pl' }));
+  await H.run(path.join(ROOT, 'update.mjs'), ['--migrate-only', '--json'], env);
+  assert.equal((await A.get('/__test/loose'))[0].children.filter((c) => c.type === 'toggle').length, 1);
+  A.stop();
+});
+
+test('aktualizacja z wydanego v1.0.0 do bieżącego kodu: blok ustawień dodany, dane i treść strony nietknięte', async () => {
+  const ref = spawnSync('git', ['rev-parse', '--verify', '-q', 'v1.0.0^{commit}'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
+  if (!ref) { console.log('    (pominięty: brak tagu v1.0.0 w tym klonie)'); return; }
+  const { parseTar } = await import('../lib/updater.mjs');
+  const old = parseTar(spawnSync('git', ['archive', '--format=tar', ref], { cwd: ROOT, maxBuffer: 256 * 1024 * 1024 }).stdout);
+  const A = await H.atrapa(nextPort());
+  const dir = H.tmp();
+  H.writeTree(dir, old);
+  writeFileSync(path.join(dir, '.env'), `NOTION_TOKEN=x\nNOTION_ROOT_URL=${H.PARENT_URL}\nDS_TRADES=${IDS.DS_TRADES}\nDS_KONTA=${IDS.DS_KONTA}\nDS_DZIENNIK=${IDS.DS_DZIENNIK}\nDS_FINANSE=${IDS.DS_FINANSE}\n`);
+  writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ schemaVersion: 1, lang: 'pl' }));
+  const files = H.appFiles();
+  const gh = { release: { version: CUR, body: `## ${CUR}\n\ntree-sha256: ${treeHash(files)}`, tarball: H.tarGz(files, `local-trading-journal-${CUR}`) } };
+  const srv = await H.fakeGitHub(nextPort(), gh);
+  const before = await A.dump();
+  const page0 = (await A.get('/__test/loose'))[0];
+  const env = H.cleanEnv({ NOTION_API_BASE: A.base, UPDATE_API_BASE: srv.base, UPDATE_DOWNLOAD_BASE: srv.base });
+  const up = await H.run(path.join(dir, 'update.mjs'), ['--yes', '--json'], env, { cwd: dir });
+  assert.equal(up.code, 0, up.err || up.out);
+  assert.equal(json(path.join(dir, 'package.json')).version, CUR);
+  assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, SV);
+  const page1 = (await A.get('/__test/loose'))[0];
+  assert.deepEqual(page1.children.slice(0, page0.children.length), page0.children);
+  assert.equal(page1.children.at(-1).type, 'toggle');
+  assert.deepEqual(pagesOf(await A.dump()), pagesOf(before), 'wpisy bez zmian');
+  assert.deepEqual(await A.get('/__test/violations'), []);
+  A.stop(); srv.close();
 });
 
 test('Napraw wszystko: podgląd bez zapisu, potem brakujące pole, widoki i skrót', async () => {
