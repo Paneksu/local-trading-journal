@@ -11,6 +11,7 @@ import { ROOT, CONFIG_DIR, loadEnv, envSettings, loadConfig, saveConfig, saveEnv
 import { createNotion, NotionError } from './lib/notion.mjs';
 import { createData } from './lib/data.mjs';
 import { createWriter, ValidationError, PAGE_ID_RE } from './lib/writes.mjs';
+import { createShots, SHOT_BODY_LIMIT } from './lib/shots.mjs';
 import { setLang, tr as t } from './lib/i18n.mjs';
 import { APP_VERSION, SCHEMA_VERSION, REPO, loadSchemaFile, readDiskVersion } from './lib/version.mjs';
 import { DBS } from './lib/roles.mjs';
@@ -39,6 +40,7 @@ let saveTimer = 0;
 const persistConfig = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { saveConfig(config); } catch (e) { console.error('[config]', e.message); } }, 50); };
 const data = createData({ notion, sources: SOURCES, getConfig: () => config, persistConfig, rootUrl: () => S.rootUrl });
 const writer = createWriter({ notion, sources: SOURCES, data, t });
+const shots = createShots({ notion, sources: SOURCES, data, t });
 function reconfigure() {
   S = envSettings(loadEnv());
   for (const k of Object.keys(SOURCES)) delete SOURCES[k];
@@ -60,6 +62,8 @@ const stats = data.stats;
 function safeRemoteUrl(u) {
   let url;
   try { url = new URL(u); } catch { return null; }
+  // Tylko dashboard testowy (THQ_TEST_PAGES=1, jak start-test.mjs) na atrapie Notion: jej pliki leżą pod adresem http://127.0.0.1. Prawdziwa instalacja ma https i tej gałęzi nie widzi.
+  if (process.env.THQ_TEST_PAGES === '1' && process.env.NOTION_API_BASE) { try { if (url.origin === new URL(process.env.NOTION_API_BASE).origin) return url; } catch { /* zły adres bazowy: reguły poniżej */ } }
   if (url.protocol !== 'https:') return null;
   const h = url.hostname.toLowerCase();
   if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal')) return null;
@@ -230,16 +234,19 @@ function guardWrite(req, { json = true } = {}) {
   return null;
 }
 
-function readJson(req, limit = 64 * 1024) {
+function readJson(req, limit = 64 * 1024, tooBig = 'Dane są zbyt duże.') {
   return new Promise((resolve, reject) => {
-    let size = 0;
+    let size = 0, done = false;
     const chunks = [];
     req.on('data', (c) => {
+      if (done) return;
       size += c.length;
-      if (size > limit) { reject(new ValidationError({}, 'Dane są zbyt duże.')); req.destroy(); return; }
+      // za duże: odpowiedź 413 od razu, bez czytania reszty; sendError zamyka połączenie po wysłaniu odpowiedzi
+      if (size > limit) { done = true; chunks.length = 0; req.pause(); reject(Object.assign(new ValidationError({}, tooBig), { tooLarge: true })); return; }
       chunks.push(c);
     });
     req.on('end', () => {
+      if (done) return;
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new ValidationError({}, 'Nieczytelne dane formularza.')); }
     });
     req.on('error', reject);
@@ -262,7 +269,10 @@ function sendJson(res, status, obj) {
 }
 
 function sendError(res, e) {
-  if (e instanceof ValidationError) return sendJson(res, 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
+  if (e instanceof ValidationError) {
+    if (e.tooLarge) { res.setHeader('Connection', 'close'); res.on('finish', () => res.req?.destroy()); }
+    return sendJson(res, e.tooLarge ? 413 : 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
+  }
   console.error('[write]', e.message);
   const s = e instanceof NotionError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
@@ -510,7 +520,9 @@ const server = http.createServer(async (req, res) => {
       const action = req.method === 'POST' && Object.hasOwn(ACTIONS, url.pathname) ? ACTIONS[url.pathname] : null;
       const m = url.pathname.match(/^\/api\/(trades|konta|finanse)(?:\/([0-9a-f-]{36}))?$/i);
       const isPage = m && ((req.method === 'POST' && !m[2]) || (req.method === 'PATCH' && m[2]));
-      if (!isShutdown && !action && !isPage) { res.writeHead(405, SEC_HEADERS); return res.end(); }
+      // Zrzut do trade'a: JSON { type, data: base64 }, żeby zostać przy Content-Type JSON i nagłówku X-THQ (preflight CORS dla obcych stron).
+      const sh = req.method === 'POST' ? url.pathname.match(/^\/api\/trades\/([0-9a-f-]{36})\/shots$/i) : null;
+      if (!isShutdown && !action && !isPage && !sh) { res.writeHead(405, SEC_HEADERS); return res.end(); }
       const bad = guardWrite(req, { json: !isShutdown });
       if (bad) {
         console.error('[write] rejected:', bad);
@@ -523,6 +535,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
+        if (sh) {
+          if (!PAGE_ID_RE.test(sh[1])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');
+          const body = await readJson(req, SHOT_BODY_LIMIT, 'Plik jest za duży: najwyżej 10 MB.');
+          return sendJson(res, 200, await shots.add(sh[1].toLowerCase(), body));
+        }
         const body = await readJson(req);
         if (action) return sendJson(res, 200, await action(body));
         if (m[2] && !PAGE_ID_RE.test(m[2])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');

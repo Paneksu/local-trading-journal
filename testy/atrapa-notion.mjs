@@ -205,6 +205,9 @@ const loosePages = new Map([[PARENT_PAGE, { object: 'page', id: PARENT_PAGE, url
 const views = new Map(); // viewId -> { id, database_id, data_source_id, name, type, filter, sorts, configuration }
 // bloki treści stron (akapity, nagłówki, toggle z blokiem kodu ustawień): id -> blok; dzieci w polu children
 const blocks = new Map();
+const uploads = new Map(); // file_upload id -> { status: pending | uploaded | attached, buf, ... }
+let childrenNow = 0, childrenMax = 0; // równoległe odczyty bloków (test limitu współbieżności skanu)
+const pageKids = new Map(); // id strony w bazie -> { children } (bloki treści)
 function mkBlocks(raw, parentId) {
   return (raw || []).map((r) => {
     const { children, object, ...rest } = JSON.parse(JSON.stringify(r)); void object;
@@ -315,11 +318,56 @@ http.createServer(async (req, res) => {
   if (failRule && !p.startsWith('/__test/') && `${req.method} ${p}`.includes(failRule.match)) {
     if (failRule.after-- <= 0) { const st = failRule.status || 500; failRule = null; return send(res, st, { object: 'error', code: 'internal_server_error', message: 'Atrapa: wstrzyknięta awaria' }); }
   }
+  // pliki wgrane przez File Upload API: adres z bloku obrazu (jak tymczasowy adres S3, bez nagłówka Authorization)
+  let m;
+  // strona w bazie ma bloki treści w osobnej mapie (obiekt strony w odpowiedziach API nie ma pola children)
+  const blockParent = (id) => {
+    const loose = findLoose(id);
+    if (loose) return loose;
+    if (shared && blocks.has(id)) return blocks.get(id);
+    const ds = visibleDs([...store.values()].find((d) => d.pages.some((x) => x.id === id)));
+    const page = ds && ds.pages.find((x) => x.id === id);
+    if (!page) return null;
+    if (!pageKids.has(id)) pageKids.set(id, { object: 'page', id, children: [], page });
+    return pageKids.get(id);
+  };
+  if ((m = p.match(/^\/__files\/([0-9a-f-]{36})$/)) && req.method === 'GET') {
+    const f = uploads.get(m[1]);
+    if (!f || !f.buf) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': f.content_type }); return res.end(f.buf);
+  }
   if (!/^Bearer .+/.test(req.headers.authorization || '')) return send(res, 401, { message: 'API token is invalid.' });
   // ATRAPA_TOKEN: atrapa przyjmuje tylko ten token (test wygasłego lub błędnego tokenu); /__test/* działa zawsze
   if (process.env.ATRAPA_TOKEN && !p.startsWith('/__test/') && req.headers.authorization !== `Bearer ${process.env.ATRAPA_TOKEN}`) return send(res, 401, { object: 'error', code: 'unauthorized', message: 'API token is invalid.' });
-  let m;
   if (p === '/__test/log') return send(res, 200, log);
+  if (p === '/__test/page-files' && req.method === 'POST') {
+    // ustawia pole plików strony (jak zrzut dodany w Notion): { id, files: [{ name, type: 'external', external: { url } }] }
+    const b = await body(req);
+    const pg = [...store.values()].flatMap((d) => d.pages).find((x) => x.id === b.id);
+    if (!pg) return send(res, 404, { message: 'brak strony' });
+    pg.properties['Zrzut'] = { type: 'files', files: b.files || [] };
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/__test/add-blocks' && req.method === 'POST') {
+    // blok dodany „na innym urządzeniu”: { id, paragraphs: n, images: n } (akapity, potem obrazy zewnętrzne), strona dostaje nowy last_edited_time
+    const b = await body(req);
+    const parent = blockParent(b.id);
+    if (!parent) return send(res, 404, { message: 'brak strony' });
+    const kids = [];
+    for (let i = 0; i < (b.paragraphs || 0); i++) kids.push({ type: 'paragraph', paragraph: { rich_text: txt('akapit ' + i) } });
+    for (let i = 0; i < (b.images || 0); i++) kids.push({ type: 'image', image: { type: 'external', external: { url: `http://127.0.0.1:${PORT}/__files/${b.fileId}` } } });
+    parent.children.push(...mkBlocks(kids, parent.id));
+    if (parent.page) parent.page.last_edited_time = stamp(new Date(Math.max(Date.now(), Date.parse(parent.page.last_edited_time) + 60000)));
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/__test/put-file' && req.method === 'POST') {
+    // plik pod /__files/<id>: { id, base64, content_type }
+    const b = await body(req);
+    uploads.set(b.id, { id: b.id, status: 'attached', content_type: b.content_type || 'image/png', buf: Buffer.from(b.base64, 'base64') });
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/__test/stats') return send(res, 200, { childrenMax });
+  if (p === '/__test/uploads') return send(res, 200, [...uploads.values()].map(({ buf, ...o }) => ({ ...o, size: buf?.length ?? 0 })));
   if (p === '/__test/violations') return send(res, 200, violations);
   if (p === '/__test/dump') return send(res, 200, Object.fromEntries([...store.entries()].map(([id, d]) => [id, { name: d.name, dbId: d.dbId, schema: d.schema, pages: d.pages }])));
   if (p === '/__test/views') return send(res, 200, [...views.values()]);
@@ -478,7 +526,7 @@ http.createServer(async (req, res) => {
       return send(res, 200, page);
     }
   }
-  if (p === '/v1/users/me' && req.method === 'GET') return send(res, 200, { object: 'user', id: 'bot-atrapa', type: 'bot', name: 'Atrapa', bot: { owner: { type: 'workspace', workspace: true }, workspace_name: 'Atrapa Workspace' } });
+  if (p === '/v1/users/me' && req.method === 'GET') return send(res, 200, { object: 'user', id: 'bot-atrapa', type: 'bot', name: 'Atrapa', bot: { owner: { type: 'workspace', workspace: true }, workspace_name: 'Atrapa Workspace', ...(process.env.ATRAPA_LIMIT_PLIKU ? { workspace_limits: { max_file_upload_size_in_bytes: Number(process.env.ATRAPA_LIMIT_PLIKU) } } : {}) } });
   if (p === '/v1/search' && req.method === 'POST') {
     // strony i źródła danych widoczne dla integracji: strona nadrzędna tylko po udostępnieniu (/__test/share), wszystko pod nią też
     const b = await body(req);
@@ -497,19 +545,65 @@ http.createServer(async (req, res) => {
     const start = Number(b.start_cursor || 0), size = b.page_size || 100;
     return send(res, 200, { object: 'list', results: results.slice(start, start + size), has_more: start + size < results.length, next_cursor: start + size < results.length ? String(start + size) : null });
   }
-  if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})\/children$/)) && req.method === 'PATCH') {
-    const parent = findLoose(m[1]) || (shared ? blocks.get(m[1]) : null);
-    if (!parent) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
+  // File Upload API (single_part): utworzenie, wysłanie (multipart), dołączenie jako blok obrazu. Limity jak w dokumentacji Notion.
+  if (p === '/v1/file_uploads' && req.method === 'POST') {
     const b = await body(req);
-    const made = mkBlocks(b.children || [], parent.id);
+    if (b.mode && b.mode !== 'single_part') return send(res, 400, { object: 'error', code: 'validation_error', message: 'Atrapa: tylko mode single_part' });
+    if (!b.filename || !b.content_type) return send(res, 400, { object: 'error', code: 'validation_error', message: 'filename and content_type are required' });
+    const id = randomUUID();
+    const t0 = new Date();
+    const f = { object: 'file_upload', id, created_time: t0.toISOString(), expiry_time: new Date(t0.getTime() + 3600_000).toISOString(), status: 'pending', filename: b.filename, content_type: b.content_type, content_length: null, buf: null };
+    uploads.set(id, f);
+    const { buf, ...o } = f; void buf;
+    return send(res, 200, o);
+  }
+  if ((m = p.match(/^\/v1\/file_uploads\/([0-9a-f-]{36})\/send$/)) && req.method === 'POST') {
+    const f = uploads.get(m[1]);
+    if (!f) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find file upload' });
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const raw = Buffer.concat(chunks);
+    if (!String(req.headers['content-type'] || '').startsWith('multipart/form-data')) return send(res, 400, { object: 'error', code: 'validation_error', message: 'Content-Type must be multipart/form-data' });
+    let file = null;
+    try { file = (await new Response(raw, { headers: { 'content-type': req.headers['content-type'] } }).formData()).get('file'); } catch { /* niżej */ }
+    if (!file || typeof file === 'string') return send(res, 400, { object: 'error', code: 'validation_error', message: 'file is required' });
+    if (f.status !== 'pending') return send(res, 400, { object: 'error', code: 'validation_error', message: 'File upload is not pending' });
+    if (process.env.ATRAPA_LIMIT_PLIKU && file.size > Number(process.env.ATRAPA_LIMIT_PLIKU)) return send(res, 400, { object: 'error', code: 'validation_error', message: 'File exceeds the workspace limit' });
+    if (file.size > 20 * 1024 * 1024) return send(res, 400, { object: 'error', code: 'validation_error', message: 'File exceeds the 20 MB limit' });
+    if (process.env.ATRAPA_ODRZUC_PLIKI) return send(res, 400, { object: 'error', code: 'validation_error', message: 'Atrapa: odrzucony typ pliku' });
+    f.buf = Buffer.from(await file.arrayBuffer()); f.status = 'uploaded'; f.content_length = String(f.buf.length);
+    const { buf, ...o } = f; void buf;
+    return send(res, 200, o);
+  }
+  if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})\/children$/)) && req.method === 'PATCH') {
+    const parent = blockParent(m[1]);
+    if (!parent) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
+    if (process.env.ATRAPA_BRAK_INSERT) return send(res, 403, { object: 'error', code: 'restricted_resource', message: 'Insufficient permissions for this endpoint.' });
+    const b = await body(req);
+    const kids = JSON.parse(JSON.stringify(b.children || []));
+    for (const k of kids) {
+      if (k.type !== 'image' || k.image?.type !== 'file_upload') continue;
+      const f = uploads.get(k.image.file_upload?.id);
+      if (!f || f.status !== 'uploaded') return send(res, 400, { object: 'error', code: 'validation_error', message: 'File upload is not in uploaded status' });
+      f.status = 'attached';
+      k.image = { type: 'file', file: { url: `http://127.0.0.1:${PORT}/__files/${f.id}`, expiry_time: new Date(Date.now() + 3600_000).toISOString() } };
+    }
+    const made = mkBlocks(kids, parent.id);
     parent.children.push(...made);
     if (parent.object === 'block') parent.has_children = true;
+    if (parent.page) parent.page.last_edited_time = stamp(new Date(Math.max(Date.now(), Date.parse(parent.page.last_edited_time) + 60000)));
     return send(res, 200, { object: 'list', results: made.map(strip) });
   }
   if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})\/children$/)) && req.method === 'GET') {
-    const parent = findLoose(m[1]) || (shared ? blocks.get(m[1]) : null);
+    const parent = blockParent(m[1]);
     if (!parent) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
-    return send(res, 200, { object: 'list', results: parent.children.map(strip), has_more: false, next_cursor: null });
+    childrenNow++; childrenMax = Math.max(childrenMax, childrenNow);
+    await new Promise((r) => setTimeout(r, 3));
+    childrenNow--;
+    // paginacja jak w Notion: page_size (max 100) i start_cursor (tu: przesunięcie jako tekst)
+    const size = Math.min(100, Number(url.searchParams.get('page_size')) || 100), from = Number(url.searchParams.get('start_cursor') || 0);
+    const more = from + size < parent.children.length;
+    return send(res, 200, { object: 'list', results: parent.children.slice(from, from + size).map(strip), has_more: more, next_cursor: more ? String(from + size) : null });
   }
   if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})$/)) && req.method === 'PATCH') {
     const blk = shared ? blocks.get(m[1]) : null;

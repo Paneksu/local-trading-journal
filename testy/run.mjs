@@ -868,6 +868,191 @@ test('Napraw wszystko: podgląd bez zapisu, potem brakujące pole, widoki i skr�
   S.stop(); A.stop();
 });
 
+// ---------- zrzuty dodawane z dashboardu (lib/shots.mjs) ----------
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64');
+const pngPadded = (n) => Buffer.concat([PNG_1PX, Buffer.alloc(n - PNG_1PX.length)]);
+// THQ_TEST_PAGES=1: tryb dashboardu testowego (proxy obrazów wolno wtedy pobrać plik spod adresu atrapy, http://127.0.0.1)
+async function shotEnv(atrapaEnv = {}) {
+  const A = await H.atrapa(nextPort(), atrapaEnv);
+  const dir = H.tmp();
+  const S = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dir, NOTION_TOKEN: 'x', THQ_TEST_PAGES: '1', ...IDS });
+  const d = await (await fetch(`${S.base}/api/data`)).json();
+  return { A, S, dir, d, trade: d.data.trades[0], trade2: d.data.trades[1] };
+}
+const shotBody = (buf, type = 'image/png') => ({ type, data: buf.toString('base64') });
+async function until(fn, ms = 15000) {
+  const t0 = Date.now();
+  for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('until: przekroczono czas'); await H.sleep(100); }
+}
+const apiData = async (S, q = '') => (await fetch(`${S.base}/api/data${q}`)).json();
+const imgsOf = (d, id) => d.data.trades.find((x) => x._id === id)._imgs;
+const settled = (S) => until(async () => { const d = await apiData(S); return d.scanning ? null : d; });
+const childrenGets = async (A, id) => (await A.get('/__test/log')).filter((l) => id ? l === `GET /v1/blocks/${id}/children` : /^GET \/v1\/blocks\/[0-9a-f-]{36}\/children$/.test(l)).length;
+
+test('zrzuty: dodanie nie usuwa istniejących, plik trafia do Notion, cache unieważniony, obraz serwowany, drugi start widzi bloki', async () => {
+  const { A, S, dir, trade } = await shotEnv();
+  await settled(S);
+  const page0 = () => A.dump().then((d) => d[IDS.DS_TRADES].pages.find((p) => p.id === trade._id));
+  await A.post('/__test/page-files', { id: trade._id, files: [{ name: 'stary.png', type: 'external', external: { url: 'https://example.com/stary.png' } }] });
+  const propBefore = JSON.stringify((await page0()).properties.Zrzut);
+  await until(async () => imgsOf(await apiData(S, '?refresh=1'), trade._id) === 1);
+  const r = await H.dash(S.base, `/api/trades/${trade._id}/shots`, shotBody(PNG_1PX));
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  assert.equal(r.j.ok, true); assert.equal(r.j.imgs, 2); assert.equal(r.j.index, 1, 'indeks nowego zrzutu w /api/img');
+  // pole „Zrzut” nietknięte (zrzut dodany jako blok), plik wgrany i dołączony
+  assert.equal(JSON.stringify((await page0()).properties.Zrzut), propBefore, 'pole Zrzut bez zmian');
+  const ups = await A.get('/__test/uploads');
+  assert.equal(ups.length, 1); assert.equal(ups[0].status, 'attached'); assert.equal(ups[0].content_type, 'image/png'); assert.equal(ups[0].size, PNG_1PX.length);
+  assert.match(ups[0].filename, /^zrzut-\d{8}-\d{6}\.png$/);
+  assert.equal((await A.get(`/v1/blocks/${trade._id}/children`)).results.filter((b) => b.type === 'image').length, 1);
+  // cache /api/data unieważniony: bez ?refresh od razu widać nowy zrzut
+  const d2 = await apiData(S);
+  assert.equal(d2.cached, false);
+  assert.equal(imgsOf(d2, trade._id), 2);
+  // obraz z proxy (indeks 1 = dodany blok) ma bajty wgranego pliku
+  const img = await fetch(`${S.base}/api/img?page=${trade._id}&i=1`);
+  assert.equal(img.status, 200); assert.equal(img.headers.get('content-type'), 'image/png');
+  assert.ok(Buffer.from(await img.arrayBuffer()).equals(PNG_1PX));
+  // drugi zrzut: kolejne dołączenie, pierwszy dalej jest
+  const r2 = await H.dash(S.base, `/api/trades/${trade._id}/shots`, shotBody(pngPadded(2000)));
+  assert.equal(r2.j.imgs, 3); assert.equal(r2.j.index, 2);
+  // identyfikator wielkimi literami trafia na tę samą stronę
+  const r3 = await H.dash(S.base, `/api/trades/${trade._id.toUpperCase()}/shots`, shotBody(pngPadded(3000)));
+  assert.equal(r3.status, 200, JSON.stringify(r3.j)); assert.equal(r3.j.imgs, 4);
+  // źródłem prawdy jest Notion, nie plik lokalny: konfiguracja nie zna listy stron ze zrzutami
+  await H.sleep(200);
+  assert.equal(json(path.join(dir, 'config.local.json')).shotPages, undefined);
+  S.stop();
+  const S2 = await H.server(nextPort(), { NOTION_API_BASE: A.base, THQ_CONFIG_DIR: H.tmp(), NOTION_TOKEN: 'x', THQ_TEST_PAGES: '1', ...IDS });
+  const d3 = await until(async () => { const d = await apiData(S2); return imgsOf(d, trade._id) === 4 ? d : null; });
+  assert.equal(d3.scanning, false);
+  S2.stop(); A.stop();
+});
+
+test('zrzuty: zrzut dodany „na innym urządzeniu” (blok bez lokalnego wpisu) jest widoczny, strona bez zmian nie jest skanowana drugi raz, limit 3 odczytów naraz', async () => {
+  const { A, S, d, trade, trade2 } = await shotEnv();
+  const first = await settled(S);
+  const nTrades = first.data.trades.length;
+  assert.ok(nTrades > 100);
+  // /api/data wróciło od razu (bez czekania na skan), a skan objął każdą stronę trade'a dokładnie raz
+  assert.equal(await childrenGets(A), nTrades, 'pełny skan: jeden odczyt bloków na stronę (bez paginacji)');
+  assert.ok((await A.get('/__test/stats')).childrenMax <= 3, 'nie więcej niż 3 odczyty bloków naraz');
+  assert.ok((await A.get('/__test/stats')).childrenMax >= 2, 'skan faktycznie idzie równolegle');
+  void d;
+  // „drugie urządzenie” dodaje obraz do strony trade'a bezpośrednio w Notion
+  const FILE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  await A.post('/__test/put-file', { id: FILE, base64: PNG_1PX.toString('base64') });
+  await A.post('/__test/add-blocks', { id: trade._id, images: 1, fileId: FILE });
+  const d1 = await apiData(S, '?refresh=1');
+  assert.ok(typeof d1.scanning === 'boolean');
+  await until(async () => imgsOf(await apiData(S), trade._id) === 1);
+  const img = await fetch(`${S.base}/api/img?page=${trade._id}&i=0`);
+  assert.equal(img.status, 200);
+  assert.ok(Buffer.from(await img.arrayBuffer()).equals(PNG_1PX));
+  // przeskanowana została tylko zmieniona strona
+  assert.equal(await childrenGets(A), nTrades + 1, 'zmieniona strona skanowana raz, reszta z pamięci');
+  const before = await childrenGets(A);
+  for (let i = 0; i < 3; i++) await apiData(S, '?refresh=1');
+  await H.sleep(500);
+  assert.equal(await childrenGets(A), before, 'strony bez zmian nie są skanowane drugi raz');
+  // paginacja: 130 akapitów (druga strona wyników has_more) i obraz na samym końcu
+  await A.post('/__test/add-blocks', { id: trade2._id, paragraphs: 130, images: 1, fileId: FILE });
+  await apiData(S, '?refresh=1');
+  await until(async () => imgsOf(await apiData(S), trade2._id) === 1);
+  assert.equal(await childrenGets(A, trade2._id), 3, 'strona z 131 blokami: pierwszy skan (1 odczyt) + po zmianie dwie strony wyników (2 odczyty)');
+  assert.deepEqual(await A.get('/__test/violations'), []);
+  S.stop(); A.stop();
+});
+
+test('zrzuty: zły typ, bajty zamiast deklaracji, za duży, pusty i odrzucenie przez Notion nic nie zapisują; ciało ponad limit = 413', async () => {
+  const { A, S, trade } = await shotEnv();
+  const url = `/api/trades/${trade._id}/shots`;
+  const bad = async (body, re, status = 400) => { const r = await H.dash(S.base, url, body); assert.equal(r.status, status, JSON.stringify(r.j)); assert.match(r.j.error, re); };
+  const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>');
+  await bad({ type: 'image/svg+xml', data: SVG.toString('base64') }, /PNG, JPEG, WebP i GIF/);
+  await bad({ type: 'application/pdf', data: Buffer.from('%PDF-1.4 nie obraz').toString('base64') }, /PNG, JPEG, WebP i GIF/);
+  await bad(shotBody(Buffer.from('to nie jest obraz, tylko tekst udający PNG'), 'image/png'), /PNG, JPEG, WebP i GIF/);
+  await bad({ type: 'image/png', data: '' }, /pusty/);
+  await bad({ type: 'image/png', data: '%%%nie-base64%%%' }, /Nieprawidłowe dane/);
+  await bad(shotBody(pngPadded(10 * 1024 * 1024 + 1)), /za duży/); // tuż nad limitem 10 MB, jeszcze w limicie ciała żądania
+  await bad(shotBody(pngPadded(12 * 1024 * 1024)), /za duży/, 413); // ciało ponad limit: 413 i zamknięcie połączenia
+  assert.deepEqual(await A.get('/__test/uploads'), [], 'żadne ze złych żądań nie dotarło do Notion');
+  // deklaracja niezgodna z bajtami: decydują bajty (PNG zadeklarowany jako JPEG to PNG)
+  const mism = await H.dash(S.base, url, shotBody(PNG_1PX, 'image/jpeg'));
+  assert.equal(mism.status, 200, JSON.stringify(mism.j));
+  assert.equal((await A.get('/__test/uploads'))[0].content_type, 'image/png');
+  const exact = await H.dash(S.base, url, shotBody(pngPadded(10 * 1024 * 1024)));
+  assert.equal(exact.status, 200, 'dokładnie 10 MB przechodzi');
+  const wrong = await H.dash(S.base, '/api/trades/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/shots', shotBody(PNG_1PX));
+  assert.equal(wrong.status, 403, "strona spoza bazy Trade'y (tu: strona nadrzędna) nie przechodzi");
+  const gone = await H.dash(S.base, '/api/trades/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/shots', shotBody(PNG_1PX));
+  assert.equal(gone.status, 404, 'nieistniejący wpis');
+  assert.equal((await A.get('/__test/uploads')).length, 2);
+  // limit ciała dotyczy każdego endpointu zapisu: 300 KB do /api/config (limit 64 KB) → 413, serwer dalej działa
+  const huge = await H.dash(S.base, '/api/config', { pad: 'x'.repeat(300 * 1024) });
+  assert.equal(huge.status, 413, JSON.stringify(huge.j));
+  assert.match(huge.j.error, /zbyt duże/);
+  assert.equal((await H.dash(S.base, '/api/config', { onboarded: true })).status, 200, 'po odrzuceniu serwer odpowiada dalej');
+  S.stop(); A.stop();
+  // Notion odrzuca plik w kroku wysyłania: błąd z komunikatem, żaden blok nie powstaje
+  const E = await shotEnv({ ATRAPA_ODRZUC_PLIKI: '1' });
+  const r = await H.dash(E.S.base, `/api/trades/${E.trade._id}/shots`, shotBody(PNG_1PX));
+  assert.equal(r.status, 400); assert.match(r.j.error, /odrzucony typ pliku/);
+  assert.equal((await E.A.get(`/v1/blocks/${E.trade._id}/children`)).results.length, 0);
+  assert.equal(imgsOf(await apiData(E.S, '?refresh=1'), E.trade._id), 0);
+  E.S.stop(); E.A.stop();
+});
+
+test('zrzuty: brak uprawnienia „Insert content” (403), limit pliku z przestrzeni Notion (5 MiB), błąd odświeżenia po dodaniu to ostrzeżenie, nie błąd', async () => {
+  // 403 przy dołączaniu bloku: własny komunikat o uprawnieniu integracji
+  const P = await shotEnv({ ATRAPA_BRAK_INSERT: '1' });
+  const rp = await H.dash(P.S.base, `/api/trades/${P.trade._id}/shots`, shotBody(PNG_1PX));
+  assert.equal(rp.status, 403, JSON.stringify(rp.j));
+  assert.match(rp.j.error, /Insert content/); assert.match(rp.j.error, /Capabilities/);
+  assert.equal((await P.A.get(`/v1/blocks/${P.trade._id}/children`)).results.length, 0);
+  P.S.stop(); P.A.stop();
+  // limit z GET /v1/users/me (bot.workspace_limits.max_file_upload_size_in_bytes), jak w darmowym planie Notion
+  const L = await shotEnv({ ATRAPA_LIMIT_PLIKU: String(5 * 1024 * 1024) });
+  const url = `/api/trades/${L.trade._id}/shots`;
+  const over = await H.dash(L.S.base, url, shotBody(pngPadded(5 * 1024 * 1024 + 1)));
+  assert.equal(over.status, 400); assert.match(over.j.error, /najwyżej 5 MB/);
+  assert.equal((await L.A.get('/__test/uploads')).length, 0, 'za duży plik nie dociera do Notion');
+  const okFile = await H.dash(L.S.base, url, shotBody(pngPadded(5 * 1024 * 1024)));
+  assert.equal(okFile.status, 200, JSON.stringify(okFile.j));
+  L.S.stop(); L.A.stop();
+  // zrzut JEST w Notion, a odświeżenie podglądu zawodzi: 200 z ostrzeżeniem (ponowienie zrobiłoby duplikat)
+  const W = await shotEnv();
+  await settled(W.S);
+  await W.A.post('/__test/fail', { match: `GET /v1/pages/${W.trade._id}`, after: 1, status: 500 });
+  const rw = await H.dash(W.S.base, `/api/trades/${W.trade._id}/shots`, shotBody(PNG_1PX));
+  assert.equal(rw.status, 200, JSON.stringify(rw.j));
+  assert.equal(rw.j.ok, true); assert.ok(rw.j.warning);
+  assert.equal((await W.A.get(`/v1/blocks/${W.trade._id}/children`)).results.filter((b) => b.type === 'image').length, 1);
+  assert.equal((await W.A.get('/__test/uploads')).length, 1);
+  await until(async () => imgsOf(await apiData(W.S, '?refresh=1'), W.trade._id) === 1);
+  W.S.stop(); W.A.stop();
+});
+
+test('zrzuty: ochrona zapisu (obcy Origin, brak X-THQ, zły Content-Type, GET) i brak zapisu w Notion', async () => {
+  const { A, S, trade } = await shotEnv();
+  const url = `/api/trades/${trade._id}/shots`;
+  const body = shotBody(PNG_1PX);
+  const evil = await H.dash(S.base, url, body, { origin: 'http://evil.example' });
+  assert.equal(evil.status, 403);
+  const noOrigin = await fetch(S.base + url, { method: 'POST', headers: { 'X-THQ': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal(noOrigin.status, 403);
+  const noThq = await fetch(S.base + url, { method: 'POST', headers: { Origin: S.base, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal(noThq.status, 403);
+  const plain = await fetch(S.base + url, { method: 'POST', headers: { Origin: S.base, 'X-THQ': '1', 'Content-Type': 'text/plain' }, body: JSON.stringify(body) });
+  assert.equal(plain.status, 403, 'bez JSON-a nie ma obejścia preflightu');
+  // GET na tej trasie nie jest endpointem zapisu: serwer oddaje zwykłe 404 (plik statyczny nie istnieje), nic nie zapisuje
+  const get = await fetch(S.base + url, { headers: { Origin: S.base, 'X-THQ': '1' } });
+  assert.equal(get.status, 404);
+  assert.deepEqual(await A.get('/__test/uploads'), [], 'żadne z odrzuconych żądań nie dotarło do Notion');
+  assert.deepEqual(await A.writes(), []);
+  S.stop(); A.stop();
+});
+
 // ---------- uruchomienie ----------
 let pass = 0, fail = 0;
 const t0 = Date.now();

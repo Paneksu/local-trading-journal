@@ -3,6 +3,7 @@
 import { esc, numInput } from './format.js';
 import { t as tr } from './i18n.js';
 import { overlay, trapTab, toast, guide } from './modal.js';
+import { bindShots, buttonHtml, statusHtml } from './shots.js';
 
 const ICON_CLOSE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; } catch { return 'Europe/Warsaw'; } })();
@@ -15,7 +16,7 @@ const parseNum = (s) => {
 };
 
 export function createForm({ getModel, types, getDefaults, reload, onSaved, onClose }) {
-  let root = null, dlg = null, trade = null, opener = null, saving = false, snapshot = '', discarding = false;
+  let root = null, dlg = null, trade = null, opener = null, saving = false, snapshot = '', discarding = false, shotsCtl = null;
 
   const model = () => getModel();
   const optsOf = (prop) => Object.keys(model().colors?.trades?.[prop] || {});
@@ -36,6 +37,16 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
       konta: [...t.konta], reason: t.reason || '', chart: t.chart || '', notes: t.notes || '',
     };
   }
+
+  // Zrzuty: miniatury istniejących (z proxy /api/img) i dodawanie nowych. Nowy trade nie ma jeszcze strony w Notion, więc zrzut dodaje się po zapisaniu.
+  const thumbsHtml = (t) => {
+    const n = Math.min(t?.imgs || 0, 12);
+    return n ? Array.from({ length: n }, (_, i) => `<img src="/api/img?page=${encodeURIComponent(t.id)}&i=${i}&n=${t.imgs}" alt="${esc(tr('Zrzut {n}', { n: i + 1 }))}" loading="lazy">`).join('') : '';
+  };
+  const shotsField = () => `<div class="fld span4 shots-fld" data-f="shots"><span class="lbl">${esc(tr('Zrzuty'))}</span>
+      <div class="shot-strip"${trade?.imgs ? '' : ' hidden'}>${thumbsHtml(trade)}</div>
+      ${trade ? `<div class="shot-row">${buttonHtml(tr('Dodaj zrzut'))}<span class="fhint">${esc(tr('Wybierz plik, przeciągnij go tutaj albo wklej zrzut ze schowka (Ctrl+V).'))}</span></div>${statusHtml()}`
+        : `<p class="fhint">${esc(tr("Zrzut dodasz po zapisaniu trade'a: otwórz go i kliknij „Dodaj zrzut”."))}</p>`}</div>`;
 
   const fld = (id, label, inner, { hint = '', cls = '', labelFor = true } = {}) => `<div class="fld ${cls}" data-f="${id}">
       ${labelFor ? `<label class="lbl" for="f-${id}">${label}</label>` : `<span class="lbl" id="l-${id}">${label}</span>`}${inner}
@@ -80,6 +91,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
           ${fld('chart', L('Wykres (link)'), `<input id="f-chart" name="chart" type="url" inputmode="url" value="${esc(v.chart)}" placeholder="https://www.tradingview.com/x/…" aria-describedby="e-chart">`, { cls: 'span2' })}
           ${fld('name', L('Nazwa'), `<input id="f-name" name="name" type="text" maxlength="200" value="${esc(v.name)}" placeholder="${L('Opcjonalnie')}" aria-describedby="e-name">`, { cls: 'span2' })}
           ${fld('notes', L('Notatki'), `<textarea id="f-notes" name="notes" rows="4" maxlength="8000" aria-describedby="e-notes">${esc(v.notes)}</textarea>`, { cls: 'span4' })}
+          ${shotsField()}
         </div>
       </form>
       <div class="mf" id="f-foot"></div></div>`;
@@ -169,6 +181,8 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
   async function save() {
     if (saving) return;
     clearErrors();
+    // zrzut jeszcze się wysyła: po jego końcu zmienia się znacznik edycji wpisu, więc zapis teraz skończyłby się fałszywym konfliktem
+    if (shotsCtl?.busy()) { banner(tr('Zrzut jest jeszcze wysyłany. Poczekaj, aż skończy, i zapisz ponownie.')); return; }
     const { payload, errs } = collect();
     if (Object.keys(errs).length) { showErrors(errs); banner(tr('Popraw zaznaczone pola i spróbuj jeszcze raz.')); return; }
     setSaving(true);
@@ -208,6 +222,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
 
   function closeNow() {
     if (!root) return;
+    shotsCtl?.unbind(); shotsCtl = null;
     root.remove();
     root = dlg = null;
     discarding = false;
@@ -269,6 +284,20 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
       if (pill) pill.setAttribute('aria-pressed', String(pill.getAttribute('aria-pressed') !== 'true'));
     });
     dlg.querySelector('#f-form').addEventListener('submit', (e) => { e.preventDefault(); save(); });
+    const sf = dlg.querySelector('.shots-fld');
+    if (trade) {
+      shotsCtl = bindShots({
+        root: sf, zone: dlg, isActive: () => !!root && !saving, getTrade: () => trade,
+        onUploaded: async (res) => {
+          // odświeżone dane: nowa liczba zrzutów i miniatury; znacznik edycji przejmujemy tylko wtedy, gdy nic innego nie zmieniło wpisu w Notion
+          await reload(true);
+          const fresh = model().trades.find((x) => x.id === trade?.id);
+          if (!trade) return;
+          if (res.editedMatched && res.edited) trade.edited = res.edited;
+          if (fresh) { trade.imgs = fresh.imgs; const strip = sf.querySelector('.shot-strip'); strip.innerHTML = thumbsHtml(fresh); strip.hidden = !fresh.imgs; }
+        },
+      });
+    }
     // pierwsze pole do wpisania
     field('date').focus();
   }

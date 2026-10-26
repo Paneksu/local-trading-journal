@@ -37,6 +37,7 @@ Zrzuty pochodzą z atrapy z przykładowymi danymi.
   - rozbicia: setup, instrument, sesja, dzień tygodnia, kierunek, godzina wejścia (każdy trade w swojej minucie), czas trwania, kolejny trade w dniu, rozkład R;
   - zakładki Trade'y (tabela z sortowaniem), Prop (konta, payouty, ROI, bilans) i Galeria zrzutów;
   - dodawanie i edycja trade'ów, kont i wpisów finansowych, z zapisem prosto do Notion;
+  - dodawanie zrzutów ekranu do trade'a: w podglądzie i w formularzu edycji wybierasz plik (na telefonie z galerii lub aparatu), przeciągasz go albo wklejasz zrzut ze schowka (Ctrl+V po Win+Shift+S). PNG, JPEG, WebP lub GIF do 10 MB (darmowy Notion: 5 MB). Zrzut trafia do Notion jako obraz na końcu strony trade'a (zrzuty z pola „Zrzut” zostają nietknięte), wymaga uprawnienia integracji „Insert content”; usuwanie zrzutów zostaje w Notion. Dashboard pokazuje przy trade'ach także obrazy wklejone ręcznie w treść strony trade'a w Notion (np. z telefonu), więc zrzut dodany na jednym urządzeniu widać na drugim;
   - udostępnianie wyników jako obraz (przycisk „Udostępnij”): karta trade'a, dnia, tygodnia, miesiąca lub roku w formatach 9:16, 4:5, 1:1 i 16:9, wynik w R, $ lub %, tło z motywu albo własne zdjęcie; pobierasz PNG, kopiujesz albo udostępniasz z telefonu; podpis „JustJournal × nick” ustawiasz w Ustawieniach;
   - motywy Onyx i Platinum, palety danych (także dla daltonistów), język polski i angielski;
   - moduł aktualizacji i „Pierwsze kroki” (sprawdzenie instalacji i przewodnik).

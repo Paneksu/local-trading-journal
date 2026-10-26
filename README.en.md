@@ -37,6 +37,7 @@ Screenshots come from the mock with sample data.
   - breakdowns: setup, instrument, session, weekday, direction, entry time (each trade at its minute), duration, nth trade of the day, R distribution;
   - Trades (sortable table), Prop (accounts, payouts, ROI, balance) and Gallery tabs;
   - add and edit trades, accounts and finance entries, saved straight to Notion;
+  - add screenshots to a trade: in the detail view and in the edit form you pick a file (from the gallery or camera on a phone), drag it in, or paste a screenshot from the clipboard (Ctrl+V after Win+Shift+S). PNG, JPEG, WebP or GIF up to 10 MB (free Notion plan: 5 MB). The screenshot goes to Notion as an image at the end of the trade page (screenshots in the "Screenshot" property stay untouched) and needs the integration's "Insert content" capability; removing screenshots stays in Notion. The dashboard also shows images pasted by hand into a trade page body in Notion (e.g. from a phone), so a screenshot added on one device shows up on the other;
   - share results as an image ("Share" button): a card for a trade, day, week, month or year in 9:16, 4:5, 1:1 and 16:9, result in R, $ or %, theme background or your own photo; download a PNG, copy it or share from a phone; set the "JustJournal × nickname" signature in Settings;
   - Onyx and Platinum themes, data palettes (including colour-blind friendly), Polish and English;
   - an update module and "Getting started" (installation check and a guided tour).

@@ -16,6 +16,7 @@ import { createOnboarding } from './pierwsze-kroki.js';
 import { createGuide } from './przewodnik.js';
 import { createSync, createDevices } from './urzadzenia.js';
 import { createShare, sanitizeShare } from './udostepnij.js';
+import { bindShots, buttonHtml as shotButtonHtml, statusHtml as shotStatusHtml } from './shots.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -99,6 +100,8 @@ let ctx = null;        // ostatnio policzony kontekst widoku (dla prawego panelu
 let lastCheck = null;  // kiedy ostatnio udało się pobrać dane z serwera (ręcznie lub automatycznie)
 let statusNote = '';
 let refreshing = false;
+// numer żądania: odpowiedź starsza niż już zastosowana (np. odświeżenie w tle spóźnione względem wymuszonego po zapisie) jest ignorowana
+let loadSeq = 0, appliedSeq = 0, scanTimer = 0;
 let pendingRender = false;
 let timers = [];
 
@@ -165,6 +168,7 @@ function applyBe(key, raw) {
 async function load(force = false, { silent = false } = {}) {
   if (silent && (refreshing || loading)) return;
   refreshing = true;
+  const my = ++loadSeq;
   if (!silent) { loading = true; document.body.classList.add('busy'); }
   let render = !silent;
   try {
@@ -172,6 +176,11 @@ async function load(force = false, { silent = false } = {}) {
     let j;
     try { j = await res.json(); } catch { throw new Error(t('Serwer zwrócił nieczytelną odpowiedź.')); }
     if (!res.ok) throw new Error(j.error || t('Błąd {status}', { status: res.status }));
+    if (my < appliedSeq) return;
+    appliedSeq = my;
+    // serwer skanuje w tle zrzuty dodane w Notion (bloki obrazów): zapytaj ponownie za chwilę, aż skończy
+    clearTimeout(scanTimer);
+    if (j.scanning) scanTimer = setTimeout(() => load(false, { silent: true }), 4000);
     if (j.meta) meta = j.meta;
     const sig = JSON.stringify([j.data, j.colors, j.fields]);
     const changed = !model || model.sig !== sig;
@@ -1050,7 +1059,8 @@ function gallerySet(applyRes = true) {
   return items;
 }
 
-const imgSrc = (it) => `/api/img?page=${encodeURIComponent(it.t.id)}&i=${it.i}`;
+// n: liczba zrzutów trade'a, żeby po dodaniu zrzutu (przesuwa indeks snapshotu TradingView) przeglądarka nie pokazała starego obrazu z pamięci podręcznej
+const imgSrc = (it) => `/api/img?page=${encodeURIComponent(it.t.id)}&i=${it.i}&n=${it.t.imgs || 0}`;
 const capParts = (x) => [F.shortDate(x.date), x.instrument, x.setup, x.dir === 'NO TRADE' ? t('bez wejścia') : x.dir].filter(Boolean);
 const rText = (t) => (t.r != null ? fmtR(t.r) : DASH);
 
@@ -1100,11 +1110,22 @@ function lbEl() {
   d.innerHTML = `<div class="lb-top"><span class="lb-count" aria-live="polite"></span><button type="button" class="icon-btn lb-close" data-act="lb-close" aria-label="${L('Zamknij podgląd')}">${ICON.close(18)}</button></div>
     <div class="lb-stage"><button type="button" class="lb-nav prev" data-act="lb-prev" aria-label="${L('Poprzedni')}">‹</button>
       <div class="lb-frame"><img class="lb-img" alt=""><span class="g-err">${L('Nie udało się wczytać zrzutu')}</span>
-        <div class="lb-empty" hidden><span class="ico-box">${ICON.image(22)}</span><h3>${L('Ten trade nie ma zrzutu')}</h3><p>${L('Dodaj plik w polu „Zrzut” w Notion albo wklej link do TradingView w polu „Wykres” (przycisk „Edytuj”).')}</p></div></div>
+        <div class="lb-empty" hidden><span class="ico-box">${ICON.image(22)}</span><h3>${L('Ten trade nie ma zrzutu')}</h3><p>${L('Dodaj zrzut przyciskiem poniżej albo wklej go (Ctrl+V). Możesz też wkleić link do TradingView w polu „Wykres” (przycisk „Edytuj”).')}</p></div></div>
       <button type="button" class="lb-nav next" data-act="lb-next" aria-label="${L('Następny')}">›</button></div>
     <div class="lb-info"><div class="lb-cap"></div><dl class="lb-facts"></dl><div class="lb-notes"></div>
-      <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><button type="button" class="btn lb-share" data-act="share-trade">${ICON.share(14)}${L('Udostępnij')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a></div></div>`;
+      <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><button type="button" class="btn lb-share" data-act="share-trade">${ICON.share(14)}${L('Udostępnij')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a>
+        <span class="lb-shot">${shotButtonHtml(t('Dodaj zrzut'))}</span></div>${shotStatusHtml()}</div>`;
   document.body.appendChild(d);
+  // dodawanie zrzutu: przycisk, przeciągnięcie na cały podgląd i wklejenie (tylko gdy żadne inne okno nie jest na wierzchu)
+  bindShots({
+    root: d.querySelector('.lb-info'), zone: d,
+    isActive: () => lb.open && !overlay.current,
+    getTrade: () => lb.items[lb.idx]?.t,
+    onUploaded: async (res) => {
+      await load(true);
+      refreshLbTrade(res.id, res);
+    },
+  });
   const img = d.querySelector('.lb-img');
   img.addEventListener('error', () => d.querySelector('.lb-frame').classList.add('failed'));
   img.addEventListener('load', () => d.querySelector('.lb-frame').classList.remove('failed'));
@@ -1164,6 +1185,22 @@ function showLightbox() {
   [lb.idx - 1, lb.idx + 1].forEach((j) => { const n = lb.items[j]; if (n && n.i >= 0) new Image().src = imgSrc(n); });
 }
 
+// Po dodaniu zrzutu: podmienia strony tego trade'a na świeże (nowa liczba zrzutów) i pokazuje ostatni, czyli dodany.
+function refreshLbTrade(id, res) {
+  const fresh = model?.trades.find((x) => x.id === id);
+  const first = lb.items.findIndex((x) => x.t.id === id);
+  if (!fresh || first < 0) return;
+  const here = lb.items[lb.idx]?.t.id === id; // użytkownik mógł w międzyczasie przejść do innego trade'a: wtedy tylko podmieniamy strony
+  const n = lb.items.filter((x) => x.t.id === id).length;
+  const items = [];
+  for (let i = 0; i < Math.max(1, fresh.imgs); i++) items.push({ t: fresh, i: fresh.imgs ? i : -1, k: fresh.imgs });
+  const cur = lb.items[lb.idx];
+  lb.items.splice(first, n, ...items);
+  // nowy zrzut ma indeks z odpowiedzi serwera (snapshot TradingView idzie po plikach, więc nie jest ostatni)
+  if (here) lb.idx = first + Math.min(items.length - 1, Math.max(0, Number.isInteger(res?.index) ? res.index : items.length - 1));
+  else lb.idx = Math.max(0, lb.items.indexOf(cur));
+  showLightbox();
+}
 function openLightbox(items, idx, opener) {
   if (!items[idx]) return;
   lb.items = items; lb.idx = idx; lb.open = true; lb.opener = opener || null;
