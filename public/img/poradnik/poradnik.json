@@ -1,0 +1,1377 @@
+{
+  "steps": {
+    "node-windows": {
+      "title": {
+        "pl": "Instalacja Node.js na Windows",
+        "en": "Installing Node.js on Windows"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/node-windows/01-pl.webp",
+            "en": "poradnik/node-windows/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Kliknij prawym przyciskiem przycisk Start i wybierz Terminal.",
+            "en": "Right-click the Start button and choose Terminal."
+          },
+          "alt": {
+            "pl": "Menu przycisku Start otwarte prawym przyciskiem, zaznaczona pozycja Terminal.",
+            "en": "The Start button context menu with Terminal highlighted."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6342,
+              "y": 0.5549
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.3908,
+              "y": 0.5278,
+              "w": 0.2267,
+              "h": 0.0542
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-windows/02-pl.webp",
+            "en": "poradnik/node-windows/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wpisz polecenie winget install OpenJS.NodeJS.LTS i naciśnij Enter.",
+            "en": "Type winget install OpenJS.NodeJS.LTS and press Enter."
+          },
+          "alt": {
+            "pl": "Okno Terminala z wpisanym poleceniem winget install OpenJS.NodeJS.LTS.",
+            "en": "Terminal window with the command winget install OpenJS.NodeJS.LTS typed in."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.3216,
+              "y": 0.1764
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2555,
+              "y": 0.1583,
+              "w": 0.0493,
+              "h": 0.0361
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-windows/03-pl.webp",
+            "en": "poradnik/node-windows/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Poczekaj na komunikat o udanej instalacji. Jeśli system zapyta o zgodę, kliknij Tak.",
+            "en": "Wait for the success message. If Windows asks for permission, click Yes."
+          },
+          "alt": {
+            "pl": "Terminal pokazuje pobieranie Node.js i komunikat o udanej instalacji.",
+            "en": "Terminal showing the Node.js download and the success message."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.3003,
+              "y": 0.4201
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.1325,
+              "y": 0.4028,
+              "w": 0.1543,
+              "h": 0.0347
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-windows/04-pl.webp",
+            "en": "poradnik/node-windows/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Bez konsoli: wejdź na nodejs.org/en/download i pobierz Windows Installer (.msi) w wersji LTS.",
+            "en": "Without the console: go to nodejs.org/en/download and download the Windows Installer (.msi), LTS version."
+          },
+          "alt": {
+            "pl": "Strona pobierania nodejs.org z przyciskiem Windows Installer (.msi).",
+            "en": "The nodejs.org download page with the Windows Installer (.msi) button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.1292,
+              "y": 0.7792
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.1458,
+              "y": 0.7417,
+              "w": 0.1973,
+              "h": 0.075
+            }
+          ],
+          "note": {
+            "pl": "Strona nodejs.org jest po angielsku, w obu wersjach poradnika wygląda tak samo."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-windows/05-pl.webp",
+            "en": "poradnik/node-windows/05-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Uruchom pobrany plik i klikaj Next, zostawiając domyślne ustawienia. Na końcu kliknij Finish.",
+            "en": "Run the downloaded file and click Next, keeping the default settings. Click Finish at the end."
+          },
+          "alt": {
+            "pl": "Pierwsze okno instalatora Node.js z przyciskiem Next.",
+            "en": "The first Node.js Setup window with the Next button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.5625,
+              "y": 0.6465
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.5508,
+              "y": 0.6743,
+              "w": 0.08,
+              "h": 0.05
+            }
+          ],
+          "note": {
+            "pl": "Instalator Node.js jest tylko po angielsku."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-windows/06-pl.webp",
+            "en": "poradnik/node-windows/06-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otwórz nowy Terminal i wpisz node -v. Wersja 22 lub wyższa jest w porządku.",
+            "en": "Open a new Terminal and type node -v. Version 22 or higher is fine."
+          },
+          "alt": {
+            "pl": "Terminal pokazuje wynik polecenia node -v z wersją 24.",
+            "en": "Terminal showing node -v returning version 24."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2122,
+              "y": 0.2069
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.1325,
+              "y": 0.1889,
+              "w": 0.063,
+              "h": 0.0361
+            }
+          ]
+        }
+      ]
+    },
+    "node-macos": {
+      "title": {
+        "pl": "Instalacja Node.js na macOS",
+        "en": "Installing Node.js on macOS"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/node-macos/01-pl.webp",
+            "en": "poradnik/node-macos/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wejdź na nodejs.org/en/download i pobierz macOS Installer (.pkg) w wersji LTS.",
+            "en": "Go to nodejs.org/en/download and download the macOS Installer (.pkg), LTS version."
+          },
+          "alt": {
+            "pl": "Strona pobierania nodejs.org z przyciskiem macOS Installer (.pkg).",
+            "en": "The nodejs.org download page with the macOS Installer (.pkg) button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.1292,
+              "y": 0.8153
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.1458,
+              "y": 0.7778,
+              "w": 0.1855,
+              "h": 0.075
+            }
+          ],
+          "note": {
+            "pl": "Strona nodejs.org jest po angielsku, w obu wersjach poradnika wygląda tak samo."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-macos/02-pl.webp",
+            "en": "poradnik/node-macos/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otwórz pobrany plik .pkg i klikaj Kontynuuj, a przy licencji Zgadzam się.",
+            "en": "Open the downloaded .pkg file and click Continue, then Agree at the license step."
+          },
+          "alt": {
+            "pl": "Okno instalatora Node.js w macOS z przyciskiem Kontynuuj.",
+            "en": "The macOS Node.js installer window with the Continue button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6842,
+              "y": 0.7153
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.6725,
+              "y": 0.7431,
+              "w": 0.0883,
+              "h": 0.05
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-macos/03-pl.webp",
+            "en": "poradnik/node-macos/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Gdy zobaczysz komunikat o udanej instalacji, kliknij Zamknij.",
+            "en": "When you see the success message, click Close."
+          },
+          "alt": {
+            "pl": "Podsumowanie instalatora macOS: instalacja zakończona pomyślnie.",
+            "en": "macOS installer summary: the installation was completed successfully."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6558,
+              "y": 0.7681
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.6725,
+              "y": 0.7431,
+              "w": 0.0883,
+              "h": 0.05
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-macos/04-pl.webp",
+            "en": "poradnik/node-macos/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Masz Homebrew? Zamiast instalatora wpisz w Terminalu brew install node.",
+            "en": "Using Homebrew? Instead of the installer, type brew install node in Terminal."
+          },
+          "alt": {
+            "pl": "Terminal macOS z poleceniem brew install node i jego wynikiem.",
+            "en": "macOS Terminal with brew install node and its output."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.3723,
+              "y": 0.1938
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2382,
+              "y": 0.175,
+              "w": 0.1174,
+              "h": 0.0375
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/node-macos/05-pl.webp",
+            "en": "poradnik/node-macos/05-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Sprawdź wersję poleceniem node -v. Wersja 22 lub wyższa jest w porządku.",
+            "en": "Check the version with node -v. Version 22 or higher is fine."
+          },
+          "alt": {
+            "pl": "Terminal macOS pokazuje wynik node -v z wersją 24.",
+            "en": "macOS Terminal showing node -v returning version 24."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2055,
+              "y": 0.2229
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.1292,
+              "y": 0.2042,
+              "w": 0.0596,
+              "h": 0.0375
+            }
+          ]
+        }
+      ]
+    },
+    "smartscreen": {
+      "title": {
+        "pl": "Pierwsze uruchomienie Instaluj.cmd (SmartScreen)",
+        "en": "First run of Instaluj.cmd (SmartScreen)"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/smartscreen/01-pl.webp",
+            "en": "poradnik/smartscreen/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otwórz rozpakowany folder aplikacji i kliknij dwukrotnie Instaluj.cmd.",
+            "en": "Open the unpacked app folder and double-click Instaluj.cmd."
+          },
+          "alt": {
+            "pl": "Eksplorator plików w folderze local-trading-journal, zaznaczony plik Instaluj.cmd.",
+            "en": "File Explorer in the local-trading-journal folder with Instaluj.cmd selected."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.9575,
+              "y": 0.6917
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2175,
+              "y": 0.6653,
+              "w": 0.7233,
+              "h": 0.0528
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/smartscreen/02-pl.webp",
+            "en": "poradnik/smartscreen/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Jeśli pojawi się niebieskie okno Windows, kliknij Więcej informacji.",
+            "en": "If a blue Windows window appears, click More info."
+          },
+          "alt": {
+            "pl": "Okno Microsoft Defender SmartScreen z linkiem Więcej informacji.",
+            "en": "The Microsoft Defender SmartScreen window with the More info link."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2875,
+              "y": 0.4278
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.3042,
+              "y": 0.4069,
+              "w": 0.103,
+              "h": 0.0417
+            }
+          ],
+          "note": {
+            "pl": "Na części komputerów zamiast niebieskiego okna pojawia się ostrzeżenie o zabezpieczeniach z przyciskiem Uruchom. Wtedy kliknij Uruchom."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/smartscreen/03-pl.webp",
+            "en": "poradnik/smartscreen/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Sprawdź, że aplikacja to Instaluj.cmd, i kliknij Uruchom mimo to.",
+            "en": "Check that the app is Instaluj.cmd and click Run anyway."
+          },
+          "alt": {
+            "pl": "Rozwinięte okno SmartScreen z nazwą Instaluj.cmd i przyciskiem Uruchom mimo to.",
+            "en": "The expanded SmartScreen window showing Instaluj.cmd and the Run anyway button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.4378,
+              "y": 0.7285
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.4497,
+              "y": 0.6979,
+              "w": 0.1345,
+              "h": 0.0611
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/smartscreen/04-pl.webp",
+            "en": "poradnik/smartscreen/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otworzy się okno instalatora. Wpisz 1 (polski) albo 2 (angielski) i naciśnij Enter.",
+            "en": "The installer window opens. Type 1 (Polish) or 2 (English) and press Enter."
+          },
+          "alt": {
+            "pl": "Czarne okno konsoli z nagłówkiem Local Trading Journal setup i pytaniem o język.",
+            "en": "Black console window with the Local Trading Journal setup header and the language question."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.0492,
+              "y": 0.2861
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.0375,
+              "y": 0.2222,
+              "w": 0.3501,
+              "h": 0.0361
+            }
+          ]
+        }
+      ]
+    },
+    "macos-open": {
+      "title": {
+        "pl": "Uruchomienie install.sh na macOS i Linuksie",
+        "en": "Running install.sh on macOS and Linux"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/macos-open/01-pl.webp",
+            "en": "poradnik/macos-open/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "W Terminalu przejdź do folderu aplikacji, nadaj prawo uruchomienia i uruchom instalator.",
+            "en": "In Terminal, go to the app folder, make the script executable and run the installer."
+          },
+          "alt": {
+            "pl": "Terminal z poleceniami cd, chmod +x install.sh i ./install.sh.",
+            "en": "Terminal with the cd, chmod +x install.sh and ./install.sh commands."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.4941,
+              "y": 0.1938
+            },
+            {
+              "n": 2,
+              "x": 0.5134,
+              "y": 0.2229
+            },
+            {
+              "n": 3,
+              "x": 0.4685,
+              "y": 0.2521
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2382,
+              "y": 0.175,
+              "w": 0.2393,
+              "h": 0.0375
+            },
+            {
+              "x": 0.3665,
+              "y": 0.2042,
+              "w": 0.1302,
+              "h": 0.0375
+            },
+            {
+              "x": 0.3665,
+              "y": 0.2333,
+              "w": 0.0853,
+              "h": 0.0375
+            }
+          ],
+          "note": {
+            "pl": "W Linuksie wpisujesz te same trzy polecenia w swoim terminalu."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/macos-open/02-pl.webp",
+            "en": "poradnik/macos-open/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Instalator startuje w tym samym oknie. Wpisz 1 (polski) albo 2 (angielski) i naciśnij Enter.",
+            "en": "The installer starts in the same window. Type 1 (Polish) or 2 (English) and press Enter."
+          },
+          "alt": {
+            "pl": "Terminal z nagłówkiem Local Trading Journal setup i pytaniem o język.",
+            "en": "Terminal with the Local Trading Journal setup header and the language question."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.1408,
+              "y": 0.3569
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.1292,
+              "y": 0.2917,
+              "w": 0.3291,
+              "h": 0.0375
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/macos-open/03-pl.webp",
+            "en": "poradnik/macos-open/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Bez wpisywania poleceń: kliknij install.sh prawym przyciskiem, wybierz Otwórz za pomocą i Terminal.",
+            "en": "Without typing commands: right-click install.sh, choose Open With and then Terminal."
+          },
+          "alt": {
+            "pl": "Finder z menu kontekstowym pliku install.sh i podmenu Otwórz za pomocą, zaznaczony Terminal.",
+            "en": "Finder with the install.sh context menu and the Open With submenu, Terminal highlighted."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.375,
+              "y": 0.5132
+            },
+            {
+              "n": 2,
+              "x": 0.7967,
+              "y": 0.5674
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.3917,
+              "y": 0.4903,
+              "w": 0.2083,
+              "h": 0.0458
+            },
+            {
+              "x": 0.5967,
+              "y": 0.5444,
+              "w": 0.1833,
+              "h": 0.0458
+            }
+          ],
+          "note": {
+            "pl": "Zwykłe „Otwórz” otwiera skrypt w edytorze tekstu, dlatego wybierasz Terminal z podmenu."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/macos-open/04-pl.webp",
+            "en": "poradnik/macos-open/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Jeśli macOS ostrzeże o nieznanym deweloperze, kliknij Otwórz.",
+            "en": "If macOS warns about an unidentified developer, click Open."
+          },
+          "alt": {
+            "pl": "Okno ostrzeżenia macOS o niezweryfikowanym deweloperze pliku install.sh z przyciskiem Otwórz.",
+            "en": "macOS warning about an unverified developer of install.sh with the Open button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6158,
+              "y": 0.5653
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.4008,
+              "y": 0.5389,
+              "w": 0.1983,
+              "h": 0.0528
+            }
+          ]
+        },
+        {
+          "img": {
+            "pl": "poradnik/macos-open/05-pl.webp",
+            "en": "poradnik/macos-open/05-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Nowszy macOS nie pokazuje przycisku Otwórz. Wtedy w Ustawieniach systemowych, w Prywatności i ochronie, kliknij Otwórz mimo to.",
+            "en": "Newer macOS shows no Open button. Then in System Settings, under Privacy & Security, click Open Anyway."
+          },
+          "alt": {
+            "pl": "Ustawienia systemowe, Prywatność i ochrona, komunikat o zablokowaniu install.sh z przyciskiem Otwórz mimo to.",
+            "en": "System Settings, Privacy & Security, message that install.sh was blocked with the Open Anyway button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.732,
+              "y": 0.4333
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.7153,
+              "y": 0.3556,
+              "w": 0.1139,
+              "h": 0.05
+            }
+          ],
+          "note": {
+            "pl": "Dotyczy macOS 15 Sequoia i nowszych. Po kliknięciu macOS poprosi o hasło do Maca lub Touch ID."
+          }
+        }
+      ]
+    },
+    "notion-integracja": {
+      "title": {
+        "pl": "Utworzenie integracji w Notion",
+        "en": "Creating a Notion integration"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/notion-integracja/01-pl.webp",
+            "en": "poradnik/notion-integracja/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wejdź na notion.so/profile/integrations i kliknij New integration.",
+            "en": "Go to notion.so/profile/integrations and click New integration."
+          },
+          "alt": {
+            "pl": "Strona Integrations w Notion z przyciskiem New integration.",
+            "en": "The Notion Integrations page with the New integration button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.802,
+              "y": 0.2194
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.8187,
+              "y": 0.1903,
+              "w": 0.1272,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-integracja/02-pl.webp",
+            "en": "poradnik/notion-integracja/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wpisz nazwę Local Trading Journal, wybierz swój obszar roboczy i typ Internal, potem kliknij Save.",
+            "en": "Enter the name Local Trading Journal, pick your workspace and the Internal type, then click Save."
+          },
+          "alt": {
+            "pl": "Formularz nowej integracji: nazwa, obszar roboczy, typ Internal i przycisk Save.",
+            "en": "New integration form: name, workspace, Internal type and the Save button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2858,
+              "y": 0.3722
+            },
+            {
+              "n": 2,
+              "x": 0.2858,
+              "y": 0.4722
+            },
+            {
+              "n": 3,
+              "x": 0.2858,
+              "y": 0.5722
+            },
+            {
+              "n": 4,
+              "x": 0.7142,
+              "y": 0.7931
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.3025,
+              "y": 0.3417,
+              "w": 0.395,
+              "h": 0.0611
+            },
+            {
+              "x": 0.3025,
+              "y": 0.4417,
+              "w": 0.395,
+              "h": 0.0611
+            },
+            {
+              "x": 0.3025,
+              "y": 0.5417,
+              "w": 0.395,
+              "h": 0.0611
+            },
+            {
+              "x": 0.643,
+              "y": 0.7639,
+              "w": 0.0545,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-integracja/03-pl.webp",
+            "en": "poradnik/notion-integracja/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Po zapisaniu kliknij Configure integration settings.",
+            "en": "After saving, click Configure integration settings."
+          },
+          "alt": {
+            "pl": "Okno z potwierdzeniem utworzenia integracji i przyciskiem Configure integration settings.",
+            "en": "Confirmation that the integration was created, with the Configure integration settings button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6112,
+              "y": 0.625
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.4055,
+              "y": 0.5958,
+              "w": 0.189,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-integracja/04-pl.webp",
+            "en": "poradnik/notion-integracja/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "W Capabilities zostaw zaznaczone Read content, Update content i Insert content, potem kliknij Save.",
+            "en": "Under Capabilities keep Read content, Update content and Insert content checked, then click Save."
+          },
+          "alt": {
+            "pl": "Ustawienia integracji: zaznaczone uprawnienia Read, Update i Insert content oraz przycisk Save.",
+            "en": "Integration settings: Read, Update and Insert content checked, and the Save button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2458,
+              "y": 0.7014
+            },
+            {
+              "n": 2,
+              "x": 0.3336,
+              "y": 0.825
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2625,
+              "y": 0.6153,
+              "w": 0.1137,
+              "h": 0.1722
+            },
+            {
+              "x": 0.2625,
+              "y": 0.7958,
+              "w": 0.0545,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        }
+      ]
+    },
+    "notion-token": {
+      "title": {
+        "pl": "Skopiowanie klucza integracji",
+        "en": "Copying the integration secret"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/notion-token/01-pl.webp",
+            "en": "poradnik/notion-token/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Na liście integracji kliknij Local Trading Journal.",
+            "en": "In the integrations list, click Local Trading Journal."
+          },
+          "alt": {
+            "pl": "Lista integracji Notion z kartą Local Trading Journal.",
+            "en": "The Notion integrations list with the Local Trading Journal card."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.2458,
+              "y": 0.4472
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.2625,
+              "y": 0.3889,
+              "w": 0.3583,
+              "h": 0.1167
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-token/02-pl.webp",
+            "en": "poradnik/notion-token/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Przy Internal Integration Secret kliknij Copy. Jeśli przycisku nie widać, najpierw kliknij Show.",
+            "en": "Next to Internal Integration Secret, click Copy. If you do not see it, click Show first."
+          },
+          "alt": {
+            "pl": "Pole Internal Integration Secret z ukrytym kluczem i przyciskiem Copy.",
+            "en": "The Internal Integration Secret field with a hidden key and the Copy button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6098,
+              "y": 0.4083
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.6264,
+              "y": 0.3792,
+              "w": 0.0722,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam. Klucz to hasło do Twoich danych w Notion. Wklejasz go tylko w instalatorze, nigdzie nie publikujesz."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-token/03-pl.webp",
+            "en": "poradnik/notion-token/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "W oknie instalatora kliknij prawym przyciskiem albo naciśnij Ctrl+V, żeby wkleić klucz, i naciśnij Enter.",
+            "en": "In the installer window, right-click or press Ctrl+V to paste the key, then press Enter."
+          },
+          "alt": {
+            "pl": "Okno instalatora z instrukcją kroku 1 i pytaniem o klucz integracji.",
+            "en": "Installer window with step 1 instructions and the prompt for the integration secret."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.0492,
+              "y": 0.5611
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.0375,
+              "y": 0.4972,
+              "w": 0.2134,
+              "h": 0.0361
+            }
+          ],
+          "note": {
+            "pl": "Na macOS wklejasz klawiszami Cmd+V."
+          }
+        }
+      ]
+    },
+    "notion-polaczenia": {
+      "title": {
+        "pl": "Udostępnienie strony integracji",
+        "en": "Sharing a page with the integration"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/notion-polaczenia/01-pl.webp",
+            "en": "poradnik/notion-polaczenia/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otwórz w Notion pustą stronę na dziennik (np. Trading) i kliknij ••• w prawym górnym rogu.",
+            "en": "Open an empty Notion page for the journal (e.g. Trading) and click ••• in the top right corner."
+          },
+          "alt": {
+            "pl": "Pusta strona Trading w Notion, wskazany przycisk z trzema kropkami.",
+            "en": "An empty Trading page in Notion with the three-dot button pointed out."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.9552,
+              "y": 0.2181
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.9435,
+              "y": 0.1375,
+              "w": 0.039,
+              "h": 0.0528
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-polaczenia/02-pl.webp",
+            "en": "poradnik/notion-polaczenia/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "W menu najedź na Connections.",
+            "en": "In the menu, hover over Connections."
+          },
+          "alt": {
+            "pl": "Menu strony Notion z zaznaczoną pozycją Connections.",
+            "en": "The Notion page menu with Connections highlighted."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.7408,
+              "y": 0.4986
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.7575,
+              "y": 0.4708,
+              "w": 0.2233,
+              "h": 0.0556
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-polaczenia/03-pl.webp",
+            "en": "poradnik/notion-polaczenia/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wpisz Local, wybierz Local Trading Journal z listy.",
+            "en": "Type Local and choose Local Trading Journal from the list."
+          },
+          "alt": {
+            "pl": "Podmenu Connections z wyszukiwarką i integracją Local Trading Journal.",
+            "en": "The Connections submenu with search and the Local Trading Journal integration."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.5008,
+              "y": 0.6403
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.5175,
+              "y": 0.6069,
+              "w": 0.24,
+              "h": 0.0667
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-polaczenia/04-pl.webp",
+            "en": "poradnik/notion-polaczenia/04-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Potwierdź przyciskiem Confirm. Integracja dostaje dostęp tylko do tej strony i jej podstron.",
+            "en": "Click Confirm. The integration gets access only to this page and its sub-pages."
+          },
+          "alt": {
+            "pl": "Okno potwierdzenia dostępu integracji Local Trading Journal do strony Trading.",
+            "en": "Confirmation dialog for Local Trading Journal access to the Trading page."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6758,
+              "y": 0.5944
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.3408,
+              "y": 0.5653,
+              "w": 0.3183,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-polaczenia/05-pl.webp",
+            "en": "poradnik/notion-polaczenia/05-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Skopiuj link do strony: kliknij Share, a potem Copy link.",
+            "en": "Copy the page link: click Share, then Copy link."
+          },
+          "alt": {
+            "pl": "Okno Share strony Notion z przyciskiem Copy link.",
+            "en": "The Notion Share panel with the Copy link button."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.8799,
+              "y": 0.2181
+            },
+            {
+              "n": 2,
+              "x": 0.8132,
+              "y": 0.5236
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.8683,
+              "y": 0.1375,
+              "w": 0.0506,
+              "h": 0.0528
+            },
+            {
+              "x": 0.8299,
+              "y": 0.4944,
+              "w": 0.0943,
+              "h": 0.0583
+            }
+          ],
+          "note": {
+            "pl": "Notion nie ma polskiej wersji interfejsu, dlatego napisy są po angielsku. Układ jest taki sam."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/notion-polaczenia/06-pl.webp",
+            "en": "poradnik/notion-polaczenia/06-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wklej link w oknie instalatora i naciśnij Enter. Instalator utworzy w tej stronie dziennik.",
+            "en": "Paste the link into the installer window and press Enter. The installer creates the journal inside that page."
+          },
+          "alt": {
+            "pl": "Okno instalatora z instrukcją kroku 2 i pytaniem o link do strony.",
+            "en": "Installer window with step 2 instructions and the prompt for the page link."
+          },
+          "illustration": true,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.0492,
+              "y": 0.4694
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.0375,
+              "y": 0.4056,
+              "w": 0.1587,
+              "h": 0.0361
+            }
+          ]
+        }
+      ]
+    },
+    "token-zmiana": {
+      "title": {
+        "pl": "Zmiana tokenu Notion",
+        "en": "Changing the Notion token"
+      },
+      "frames": [
+        {
+          "img": {
+            "pl": "poradnik/token-zmiana/01-pl.webp",
+            "en": "poradnik/token-zmiana/01-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Otwórz Ustawienia (koło zębate), zakładka Ogólne, i kliknij Zmień token.",
+            "en": "Open Settings (the gear icon), the General tab, and click Change token."
+          },
+          "alt": {
+            "pl": "Ustawienia dashboardu, zakładka Ogólne, wskazany przycisk Zmień token.",
+            "en": "Dashboard settings, General tab, with the Change token button pointed out."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.9235,
+              "y": 0.541
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.8456,
+              "y": 0.5225,
+              "w": 0.0619,
+              "h": 0.037
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720).",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720)."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/token-zmiana/02-pl.webp",
+            "en": "poradnik/token-zmiana/02-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Potwierdź. Stary token zostanie zastąpiony dopiero wtedy, gdy nowy zadziała.",
+            "en": "Confirm. The old token is replaced only once the new one works."
+          },
+          "alt": {
+            "pl": "Okno potwierdzenia Zmienić token Notion, wskazany przycisk Zmień token.",
+            "en": "The Change the Notion token confirmation with the Change token button pointed out."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.6387,
+              "y": 0.5557
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.5489,
+              "y": 0.5351,
+              "w": 0.0738,
+              "h": 0.0412
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720).",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720)."
+          }
+        },
+        {
+          "img": {
+            "pl": "poradnik/token-zmiana/03-pl.webp",
+            "en": "poradnik/token-zmiana/03-en.webp"
+          },
+          "w": 1200,
+          "h": 720,
+          "caption": {
+            "pl": "Wklej nowy token w pole. Sprawdzenie startuje samo, bez dodatkowego przycisku.",
+            "en": "Paste the new token into the field. The check starts by itself, no extra button."
+          },
+          "alt": {
+            "pl": "Krok Token w Pierwszych krokach z polem Wklej token.",
+            "en": "The Token step in Getting started with the Paste the token field."
+          },
+          "illustration": false,
+          "markers": [
+            {
+              "n": 1,
+              "x": 0.705,
+              "y": 0.6217
+            }
+          ],
+          "outlines": [
+            {
+              "x": 0.311,
+              "y": 0.5969,
+              "w": 0.378,
+              "h": 0.0495
+            }
+          ],
+          "source": {
+            "pl": "Zrzut z dashboardu na atrapie Notion (Onyx, 1600×960 przeskalowane do 1200×720).",
+            "en": "Screenshot of the dashboard on the Notion mock (Onyx, 1600×960 scaled to 1200×720)."
+          }
+        }
+      ]
+    }
+  }
+}

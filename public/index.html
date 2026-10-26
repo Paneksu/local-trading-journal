@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trading HQ</title>
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#1a1a1a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1a1a'/%3E%3Cpath d='M5 22l6-7 5 4 7-10 4 3' fill='none' stroke='%23f3f3f3' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+/* motyw i paleta danych ustawiane przed pierwszym malowaniem, żeby nie było błysku */
+(function () { try { var d = document.documentElement; var lg = localStorage.getItem('thq.lang'); if (lg === 'en' || lg === 'pl') d.lang = lg; var t = localStorage.getItem('thq.theme'); if (t === 'onyx' || t === 'platinum') d.setAttribute('data-theme', t); var st = JSON.parse(localStorage.getItem('thq.settings.v1') || '{}'); if (st.palette && st.palette !== 'color') { d.setAttribute('data-palette', st.palette); var th = d.getAttribute('data-theme') === 'platinum' ? 'platinum' : 'onyx'; var r = st.resolved && st.resolved[th]; if (r) { d.style.setProperty('--profit', r.profit); d.style.setProperty('--loss', r.loss); d.style.setProperty('--be', r.be); d.style.setProperty('--cellmix', String(r.cellmix)); } var o = st.resolved && st.resolved.onyx; if (o) { d.style.setProperty('--lb-profit', o.profit); d.style.setProperty('--lb-loss', o.loss); d.style.setProperty('--lb-be', o.be); } } } catch (e) { /* localStorage niedostępny */ } })();
+</script>
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&amp;display=swap" media="print" onload="this.media='all'">
+<noscript>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&amp;display=swap">
+</noscript>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="features.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="Przejdź do treści">Przejdź do treści</a>
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--float)"/><path d="M5 22l6-7 5 4 7-10 4 3" fill="none" stroke="var(--fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="brand-name">Trading HQ</span>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Widok" data-i18n-aria="Widok"></nav>
+    <div class="top-actions">
+      <button class="btn primary" type="button" data-act="add-trade"><span class="add-ico" aria-hidden="true"></span><span class="btn-t" data-i18n="Dodaj trade">Dodaj trade</span></button>
+      <button class="btn" id="refresh" type="button" aria-label="Odśwież dane z Notion" data-i18n-aria="Odśwież dane z Notion"><span class="spin" aria-hidden="true"></span><span class="refresh-ico" aria-hidden="true"></span><span class="btn-t" data-i18n="Odśwież">Odśwież</span></button>
+      <a class="btn top-notion" data-notion="app" href="#" rel="noopener">Notion</a>
+      <button type="button" class="icon-btn" id="gear" data-act="settings" aria-haspopup="dialog" aria-expanded="false" aria-label="Ustawienia" data-i18n-aria="Ustawienia" title="Ustawienia: paleta danych, margines BE, język" data-i18n-title="Ustawienia: paleta danych, margines BE, język"></button>
+      <div class="seg theme-seg" role="group" aria-label="Motyw" data-i18n-aria="Motyw" id="theme-seg">
+        <button type="button" data-act="theme" data-v="onyx" aria-pressed="true">Onyx</button>
+        <button type="button" data-act="theme" data-v="platinum" aria-pressed="false">Platinum</button>
+      </div>
+    </div>
+  </header>
+
+  <aside class="panel panel-l" id="desk" aria-label="Filtry" data-i18n-aria="Filtry"></aside>
+
+  <main class="content-card" id="main" tabindex="-1">
+    <div id="view">
+      <div class="loading" id="loading"><span class="spin big" aria-hidden="true"></span><span data-i18n="Pobieram dane z Notion…">Pobieram dane z Notion…</span></div>
+    </div>
+  </main>
+
+  <aside class="panel panel-r" id="side" aria-label="Panel dnia" data-i18n-aria="Panel dnia"></aside>
+
+  <footer class="statusbar" id="status">
+    <span class="st-left"><span class="spin" aria-hidden="true"></span><span id="updated" data-i18n="Łączę z Notion…">Łączę z Notion…</span><button type="button" id="attn" class="upd-pill attn" data-act="ob-attn" hidden><i class="upd-dot" aria-hidden="true"></i><span data-i18n="Wymaga uwagi">Wymaga uwagi</span></button><button type="button" id="upd" class="upd-pill" data-act="upd-open" hidden><i class="upd-dot" aria-hidden="true"></i><span class="upd-t"></span></button></span>
+    <span class="st-mid mono" id="entries"></span>
+    <span class="st-right"><button type="button" class="st-help" data-act="ob-open" aria-label="Pierwsze kroki" data-i18n-aria="Pierwsze kroki" title="Pierwsze kroki: gotowość i przewodnik" data-i18n-title="Pierwsze kroki: gotowość i przewodnik">?</button><span data-i18n="Źródło:">Źródło:</span> <a data-notion="app" href="#" rel="noopener">Notion</a> · <a data-notion="web" href="#" target="_blank" rel="noopener" data-i18n="w przeglądarce">w przeglądarce</a><button type="button" class="btn ghost sm stop" data-act="stop" title="Zatrzymuje lokalny serwer dashboardu" data-i18n-title="Zatrzymuje lokalny serwer dashboardu" data-i18n="Zatrzymaj serwer">Zatrzymaj serwer</button></span>
+  </footer>
+
+  <nav class="tabbar" id="tabbar" aria-label="Nawigacja" data-i18n-aria="Nawigacja"></nav>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

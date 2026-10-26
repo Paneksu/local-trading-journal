@@ -1,0 +1,16 @@
+{
+  "name": "local-trading-journal",
+  "version": "1.0.0",
+  "description": "Lokalny dashboard statystyk tradingowych z dziennikiem w Notion. / Local trading statistics dashboard with the journal in Notion.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "repoSlug": "Paneksu/local-trading-journal",
+  "scripts": {
+    "start": "node server.mjs",
+    "setup": "node setup.mjs",
+    "update": "node update.mjs",
+    "test": "node testy/run.mjs"
+  }
+}

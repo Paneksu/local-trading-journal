@@ -1,0 +1,21 @@
+{
+  "$comment": "Polski jest językiem źródłowym: klucz to tekst. Tu są tylko wpisy z liczbą mnogą (formy Intl.PluralRules dla pl).",
+  "{n} trade'ów": { "one": "{n} trade", "few": "{n} trade'y", "many": "{n} trade'ów", "other": "{n} trade'a" },
+  "{n} trade'ów z wynikiem w R": { "one": "{n} trade z wynikiem w R", "few": "{n} trade'y z wynikiem w R", "many": "{n} trade'ów z wynikiem w R", "other": "{n} trade'a z wynikiem w R" },
+  "{n} trade'ów z czasem": { "one": "{n} trade z czasem", "few": "{n} trade'y z czasem", "many": "{n} trade'ów z czasem", "other": "{n} trade'a z czasem" },
+  "z {n} trade'ów": { "one": "z {n} trade'u", "few": "z {n} trade'ów", "many": "z {n} trade'ów", "other": "z {n} trade'a" },
+  "{n} zrzutów": { "one": "{n} zrzut", "few": "{n} zrzuty", "many": "{n} zrzutów", "other": "{n} zrzutu" },
+  "{n} kont": { "one": "{n} konto", "few": "{n} konta", "many": "{n} kont", "other": "{n} konta" },
+
+  "{n} wpisów DEMO trafi do kosza Notion (da się je przywrócić w Notion).": { "one": "{n} wpis DEMO trafi do kosza Notion (da się go przywrócić w Notion).", "few": "{n} wpisy DEMO trafią do kosza Notion (da się je przywrócić w Notion).", "many": "{n} wpisów DEMO trafi do kosza Notion (da się je przywrócić w Notion).", "other": "{n} wpisu DEMO trafi do kosza Notion." },
+  "Usuń {n} wpisów": { "one": "Usuń {n} wpis", "few": "Usuń {n} wpisy", "many": "Usuń {n} wpisów", "other": "Usuń {n} wpisu" },
+  "{n} wpisów": { "one": "{n} wpis", "few": "{n} wpisy", "many": "{n} wpisów", "other": "{n} wpisu" },
+  "Brakuje {n} pól: ": { "one": "Brakuje {n} pola: ", "few": "Brakuje {n} pól: ", "many": "Brakuje {n} pól: ", "other": "Brakuje {n} pola: " },
+  "Brakuje {n} widoków: ": { "one": "Brakuje {n} widoku: ", "few": "Brakuje {n} widoków: ", "many": "Brakuje {n} widoków: ", "other": "Brakuje {n} widoku: " },
+  "{n} wpisów DEMO w Notion. Usuń je, gdy zaczniesz wpisywać własne.": { "one": "{n} wpis DEMO w Notion. Usuń go, gdy zaczniesz wpisywać własne.", "few": "{n} wpisy DEMO w Notion. Usuń je, gdy zaczniesz wpisywać własne.", "many": "{n} wpisów DEMO w Notion. Usuń je, gdy zaczniesz wpisywać własne.", "other": "{n} wpisu DEMO w Notion." },
+  "Zostały {n} rzeczy do poprawienia.": { "one": "Została {n} rzecz do poprawienia.", "few": "Zostały {n} rzeczy do poprawienia.", "many": "Zostało {n} rzeczy do poprawienia.", "other": "Zostało {n} rzeczy do poprawienia." },
+  "Dodano w Notion: {n} zmian.": { "one": "Dodano w Notion: {n} zmiana.", "few": "Dodano w Notion: {n} zmiany.", "many": "Dodano w Notion: {n} zmian.", "other": "Dodano w Notion: {n} zmiany." },
+  "Usunięto {n} wpisów DEMO.": { "one": "Usunięto {n} wpis DEMO.", "few": "Usunięto {n} wpisy DEMO.", "many": "Usunięto {n} wpisów DEMO.", "other": "Usunięto {n} wpisu DEMO." },
+
+  "API Notion nie utworzyło {n} widoków: ": { "one": "API Notion nie utworzyło {n} widoku: ", "few": "API Notion nie utworzyło {n} widoków: ", "many": "API Notion nie utworzyło {n} widoków: ", "other": "API Notion nie utworzyło {n} widoku: " }
+}

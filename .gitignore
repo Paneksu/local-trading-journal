@@ -1,0 +1,12 @@
+# dane i ustawienia użytkownika (nigdy w repozytorium, aktualizacja ich nie rusza)
+.env
+.env.tmp
+config.local.json
+config.local.json.tmp
+backups/
+public/img/firmy/custom/
+*.url
+# lokalne pliki robocze
+dashboard.log
+screens/
+node_modules/

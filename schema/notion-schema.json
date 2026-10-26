@@ -1,0 +1,172 @@
+{
+  "$comment": "Jedno źródło prawdy o schemacie Notion: strona główna, 4 bazy, pola, opcje, relacje, formuły i widoki. Używa go setup.mjs (nowa instalacja), a aktualizacje dokładają różnice migracjami z migrations/. Zmiany tylko addytywne, patrz CONTRIBUTING.md. Formuły: {{p:rola}} to prop(\"nazwa pola\"), {{o:rola:token}} to nazwa opcji w języku instalacji, {{x:baza.rola}} to sama nazwa pola z innej bazy. / Single source of truth for the Notion workspace; additive changes only.",
+  "schemaVersion": 1,
+  "rootPage": {
+    "icon": "📊",
+    "title": { "pl": "Dziennik tradingowy", "en": "Trading Journal" },
+    "intro": {
+      "pl": "Twój dziennik tradingowy. Trade'y, konta prop, wydatki i payouty wpisujesz tutaj albo w lokalnym dashboardzie, a statystyki liczy dashboard.",
+      "en": "Your trading journal. Log trades, prop accounts, expenses and payouts here or in the local dashboard; the dashboard calculates the statistics."
+    },
+    "dashboardLabel": { "pl": "Dashboard (działa tylko na Twoim komputerze): ", "en": "Dashboard (runs only on your computer): " },
+    "dashboardUrl": "http://127.0.0.1:4321"
+  },
+  "order": ["konta", "dziennik", "trades", "finanse"],
+  "databases": {
+    "konta": {
+      "title": { "pl": "Konta", "en": "Accounts" },
+      "icon": "🏦",
+      "properties": {
+        "name": { "type": "title", "name": { "pl": "Konto", "en": "Account" } },
+        "status": {
+          "type": "select", "name": { "pl": "Status", "en": "Status" },
+          "options": [
+            { "token": "Challenge", "name": { "pl": "Challenge", "en": "Challenge" }, "color": "blue" },
+            { "token": "Weryfikacja", "name": { "pl": "Weryfikacja", "en": "Verification" }, "color": "yellow" },
+            { "token": "Funded", "name": { "pl": "Funded", "en": "Funded" }, "color": "green" },
+            { "token": "Przegrane", "name": { "pl": "Przegrane", "en": "Lost" }, "color": "red" },
+            { "token": "Zamknięte", "name": { "pl": "Zamknięte", "en": "Closed" }, "color": "gray" }
+          ]
+        },
+        "firma": {
+          "type": "select", "name": { "pl": "Firma", "en": "Firm" },
+          "options": [
+            { "name": "Lucid Trading", "color": "blue" }, { "name": "Alpha Futures", "color": "green" },
+            { "name": "Apex Trader Funding", "color": "orange" }, { "name": "Topstep", "color": "yellow" },
+            { "name": { "pl": "Inna", "en": "Other" }, "color": "gray" }
+          ]
+        },
+        "size": { "type": "number", "name": { "pl": "Rozmiar", "en": "Size" }, "format": "dollar" },
+        "bought": { "type": "date", "name": { "pl": "Data zakupu", "en": "Purchase date" } },
+        "notes": { "type": "rich_text", "name": { "pl": "Notatki", "en": "Notes" } },
+        "trades": { "type": "relation", "synced": true, "name": { "pl": "Trade'y", "en": "Trades" } },
+        "finanse": { "type": "relation", "synced": true, "name": { "pl": "Wydatki i payouty", "en": "Expenses and payouts" } },
+        "pnlSum": { "type": "rollup", "name": { "pl": "P&L trade'ów", "en": "Trades P&L" }, "relation": "trades", "target": "trades.pnl", "function": "sum" },
+        "saldo": { "type": "formula", "name": { "pl": "Saldo", "en": "Balance" }, "expression": "{{p:size}} + {{p:pnlSum}}" },
+        "active": {
+          "type": "formula", "name": { "pl": "Aktywne", "en": "Active" },
+          "expression": "or({{p:status}} == \"{{o:status:Challenge}}\", or({{p:status}} == \"{{o:status:Weryfikacja}}\", {{p:status}} == \"{{o:status:Funded}}\"))"
+        }
+      },
+      "views": [
+        { "key": "active", "type": "table", "name": { "pl": "Aktywne", "en": "Active" }, "filter": { "role": "active", "formula": { "checkbox": { "equals": true } } }, "sorts": [{ "role": "bought", "direction": "descending" }] },
+        { "key": "all", "type": "table", "name": { "pl": "Wszystkie", "en": "All" }, "sorts": [{ "role": "bought", "direction": "descending" }] }
+      ]
+    },
+    "dziennik": {
+      "title": { "pl": "Dziennik", "en": "Journal" },
+      "icon": "📓",
+      "properties": {
+        "name": { "type": "title", "name": { "pl": "Dzień", "en": "Day" } },
+        "date": { "type": "date", "name": { "pl": "Data", "en": "Date" } },
+        "notes": { "type": "rich_text", "name": { "pl": "Notatki", "en": "Notes" } }
+      },
+      "views": [
+        { "key": "calendar", "type": "calendar", "name": { "pl": "Kalendarz", "en": "Calendar" }, "dateRole": "date" },
+        { "key": "table", "type": "table", "name": { "pl": "Tabela", "en": "Table" }, "sorts": [{ "role": "date", "direction": "descending" }] }
+      ]
+    },
+    "trades": {
+      "title": { "pl": "Trade'y", "en": "Trades" },
+      "icon": "📈",
+      "properties": {
+        "title": { "type": "title", "name": { "pl": "Trade", "en": "Trade" } },
+        "typ": {
+          "type": "select", "name": { "pl": "Typ", "en": "Type" },
+          "options": [
+            { "token": "Live", "name": { "pl": "Live", "en": "Live" }, "color": "green" },
+            { "token": "Backtest", "name": { "pl": "Backtest", "en": "Backtest" }, "color": "purple" },
+            { "token": "Niewzięty", "name": { "pl": "Niewzięty", "en": "Paper" }, "color": "gray" }
+          ]
+        },
+        "date": { "type": "date", "name": { "pl": "Data", "en": "Date" } },
+        "exit": { "type": "date", "name": { "pl": "Wyjście", "en": "Exit" } },
+        "instrument": {
+          "type": "select", "name": { "pl": "Instrument", "en": "Instrument" },
+          "options": [
+            { "name": "ES", "color": "red" }, { "name": "NQ", "color": "pink" }, { "name": "MES", "color": "orange" }, { "name": "MNQ", "color": "purple" },
+            { "name": "EURUSD", "color": "blue" }, { "name": "XAUUSD", "color": "yellow" }
+          ]
+        },
+        "dir": {
+          "type": "select", "name": { "pl": "Kierunek", "en": "Direction" },
+          "options": [{ "name": "Long", "color": "green" }, { "name": "Short", "color": "red" }, { "name": "NO TRADE", "color": "gray" }]
+        },
+        "setup": {
+          "type": "select", "name": { "pl": "Setup", "en": "Setup" },
+          "options": [{ "name": "Breakout", "color": "blue" }, { "name": "Pullback", "color": "green" }, { "name": "Reversal", "color": "red" }, { "name": "Range", "color": "yellow" }]
+        },
+        "session": {
+          "type": "select", "name": { "pl": "Sesja", "en": "Session" },
+          "options": [
+            { "name": { "pl": "Azja", "en": "Asia" }, "color": "yellow" },
+            { "name": { "pl": "Londyn", "en": "London" }, "color": "blue" },
+            { "name": { "pl": "Nowy Jork", "en": "New York" }, "color": "orange" }
+          ]
+        },
+        "r": { "type": "number", "name": { "pl": "R", "en": "R" } },
+        "pnl": { "type": "number", "name": { "pl": "P&L $", "en": "P&L $" }, "format": "dollar" },
+        "konta": { "type": "relation", "name": { "pl": "Konta", "en": "Accounts" }, "to": "konta", "syncedRole": "trades" },
+        "chart": { "type": "url", "name": { "pl": "Wykres", "en": "Chart" } },
+        "manual": {
+          "type": "select", "name": { "pl": "Wynik ręcznie", "en": "Manual result" },
+          "options": [{ "name": "✅ Win", "color": "green" }, { "name": "❌ Loss", "color": "red" }, { "name": "➖ BE", "color": "gray" }]
+        },
+        "reason": {
+          "type": "select", "name": { "pl": "Powód", "en": "Reason" },
+          "options": [
+            { "name": { "pl": "Koniec dnia", "en": "End of day" }, "color": "gray" },
+            { "name": { "pl": "Limit trade'ów", "en": "Trade limit" }, "color": "orange" },
+            { "name": { "pl": "Nie było mnie", "en": "Away" }, "color": "blue" },
+            { "name": { "pl": "Strach / zawahanie", "en": "Fear / hesitation" }, "color": "red" },
+            { "name": { "pl": "Poza planem", "en": "Off plan" }, "color": "yellow" },
+            { "name": { "pl": "Inne", "en": "Other" }, "color": "default" }
+          ]
+        },
+        "notes": { "type": "rich_text", "name": { "pl": "Notatki", "en": "Notes" } },
+        "files": { "type": "files", "name": { "pl": "Zrzut", "en": "Screenshot" } }
+      },
+      "views": [
+        { "key": "all", "type": "table", "name": { "pl": "Wszystkie", "en": "All" }, "sorts": [{ "role": "date", "direction": "descending" }] },
+        { "key": "live", "type": "table", "name": { "pl": "Live", "en": "Live" }, "filter": { "role": "typ", "select": { "equals": "{{o:typ:Live}}" } }, "sorts": [{ "role": "date", "direction": "descending" }] },
+        { "key": "backtest", "type": "table", "name": { "pl": "Backtest", "en": "Backtest" }, "filter": { "role": "typ", "select": { "equals": "{{o:typ:Backtest}}" } }, "sorts": [{ "role": "date", "direction": "descending" }] },
+        { "key": "paper", "type": "table", "name": { "pl": "Paper", "en": "Paper" }, "filter": { "role": "typ", "select": { "equals": "{{o:typ:Niewzięty}}" } }, "sorts": [{ "role": "date", "direction": "descending" }] },
+        { "key": "gallery", "type": "gallery", "name": { "pl": "Galeria", "en": "Gallery" }, "coverRole": "files", "sorts": [{ "role": "date", "direction": "descending" }] },
+        { "key": "calendar", "type": "calendar", "name": { "pl": "Kalendarz", "en": "Calendar" }, "dateRole": "date" }
+      ]
+    },
+    "finanse": {
+      "title": { "pl": "Wydatki i payouty", "en": "Expenses and payouts" },
+      "icon": "💸",
+      "properties": {
+        "name": { "type": "title", "name": { "pl": "Opis", "en": "Description" } },
+        "kind": {
+          "type": "select", "name": { "pl": "Rodzaj", "en": "Kind" },
+          "options": [
+            { "token": "Zakup challenge", "name": { "pl": "Zakup challenge", "en": "Challenge purchase" }, "color": "blue" },
+            { "token": "Reset", "name": { "pl": "Reset", "en": "Reset" }, "color": "orange" },
+            { "token": "Aktywacja / opłata", "name": { "pl": "Aktywacja / opłata", "en": "Activation / fee" }, "color": "yellow" },
+            { "token": "Payout", "name": { "pl": "Payout", "en": "Payout" }, "color": "green" }
+          ]
+        },
+        "amount": { "type": "number", "name": { "pl": "Kwota", "en": "Amount" }, "format": "dollar" },
+        "date": { "type": "date", "name": { "pl": "Data", "en": "Date" } },
+        "firma": {
+          "type": "select", "name": { "pl": "Firma", "en": "Firm" },
+          "options": [
+            { "name": "Lucid Trading", "color": "blue" }, { "name": "Alpha Futures", "color": "green" },
+            { "name": "Apex Trader Funding", "color": "orange" }, { "name": "Topstep", "color": "yellow" },
+            { "name": { "pl": "Inna", "en": "Other" }, "color": "gray" }
+          ]
+        },
+        "konto": { "type": "relation", "name": { "pl": "Konto", "en": "Account" }, "to": "konta", "syncedRole": "finanse" },
+        "spend": { "type": "formula", "name": { "pl": "Wydatek", "en": "Spent" }, "expression": "if({{p:kind}} == \"{{o:kind:Payout}}\", 0, {{p:amount}})" },
+        "payout": { "type": "formula", "name": { "pl": "Wypłata", "en": "Paid out" }, "expression": "if({{p:kind}} == \"{{o:kind:Payout}}\", {{p:amount}}, 0)" },
+        "balance": { "type": "formula", "name": { "pl": "Bilans", "en": "Net" }, "expression": "{{p:payout}} - {{p:spend}}" }
+      },
+      "views": [
+        { "key": "bydate", "type": "table", "name": { "pl": "Wg daty", "en": "By date" }, "sorts": [{ "role": "date", "direction": "descending" }] }
+      ]
+    }
+  }
+}
