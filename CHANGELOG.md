@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.4.1] · 2026-10-30
+
+### PL
+- Poprawione: wystąpienia z feedu tygodnia ForexFactory („… Speaks”, „… Testifies”) mają rodzaj „Przemówienie”, a komunikaty FOMC i decyzja o stopie rodzaj „FOMC”. W 1.4.0 wszystkie były oznaczone jako „Dane”, więc filtr rodzajów w Kalendarzu ich nie rozdzielał. Tygodnie pobrane przez 1.4.0 dostają poprawny rodzaj przy odczycie, bez ponownego pobierania. Godziny i wagi bez zmian.
+
+### EN
+- Fixed: appearances from the ForexFactory weekly feed ("… Speaks", "… Testifies") now have the "Speech" kind, and FOMC releases and the rate decision the "FOMC" kind. In 1.4.0 they were all marked as "Data", so the kind filter in the Calendar did not separate them. Weeks downloaded by 1.4.0 get the correct kind when they are read, without downloading again. Times and weights are unchanged.
+
 ## [1.4.0] · 2026-10-30
 
 ### PL

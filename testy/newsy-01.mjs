@@ -283,6 +283,13 @@ export default ({ test, H, assert, ROOT }) => {
   });
 
   // ---------- feed FF ----------
+  test('newsy-01: rodzaj zdarzenia z tytułu feedu: przemówienia, FOMC, dane (1.4.1)', async () => {
+    const { feedKind } = await S();
+    for (const n of ['Plonk Member Zib Speaks', 'Plonk Chair Testifies', 'Zib Remarks']) assert.equal(feedKind(n), 'speech', n);
+    for (const n of ['FOMC Statement', 'FOMC Press Conference', 'FOMC Meeting Minutes', 'Federal Funds Rate', 'Fed Announcement']) assert.equal(feedKind(n), 'fomc', n);
+    for (const n of ['Zorblat Index m/m', 'Speakers Index', 'Kwarkle Stocks']) assert.equal(feedKind(n), 'data', n);
+  });
+
   test('newsy-01: parser feedu: tylko USD, wagi, Holiday = cały dzień, północ ET = Tentative, tydzień niedziela-niedziela i etykieta ISO', async () => {
     const { parseFeed } = await S();
     const w = parseFeed(weekOct2026());
@@ -297,6 +304,8 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(by('Kwarkle Stocks').imp, 'low');
     const tent = by('Plonk Chair Speaks');
     assert.deepEqual([tent.tentative, tent.allDay, iso(tent.t)], [true, false, '2026-10-29T04:00Z']);
+    assert.equal(tent.kind, 'speech', 'wystąpienie z feedu to przemówienie, nie dane (1.4.1)');
+    assert.equal(by('Zorblat Index m/m').kind, 'data');
     const hol = by('Grundle Holiday');
     assert.deepEqual([hol.imp, hol.kind, hol.allDay, hol.tentative, hol.day], ['holiday', 'holiday', true, false, '2026-10-30']);
     // tydzień ze zmianą czasu w USA: offsety -04:00 po niedzieli 8.03

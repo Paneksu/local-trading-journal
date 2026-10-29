@@ -1,4 +1,4 @@
-// newsy-07: dokumentacja i wydanie 1.4.0 (pakiet E, 30.10.2026). CHANGELOG zaczyna się wpisem 1.4.0 w PL i EN zgodnym z package.json,
+// newsy-07: dokumentacja i wydanie 1.4.0 (pakiet E, 30.10.2026). CHANGELOG ma wpis 1.4.0 w PL i EN, pierwszy wpis zgadza się z package.json (od 1.4.1 nie musi to być 1.4.0),
 // README PL i EN mają sekcję o newsach makro i kalendarzu z kluczami, atrybucją FRED, brakiem powiązania z ForexFactory i znanym ograniczeniem 1.3.0,
 // a „Bezpieczeństwo i połączenia sieciowe” wymienia nowe hosty. Dokumentacja bez długich pauz (—).
 import path from 'node:path';
@@ -12,10 +12,10 @@ export default ({ test, assert, ROOT }) => {
   const sec = (s, h) => { const i = s.indexOf(h); assert.ok(i >= 0, `brak sekcji ${h}`); const j = s.indexOf('\n## ', i + 3); return s.slice(i, j < 0 ? undefined : j); };
   const entry140 = () => { const c = read('CHANGELOG.md'); const i = c.indexOf('## [1.4.0]'); return c.slice(i, c.indexOf('\n## [', i + 5)); };
 
-  test('newsy-07: CHANGELOG zaczyna się wpisem [1.4.0] · 2026-10-30 z PL i EN, a package.json ma tę samą wersję', () => {
+  test('newsy-07: CHANGELOG ma wpis [1.4.0] · 2026-10-30 z PL i EN, a pierwszy wpis ma wersję z package.json', () => {
     const c = read('CHANGELOG.md');
     const first = /^## \[([^\]]+)\] · (\S+)$/m.exec(c);
-    assert.deepEqual([first[1], first[2]], ['1.4.0', '2026-10-30']);
+    assert.match(c, /^## \[1\.4\.0\] · 2026-10-30$/m);
     assert.equal(JSON.parse(read('package.json')).version, first[1]);
     const body = entry140();
     assert.match(body, /\n### PL\n/);
