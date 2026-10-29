@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as H from './pomocnicze.mjs';
 import { treeHash } from '../lib/updater.mjs';
 import { parseMarkdown } from '../public/js/markdown.js';
@@ -800,7 +801,7 @@ test('migracja 002: blok ustawień na istniejącej stronie, treść nietknięta,
   const env = H.cleanEnv({ NOTION_API_BASE: A.base, THQ_CONFIG_DIR: dir });
   const page0 = (await A.get('/__test/loose'))[0];
   const dry = await H.run(path.join(ROOT, 'update.mjs'), ['--migrate-only', '--dry-run', '--json'], env);
-  assert.deepEqual(dry.lines.find((l) => l.migrations).migrations.changes.map((c) => `${c.kind}:${c.status}`), ['block:add']);
+  assert.deepEqual(dry.lines.find((l) => l.migrations).migrations.changes.filter((c) => c.version === 2).map((c) => `${c.kind}:${c.status}`), ['block:add']); // tylko zmiany migracji 002 (003 dodaje pola cen, sprawdza je wykresy-05)
   assert.deepEqual(await A.writes(), []);
   const run1 = await H.run(path.join(ROOT, 'update.mjs'), ['--migrate-only', '--json'], env);
   assert.equal(run1.code, 0, run1.err);
@@ -1053,11 +1054,16 @@ test('zrzuty: ochrona zapisu (obcy Origin, brak X-THQ, zły Content-Type, GET) i
   S.stop(); A.stop();
 });
 
+// ---------- moduł wykresów: testy z testy/wykresy-NN*.mjs ----------
+for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^wykresy-\d+.*\.mjs$/.test(n)).sort()) {
+  (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
+}
+
 // ---------- uruchomienie ----------
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, skipped = 0; // skipped: odfiltrowane fragmentem nazwy z linii poleceń (D2, przegląd 28.10.2026)
 const t0 = Date.now();
 for (const t of tests) {
-  if (only && !t.name.includes(only)) continue;
+  if (only && !t.name.includes(only)) { skipped++; continue; }
   const s = Date.now();
   try {
     await t.fn();
@@ -1071,5 +1077,5 @@ for (const t of tests) {
   }
 }
 H.cleanupTemps();
-console.log(`\n${pass} passed, ${fail} failed (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 process.exit(fail ? 1 : 0);

@@ -1,6 +1,6 @@
 {
   "$comment": "Jedno źródło prawdy o schemacie Notion: strona główna, 4 bazy, pola, opcje, relacje, formuły i widoki. Używa go setup.mjs (nowa instalacja), a aktualizacje dokładają różnice migracjami z migrations/. Zmiany tylko addytywne, patrz CONTRIBUTING.md. Formuły: {{p:rola}} to prop(\"nazwa pola\"), {{o:rola:token}} to nazwa opcji w języku instalacji, {{x:baza.rola}} to sama nazwa pola z innej bazy. / Single source of truth for the Notion workspace; additive changes only.",
-  "schemaVersion": 2,
+  "schemaVersion": 5,
   "rootPage": {
     "icon": "📊",
     "title": { "pl": "Dziennik tradingowy", "en": "Trading Journal" },
@@ -107,6 +107,12 @@
         },
         "r": { "type": "number", "name": { "pl": "R", "en": "R" } },
         "pnl": { "type": "number", "name": { "pl": "P&L $", "en": "P&L $" }, "format": "dollar" },
+        "entryPrice": { "type": "number", "name": { "pl": "Cena wejścia", "en": "Entry price" } },
+        "exitPrice": { "type": "number", "name": { "pl": "Cena wyjścia", "en": "Exit price" } },
+        "sl": { "type": "number", "name": { "pl": "SL", "en": "SL" } },
+        "tp": { "type": "number", "name": { "pl": "TP", "en": "TP" } },
+        "be": { "type": "number", "name": { "pl": "BE", "en": "BE" } },
+        "contract": { "type": "rich_text", "name": { "pl": "Kontrakt", "en": "Contract" } },
         "konta": { "type": "relation", "name": { "pl": "Konta", "en": "Accounts" }, "to": "konta", "syncedRole": "trades" },
         "chart": { "type": "url", "name": { "pl": "Wykres", "en": "Chart" } },
         "manual": {
@@ -125,7 +131,8 @@
           ]
         },
         "notes": { "type": "rich_text", "name": { "pl": "Notatki", "en": "Notes" } },
-        "files": { "type": "files", "name": { "pl": "Zrzut", "en": "Screenshot" } }
+        "files": { "type": "files", "name": { "pl": "Zrzut", "en": "Screenshot" } },
+        "drawings": { "type": "rich_text", "name": { "pl": "Rysunki", "en": "Drawings" } }
       },
       "views": [
         { "key": "all", "type": "table", "name": { "pl": "Wszystkie", "en": "All" }, "sorts": [{ "role": "date", "direction": "descending" }] },

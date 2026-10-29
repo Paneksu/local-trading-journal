@@ -39,7 +39,8 @@ export const SWATCHES = {
 const toLin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const toSrgb = (x) => (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055);
 export function normHex(s) {
-  let t = String(s ?? '').trim().toLowerCase();
+  if (typeof s !== 'string') return null; // security HIJ, N1: obiekt z ustawień zdalnych ({"toString":1}) nie wywraca String()
+  let t = s.trim().toLowerCase();
   if (t.startsWith('#')) t = t.slice(1);
   if (/^[0-9a-f]{3}$/.test(t)) t = t.split('').map((c) => c + c).join('');
   return /^[0-9a-f]{6}$/.test(t) ? `#${t}` : null;
@@ -101,7 +102,7 @@ export function fixContrast(hex, theme) {
 export function defaultCustom() { return JSON.parse(JSON.stringify(BASE)); }
 export function sanitizeCustom(c) {
   const out = defaultCustom();
-  for (const t of THEMES) for (const k of ['profit', 'loss', 'be']) { const h = normHex(c?.[t]?.[k]); if (h) out[t][k] = h; }
+  for (const t of THEMES) for (const k of ['profit', 'loss', 'be']) { const v = c?.[t]?.[k]; const h = typeof v === 'string' ? normHex(v) : null; if (h) out[t][k] = h; } // security HIJ, N1: tylko tekst
   return out;
 }
 const lerp = (a, b, t) => a + (b - a) * t;

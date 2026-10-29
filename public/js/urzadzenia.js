@@ -72,7 +72,14 @@ export function createSync({ getMeta, collect, apply }) {
     return Promise.resolve();
   }
 
-  return { pull, changed, get applying() { return applying; } };
+  // Przegląd HIJ, pkt 2: lokalna zmiana bez gestu użytkownika (migracja starych nakładek) dostaje znacznik czasu od razu, żeby pull przy starcie nie
+  // nadpisał jej starszymi ustawieniami z innego urządzenia; zapis do Notion idzie zwykłym changed() (saveSettings). Nowsze zdalne nadal wygrywa.
+  function touch(at = new Date().toISOString()) {
+    const l = readLocal();
+    if (!l.updatedAt || at > l.updatedAt) writeLocal({ ...l, updatedAt: at });
+  }
+
+  return { pull, changed, touch, get applying() { return applying; } };
 }
 
 // ---------- urządzenia: lista, nazwy, przeniesienie kodem ----------

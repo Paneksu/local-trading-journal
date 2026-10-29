@@ -121,7 +121,19 @@ td.res { white-space: nowrap; font-weight: 600; }
 }
 
 /* ---------- szczegóły trade'a (lightbox) ---------- */
-.lb { --primary: #f5f5f7; --primary-fg: #0b0b0c; --well: #1e2022; --edge: #2d3134; }
+.lb { --primary: var(--lb-primary); --primary-fg: var(--lb-primary-fg); --well: var(--lb-well); --edge: var(--lb-edge); }
+/* podgląd wykresu w lightboxie: lightbox jest zawsze ciemny, więc linia wykresu, wciśnięty segment i pole wpisu też (w Platinum tokeny motywu są ciemne); wartości w tokenach --lb-* w styles.css */
+.lb { --n-blue: var(--lb-n-blue); --n-orange: var(--lb-n-orange); --n-purple: var(--lb-n-purple); /* pasy sesji na zawsze ciemnym tle */
+  --chart-line: var(--fg); --seg-on: var(--lb-seg-on); --input: var(--lb-input); --well-shadow: var(--lb-well-shadow); }
+.lb-chart { position: absolute; inset: 0; display: flex; padding: 4px 4px 0; }
+.lb-chart[hidden] { display: none; }
+.lb-mode { flex: none; }
+/* telefon: wykres na całą szerokość, górna linia ciaśniej (strzałki są w niej od P29) */
+@media (max-width: 600px) {
+  .lb-top { gap: 4px; padding: 6px 8px; }
+  .lb-tl { gap: 6px; }
+  .lb-stage:has(.lb-frame.is-chart) { padding: 0 4px; }
+}
 .lb .btn.primary { background: var(--primary); color: var(--primary-fg); }
 .lb-info { max-height: 44vh; }
 .lb-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 420px; padding: 28px 24px; text-align: center; border-radius: 10px; background: var(--float); }
@@ -149,7 +161,7 @@ td.res { white-space: nowrap; font-weight: 600; }
 .grow { flex: 1; }
 .fmsg { color: var(--fg-2); font-size: var(--t-sm); }
 a.fmsg { text-decoration: none; border-bottom: 1px solid var(--line); align-self: center; }
-.btn.primary.danger { background: var(--danger); color: #fff; }
+.btn.primary.danger { background: var(--danger); color: var(--on-danger); }
 .fgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 14px; }
 .span1 { grid-column: span 1; } .span2 { grid-column: span 2; } .span4 { grid-column: span 4; }
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -231,10 +243,13 @@ a.fmsg { text-decoration: none; border-bottom: 1px solid var(--line); align-self
   width: 110px; height: 32px; padding: 0 9px; border: 0; border-radius: 6px; background: var(--input); box-shadow: var(--well-shadow);
   color: var(--fg); font-size: var(--t-base); color-scheme: inherit;
 }
+/* P26: wybór strefy czasowej wykresu, ten sam wygląd co pola formularza (strzałka var(--chev)) */
+.sp-in.sp-sel { width: 100%; max-width: 320px; appearance: none; -webkit-appearance: none; padding-right: 28px; background-image: var(--chev); background-repeat: no-repeat; background-position: right 9px center; cursor: pointer; }
 .sp-foot { padding-top: 10px; border-top: 1px solid var(--line); }
 @media (max-width: 1023px) {
   .sp { top: calc(56px + env(safe-area-inset-top)); left: 12px; right: 12px; width: auto; }
   .sp-in { height: 44px; width: 150px; font-size: 16px; }
+  .sp-in.sp-sel { width: 100%; }
 }
 
 /* plakietka statusu pod nazwą konta tylko na wąskim ekranie (na szerokim jest osobna kolumna Status) */
@@ -788,15 +803,42 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
 .fld textarea.dv-code { resize: none; min-height: 0; height: auto; }
 
 /* ---------- okno Udostępnij (udostepnij.js): podgląd karty po lewej, ustawienia po prawej; na telefonie arkusz ---------- */
-.modal.sh { width: min(1000px, 100%); }
-.sh-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; overflow: hidden; padding-bottom: 14px; }
-.sh-prev { height: min(64dvh, 640px); min-width: 0; border-radius: 10px; background: var(--well); padding: 14px; }
+/* v2 (P52, 29.10.2026): podgląd jako bohater (wzór: Luma AI share), ustawienia w grupach z nagłówkami, rzadsze opcje w „Więcej opcji” (wzór: Arcade export) */
+.modal.sh { width: min(1240px, 100%); }
+@media (min-width: 1024px) { .modal.sh { max-height: calc(100dvh - 48px); } } /* procentowe max-height nie działa w siatce .scrim: stała wysokość, kolumna ustawień się przewija */
+/* min-height 0 i jeden wiersz minmax(0, 1fr): okno nie rośnie ponad ekran po rozwinięciu „Więcej opcji”, przewija się kolumna ustawień (stopka zostaje widoczna) */
+.sh-body { display: grid; grid-template-columns: minmax(0, 1fr) 328px; grid-template-rows: minmax(0, 1fr); flex: 1 1 auto; min-height: 0; gap: 24px; overflow: hidden; padding-bottom: 14px; }
+.sh-prev { height: min(76dvh, 820px); min-width: 0; border-radius: 12px; background: var(--well); padding: 20px; }
+.sh-g { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.sh-g:last-of-type { border-bottom: 0; }
+.sh-gh { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: var(--t-sm); font-weight: 500; letter-spacing: .13em; text-transform: uppercase; color: var(--fg-2); }
+.sh-cnt { margin-left: auto; letter-spacing: 0; font-variant-numeric: tabular-nums; color: var(--fg-2); }
+.sh-fl { font-size: var(--t-sm); font-weight: 500; color: var(--fg-2); }
+.sh-g .seg { align-self: stretch; }
+.seg.sh-big button { height: 32px; font-size: var(--t-base); }
+.sh-pills { gap: 6px; }
+.sh-rows-all { align-self: flex-start; margin-left: -9px; } /* P54: „Pokaż wszystkie” / „Zwiń” pod pigułkami */
+.sh-pill { height: 28px; padding: 0 11px; font-size: var(--t-sm); }
+.sh-pill[aria-pressed="true"] { transform: none; }
+/* Przegląd 1.3.0, pkt 10 (29.10.2026): pomiar kontrastu tekstu pigułek przy .55 i .35 dał 2,7:1 i 1,9:1 (Onyx), czyli poniżej 3:1; elementy wyłączone są zwolnione z WCAG, ale tekst ma być czytelny.
+   Teraz wyłączone mają co najmniej 3:1, a „brak danych” (przycisk nadal aktywny) co najmniej 4,5:1 w obu motywach; różni się od „wyłączona” przerywaną ramką, a nie samym krytym. */
+.sh-pill.is-empty:not([aria-pressed="true"]) { opacity: .85; border-style: dashed; }
+.sh-pill:disabled { opacity: .62; cursor: not-allowed; }
+.sh-pill:focus-visible, .sh-more summary:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.sh-more { border-radius: 9px; background: var(--seg-track); }
+.sh-more summary { display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 12px; cursor: pointer; list-style: none; font-size: var(--t-sm); font-weight: 600; color: var(--fg-2); border-radius: 9px; }
+.sh-more summary::-webkit-details-marker { display: none; }
+.sh-more summary::after { content: ""; width: 7px; height: 7px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform .15s var(--ease); }
+.sh-more[open] summary::after { transform: rotate(-135deg) translateY(-2px); }
+@media (hover: hover) { .sh-more summary:hover { color: var(--fg); } }
+.sh-more-b { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 12px; }
 .sh-stage { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; min-height: 0; }
 /* canvas wypełnia pole podglądu, obraz wpasowany object-fit (procentowe max-height nie działa w siatce); cień idzie po narysowanych pikselach */
-.sh-stage canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; box-shadow: var(--pop-shadow), 0 0 0 1px rgb(var(--fg-rgb) / .22); /* karta jest prostokątem, więc cień z tokenu motywu zamiast filter: drop-shadow z czarnym na sztywno */ }
+/* v2: canvas ma wymiary karty wpasowanej w pole (udostepnij.js fitCanvas), więc ramka i cień obejmują samą kartę, a nie całe pole podglądu */
+.sh-stage canvas { position: absolute; inset: auto; display: block; width: var(--sh-cw, 100%); height: var(--sh-ch, 100%); border-radius: 6px; object-fit: contain; box-shadow: var(--pop-shadow), 0 0 0 1px rgb(var(--fg-rgb) / .22); /* karta jest prostokątem, więc cień z tokenu motywu zamiast filter: drop-shadow z czarnym na sztywno */ }
 .sh-stage canvas[hidden], .sh-empty[hidden] { display: none; }
 .sh-empty { max-width: 300px; margin: 0; text-align: center; color: var(--fg-2); font-size: var(--t-base); font-weight: 500; line-height: 1.5; }
-.sh-ctl { display: flex; flex-direction: column; gap: 14px; min-width: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: rgb(var(--fg-rgb) / .22) transparent; padding: 3px; margin: -3px; }
+.sh-ctl { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-content: start; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: rgb(var(--fg-rgb) / .22) transparent; padding: 3px; margin: -3px; }
 .sh-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .sh-f .seg { align-self: stretch; }
 .sh-per { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px; border-radius: 9px; background: var(--seg-track); }
@@ -805,14 +847,24 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
 .sh-per .icon-btn:disabled { opacity: .35; cursor: not-allowed; }
 .sh-ph { display: flex; gap: 8px; align-items: center; }
 .sh-ctl .note { margin: 0; }
+/* pakiet J (filmy): suwak przyciemnienia tła w oknie i w Ustawieniach (jak suwak krycia w oknie nakładek), postęp nagrywania w stopce */
+.sh-range, .sp-range-row { display: flex; align-items: center; gap: 10px; align-self: stretch; }
+.sh-range input[type="range"], .sp-range-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--fg); }
+.sh-range output, .sp-range-row output { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; font-size: var(--t-sm); color: var(--fg-2); }
+.sh-rec { font-size: var(--t-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.sh-rec[hidden] { display: none; }
+.sh-ctl[inert] { opacity: .5; }
 .mf .btn svg { flex: none; }
 .sh .mf { flex-wrap: wrap; }
 @media (max-width: 1023px) {
-  .sh-body { grid-template-columns: minmax(0, 1fr); overflow-y: auto; gap: 14px; }
+  .sh-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; overflow-y: auto; gap: 14px; }
   /* wąski ekran: wysokość podglądu wynika z proporcji formatu (--sh-ar ustawia udostepnij.js), a nie jest stała */
   .sh-prev { height: auto; width: min(100%, calc(46dvh * var(--sh-ar, 0.5625))); aspect-ratio: var(--sh-ar, 0.5625); justify-self: center; padding: 8px; }
   .sh-ctl { overflow: visible; }
   .sh-per .icon-btn { width: 44px; height: 36px; }
+  .seg.sh-big button { height: 40px; }
+  .sh-pill { height: 36px; }
+  .sh-more summary { height: 44px; }
   .seg.sm.full button { height: 34px; }
   .sh .mf .fmsg { display: none; }
   .sh .mf .btn { min-width: 0; padding: 0 8px; }
@@ -824,3 +876,27 @@ button.cell .cv, button.cell .cn { width: 100%; }
 @media (hover: hover) { button.cell:hover { box-shadow: inset 0 0 0 1.5px rgb(var(--fg-rgb) / .5); } }
 @media (prefers-reduced-motion: reduce) { .sh * { transition: none !important; } }
 .sp .sp-nick { width: 100%; }
+/* ---------- ustawienia: zakładka Wykresy (etap 14, pakiet H) ---------- */
+.sp-g { margin: 14px 0 0; font-size: var(--t-base); font-weight: 700; }
+.sp #sp-body > .sp-g:first-of-type { margin-top: 12px; }
+.pvc { display: block; position: sticky; top: -12px; z-index: 2; padding: 6px; background: var(--float); }
+.pvc svg { display: block; width: 100%; height: auto; }
+.sp-chk { display: flex; flex-wrap: wrap; gap: 8px 16px; align-self: stretch; }
+.cc { grid-template-columns: 96px 28px minmax(0, 1fr); }
+.cc-c { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.cc-x { display: block; min-width: 0; }
+.cc-h { width: 96px; font-variant-numeric: tabular-nums; }
+.cc-h[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
+.sp-sessions { display: flex; flex-direction: column; gap: 6px; align-self: stretch; }
+.sp-sess { display: grid; grid-template-columns: minmax(70px, 1fr) auto auto auto; align-items: center; gap: 8px; }
+.sp-sess .sp-in { width: 96px; height: 28px; padding: 0 6px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.sp-keyrow { display: flex; gap: 8px; align-self: stretch; }
+.sp-keyrow .sp-key { flex: 1; min-width: 0; width: auto; }
+.sp-kvs { align-self: stretch; }
+.sp-kv { display: flex; justify-content: space-between; gap: 12px; align-self: stretch; width: 100%; font-size: var(--t-sm); color: var(--fg-2); }
+.sp-kv b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.sp-lic a { color: inherit; text-decoration: underline; }
+@media (max-width: 1023px) {
+  .sp-keyrow .sp-key, .sp-sess .sp-in, .cc-h { font-size: 16px; height: 40px; }
+  .sp-sess .sp-in { width: 108px; }
+}

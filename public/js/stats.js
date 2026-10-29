@@ -37,6 +37,12 @@ export function normalizeTrades(rows) {
       pnl: numOrNull(r.pnl),
       konta: r.konta || [],
       chart: r.chart || null,
+      entryPrice: numOrNull(r.entryPrice),
+      exitPrice: numOrNull(r.exitPrice),
+      sl: numOrNull(r.sl),
+      tp: numOrNull(r.tp),
+      be: numOrNull(r.be),
+      contract: typeof r.contract === 'string' ? r.contract.trim().toUpperCase() : '', // migracja 005 (P35)
       manual: manualOf(r.manual),
       reason: r.reason?.name || null,
       notes: r.notes || '',

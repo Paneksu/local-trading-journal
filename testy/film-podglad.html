@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: test filmów pakietu J (oś czasu, nagranie)</title>
+<!-- Strona testowa pakietu J (etap 18), uruchamiana przez testy/wykresy-25-j18.mjs w przeglądarce headless (CDP, czas rzeczywisty: MediaRecorder nie działa pod --virtual-time-budget).
+     Wzór: udostepnij-podglad.html. Dane i film tła syntetyczne (film tła nagrywany tu z animowanego canvasu, bez cudzych plików i bez sieci).
+     ?part=px   at = ∞ to obecny PNG piksel w piksel, oś czasu w pikselach, czarno-białe i przyciemnienie
+     ?part=rec  nagranie (domyślnie 2 s, 9:16 1080p) karty trade'a z wykresem na tle filmu; atrapy fetch / XMLHttpRequest / localStorage liczą wywołania
+     ?fonts=1   fonty z CDN jak w aplikacji (tylko ręcznie; test działa bez sieci, krojem zastępczym) -->
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body { padding: 16px; background: #777; color: #111; font: 500 13px monospace; }
+  canvas.v { height: 480px; width: auto; display: block; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<div id="stage"></div>
+<script type="module">
+const out = document.getElementById('wynik');
+const fails = [];
+const ok = (cond, msg) => { if (!cond) fails.push(msg); };
+const q = new URLSearchParams(location.search);
+if (q.get('fonts') === '1') {
+  for (const href of ['https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap', 'https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap']) {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l);
+  }
+}
+try {
+  const part = q.get('part') || 'px';
+  const S = await import('/js/stats.js');
+  const U = await import('/js/udostepnij-dane.js');
+  const R = await import('/js/udostepnij-render.js');
+  const F = await import('/js/film.js');
+  if (q.get('fonts') === '1') await R.ensureFonts();
+  const root = document.documentElement;
+  const setTheme = (th) => { root.setAttribute('data-theme', th); return R.readTokens(); };
+  const hashOf = (cv, region = null) => {
+    const [x, y, w, h] = region || [0, 0, cv.width, cv.height];
+    const d = new Uint32Array(cv.getContext('2d').getImageData(x, y, w, h).data.buffer);
+    let a = 0x811c9dc5;
+    for (let i = 0; i < d.length; i++) { a ^= d[i]; a = Math.imul(a, 0x01000193) >>> 0; }
+    return a.toString(16) + ':' + d.length;
+  };
+  // „atrament”: liczba pikseli różnych od koloru tła karty w prostokącie
+  const inkOf = (cv, [x, y, w, h], bg) => { const d = cv.getContext('2d').getImageData(x, y, w, h).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 24) n++; return n; };
+  const draw = (opts) => { const cv = document.createElement('canvas'); const info = R.renderCard(cv, opts); return { cv, info, h: hashOf(cv) }; };
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const konta = S.normalizeKonta([{ _id: A, name: 'A 50k', size: 50000 }]);
+  const photo = (() => { const c = document.createElement('canvas'); c.width = 400; c.height = 300; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 400, 300); g.addColorStop(0, '#203060'); g.addColorStop(1, '#e08050'); x.fillStyle = g; x.fillRect(0, 0, 400, 300); return c; })();
+  // trade ES z wykresem (jak karty-i.html, część 17)
+  const AT = Date.parse('2026-10-20T15:30:00Z');
+  const [tr] = S.normalizeTrades([{ _id: 'tr1', _created: '2026-10-20T15:30:00.000Z', typ: { name: 'Live' }, date: '2026-10-20T15:30:00.000+00:00', exit: '2026-10-20T16:10:00.000+00:00',
+    r: 2, pnl: 600, konta: [A], dir: { name: 'Long' }, instrument: { name: 'ES' }, entryPrice: 5812.25, exitPrice: 5824.25, sl: 5806.25, tp: 5824.25, setup: { name: 'Breakout' }, session: { name: 'Nowy Jork' } }]);
+  const trade = U.tradeCard(tr, konta);
+  const bars = []; { let p = 5810; for (let k = 0; k < 60; k++) { const tt = AT / 1000 - 10 * 60 + k * 60; const o = p, c = p + Math.sin(k / 4) * 1.5 + 0.2; bars.push([tt, o, Math.max(o, c) + 0.75, Math.min(o, c) - 0.75, Math.round(c * 4) / 4, 100]); p = Math.round(c * 4) / 4; } }
+  const chart = { bars, tf: '1m', style: 'candles', sl: false, tp: false, grid: true, tz: 'UTC' };
+  // tydzień z krzywą kapitału
+  let i = 0;
+  const row = (date, r, pnl) => ({ _id: `t${++i}`, _created: `${date}T12:${String(i).padStart(2, '0')}:00.000Z`, typ: { name: 'Live' }, date, r, pnl, konta: [A], dir: { name: 'Long' }, instrument: { name: 'NQ' } });
+  const trades = S.normalizeTrades([row('2026-10-19', 1, 250), row('2026-10-20', 2.4, 600), row('2026-10-21', -0.5, -125), row('2026-10-21', 3, 750), row('2026-10-22', -1, -250)]);
+
+  if (part === 'px') {
+    const FORMATS = Object.keys(R.FORMATS);
+    for (const th of ['onyx', 'platinum']) {
+      const tokens = setTheme(th);
+      const cases = [
+        ['trade', trade, { chart }], ['trade-bez', trade, {}], ['week', U.weekCard(trades, konta, '2026-10-21', 'R'), { equity: true }],
+        ['day', U.dayCard(trades, konta, '2026-10-21', 'R'), {}], ['month', U.monthCard(trades, konta, 2026, 10, 'R'), { equity: false }], ['year', U.yearCard(trades, konta, 2026, 'R'), {}],
+      ];
+      for (const [name, data, x] of cases) for (const format of FORMATS) for (const ph of [null, photo]) {
+        const base = { kind: name.startsWith('trade') ? 'trade' : name, format, metric: 'R', data, nick: 'Trader', tokens, photo: ph, ...x };
+        const png = draw(base), inf = draw({ ...base, at: Infinity });
+        ok(png.h === inf.h, `${th} ${name} ${format} ${ph ? 'zdjęcie' : 'motyw'}: at=∞ różni się od PNG`);
+      }
+      // oś czasu w pikselach: karta trade'a 9:16 z wykresem na tle motywu
+      const base = { kind: 'trade', format: '9:16', metric: 'R', data: trade, nick: 'Trader', tokens, chart };
+      const bg = tokens.rgb.bg;
+      const W = 1080, Hh = 1920;
+      // nagłówek kończy się ok. 190 px; etykiety „WEJŚCIE/WYJŚCIE” nad polem wykresu stoją od ok. 275 px, więc liczą się do środka
+      const head = [0, 0, W, 215], sig = [0, Hh - 200, W, 200], mid = [0, 215, W, Hh - 215 - 260]; // v2: liczba zaczyna się ok. 223 px
+      const f0 = draw({ ...base, at: 0 }), f1 = draw({ ...base, at: 1 }), f2 = draw({ ...base, at: 2 }), f34 = draw({ ...base, at: 3.4 }), fInf = draw({ ...base, at: Infinity });
+      ok(inkOf(f0.cv, head, bg) === 0, `${th}: at=0 nagłówek już widać`);
+      ok(inkOf(f0.cv, sig, bg) > 0 && hashOf(f0.cv, sig) === hashOf(fInf.cv, sig), `${th}: at=0 podpis nie jak na końcu`);
+      ok(inkOf(f0.cv, mid, bg) === 0, `${th}: at=0 środek nie jest pusty`);
+      ok(hashOf(f1.cv, head) === hashOf(fInf.cv, head), `${th}: at=1 nagłówek nie stoi`);
+      const iMid = (f) => inkOf(f.cv, mid, bg);
+      ok(iMid(f1) < iMid(f2) && iMid(f2) < iMid(f34), `${th}: środek nie przybywa: ${iMid(f1)} ${iMid(f2)} ${iMid(f34)}`);
+      const end = R.filmEnd(R.cardModel('trade', trade, 'R', tokens, 'result').rows.length);
+      ok(draw({ ...base, at: end }).h === fInf.h, `${th}: po końcu animacji (${end} s) klatka różni się od PNG`);
+      ok(f34.info.settled !== undefined, `${th}: info.settled`);
+      // warstwa statyczna (OffscreenCanvas) po końcu animacji: ta sama karta z dokładnością do zaokrągleń mieszania kanałów
+      const cache = {};
+      const cv = document.createElement('canvas');
+      R.renderCard(cv, { ...base, at: 5, cache, film: true });
+      R.renderCard(cv, { ...base, at: 6, cache, film: true, keep: true });
+      ok(cache.fg, `${th}: brak warstwy statycznej po końcu animacji`);
+      const a = cv.getContext('2d').getImageData(0, 0, W, Hh).data, b = fInf.cv.getContext('2d').getImageData(0, 0, W, Hh).data;
+      let md = 0, nd = 0, sum = 0; const where = [];
+      for (let j = 0; j < a.length; j++) { const d = Math.abs(a[j] - b[j]); sum += d; if (d > md) md = d; if (d > 3) { nd++; if (where.length < 6) where.push(Math.floor(j / 4) % W + ',' + Math.floor(j / 4 / W)); } }
+      // różnice tylko na wygładzonych krawędziach (mieszanie półprzezroczystych pikseli dwa razy): średnio < 0,2 poziomu, < 0,5% kanałów o więcej niż 3
+      ok(sum / a.length < 0.2 && nd < a.length * 0.005, `${th}: warstwa statyczna różni się od PNG: maks. ${md}, ${nd} kanałów > 3, średnio ${(sum / a.length).toFixed(4)}; ${where.join(' ')}`);
+      // 720p = skala 2/3 tego samego układu
+      const c7 = document.createElement('canvas');
+      const i7 = R.renderCard(c7, { ...base, at: Infinity, scale: 2 / 3 });
+      ok(c7.width === 720 && c7.height === 1280 && i7.width === 1080, `${th}: 720p ${c7.width}×${c7.height}`);
+      // czarno-białe i przyciemnienie (tło ze zdjęcia albo filmu)
+      const fbw = draw({ ...base, photo, bg: 'video', film: true, bw: true, dim: 0, at: Infinity }); // bez zasłony: zasłona ma odcień tła motywu
+      const px = fbw.cv.getContext('2d').getImageData(6, 960, 1, 1).data;
+      ok(Math.max(px[0], px[1], px[2]) - Math.min(px[0], px[1], px[2]) <= 2, `${th}: czarno-białe nie jest szare: ${[...px]}`); // filtr zaokrągla kanały osobno
+      const col = draw({ ...base, photo, bg: 'video', film: true, bw: false, dim: 0, at: Infinity }).cv.getContext('2d').getImageData(6, 960, 1, 1).data;
+      ok(Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2]) > 20, `${th}: bez filtra tło nie jest kolorowe: ${[...col]}`);
+      ok(fbw.info.chart === true, `${th}: film tła z wykresem`); // v2: pigułki tylko w trybie „Wejście i wyjście” (P45), niezależnie od tła
+      const lum = (f) => { const d = f.cv.getContext('2d').getImageData(6, 960, 1, 1).data; return d[0] + d[1] + d[2]; };
+      const dim0 = draw({ ...base, photo, bg: 'video', film: true, dim: 0, at: Infinity }), dim8 = draw({ ...base, photo, bg: 'video', film: true, dim: 0.8, at: Infinity });
+      ok(dim0.info.scrim === 0 && dim8.info.scrim === 0.8, `${th}: scrim ${dim0.info.scrim} ${dim8.info.scrim}`);
+      ok(th === 'onyx' ? lum(dim8) < lum(dim0) : lum(dim8) > lum(dim0), `${th}: przyciemnienie nie działa ${lum(dim0)} ${lum(dim8)}`);
+      // zdjęcie w trybie PNG: dalej SCRIM 0,6 (bez zmian)
+      ok(draw({ ...base, photo, at: Infinity }).info.scrim === 0.6, `${th}: zdjęcie PNG bez SCRIM 0,6`);
+    }
+    ok(F.filterSupported() === true, 'filtr grayscale wspierany w Chrome/Edge');
+    out.textContent = fails.length ? 'FAIL\n' + fails.slice(0, 40).join('\n') : 'PASS';
+  }
+
+  if (part === 'rec') {
+    const seconds = Number(q.get('seconds') || 2);
+    const tokens = setTheme(q.get('theme') || 'onyx');
+    // syntetyczny film tła (1 s, krótszy niż nagranie, więc musi się zapętlić): animowany gradient nagrany tu jako WebM
+    const src = document.createElement('canvas'); src.width = 480; src.height = 270;
+    const sx = src.getContext('2d');
+    const bgRec = new MediaRecorder(src.captureStream(30), { mimeType: 'video/webm;codecs=vp8' });
+    const parts = []; bgRec.ondataavailable = (e) => parts.push(e.data);
+    const bgDone = new Promise((r) => (bgRec.onstop = r));
+    bgRec.start();
+    await new Promise((res) => { const t0 = performance.now(); const f = () => { const t = (performance.now() - t0) / 1000; const g = sx.createLinearGradient(0, 0, 480, 270); g.addColorStop(0, `hsl(${200 + t * 120}, 60%, 35%)`); g.addColorStop(1, `hsl(${20 + t * 90}, 70%, 55%)`); sx.fillStyle = g; sx.fillRect(0, 0, 480, 270); sx.fillStyle = '#fff'; sx.fillRect(40 + t * 360, 120, 30, 30); if (t < 1) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
+    bgRec.stop(); await bgDone;
+    const file = new File(parts, 'tlo.webm', { type: 'video/webm' });
+    const video = await F.loadVideo(file);
+    let seeks = 0; video.addEventListener('seeking', () => seeks++);
+    // atrapy: każde wyjście z przeglądarki i każdy zapis lokalny w czasie nagrywania jest liczony
+    const calls = { fetch: 0, xhr: 0, ls: 0, beacon: 0 };
+    const oFetch = window.fetch; window.fetch = (...a) => { calls.fetch++; return oFetch(...a); };
+    const oOpen = XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open = function (...a) { calls.xhr++; return oOpen.apply(this, a); };
+    const oSet = Storage.prototype.setItem; Storage.prototype.setItem = function (...a) { calls.ls++; return oSet.apply(this, a); };
+    if (navigator.sendBeacon) { const oB = navigator.sendBeacon.bind(navigator); navigator.sendBeacon = (...a) => { calls.beacon++; return oB(...a); }; }
+    const cv = document.createElement('canvas'); cv.className = 'v'; document.getElementById('stage').appendChild(cv);
+    const size = F.filmSize('9:16', '1080p');
+    const cache = {};
+    const drawAt = (at) => R.renderCard(cv, { kind: 'trade', format: '9:16', metric: 'R', data: trade, nick: 'Trader', tokens, chart, photo: video, bg: 'video', film: true, dim: 0.6, bw: false, at, scale: size.scale, cache, keep: true });
+    drawAt(Infinity);
+    const mimeInfo = F.pickMime((t) => MediaRecorder.isTypeSupported(t));
+    let progress = 0;
+    const res = await F.record({ canvas: cv, seconds, draw: drawAt, video, mimeInfo, bitrate: F.bitrate('1080p'), onProgress: (s) => { progress = s; } });
+    window.fetch = oFetch; XMLHttpRequest.prototype.open = oOpen; Storage.prototype.setItem = oSet;
+    // odczyt pliku przez <video>
+    const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(res.blob);
+    await new Promise((r, j) => { v.onloadedmetadata = r; v.onerror = () => j(new Error('video nie czyta pliku')); });
+    let duration = v.duration;
+    if (!Number.isFinite(duration)) { v.currentTime = 1e9; await new Promise((r) => (v.ontimeupdate = r)); duration = v.duration; }
+    // boksy najwyższego poziomu (MP4) do raportu P20
+    const buf = new Uint8Array(await res.blob.arrayBuffer());
+    const boxes = [];
+    if (res.ext === 'mp4') { let o = 0; while (o + 8 <= buf.length && boxes.length < 64) { const sz = ((buf[o] << 24) >>> 0) + (buf[o + 1] << 16) + (buf[o + 2] << 8) + buf[o + 3]; const ty = String.fromCharCode(buf[o + 4], buf[o + 5], buf[o + 6], buf[o + 7]); boxes.push(ty); if (sz < 8) break; o += sz; } }
+    ok(res.blob.size > 10000, `plik za mały: ${res.blob.size}`);
+    ok(v.videoWidth === size.w && v.videoHeight === size.h, `rozmiar ${v.videoWidth}×${v.videoHeight}`);
+    ok(Math.abs(duration - seconds) <= 0.1, `długość ${duration}`);
+    ok(res.audioTracks === 0, `tory audio: ${res.audioTracks}`);
+    ok(calls.fetch === 0 && calls.xhr === 0 && calls.ls === 0 && calls.beacon === 0, `film tła wyszedł z przeglądarki albo do localStorage: ${JSON.stringify(calls)}`);
+    ok(seeks >= 1, `film tła 1 s nie zapętlił się w ${seconds} s (seeking: ${seeks})`);
+    ok(progress >= seconds - 0.5, `postęp ${progress}`);
+    ok(mimeInfo && res.mime.startsWith(mimeInfo.mime.split(';')[0]), `typ ${res.mime}`);
+    if (q.get('b64') !== '0') { let s = ''; for (let k = 0; k < buf.length; k += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(k, k + 0x8000)); window.__b64 = btoa(s); }
+    const info = { mime: res.mime, ext: res.ext, bytes: res.blob.size, w: v.videoWidth, h: v.videoHeight, duration, fps: res.fps, stats: res.stats, audioTracks: res.audioTracks, boxes, seeks, calls };
+    out.textContent = (fails.length ? 'FAIL\n' + fails.join('\n') + '\n' : 'PASS ') + JSON.stringify(info);
+  }
+} catch (e) {
+  out.textContent = 'FAIL ' + (e?.stack || e);
+}
+</script>
+</body>
+</html>

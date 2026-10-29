@@ -2,7 +2,9 @@
 // bo wymaga Playwrighta, którego repo nie ma (zero npm). Nie dotyka prawdziwego Notion: działa wyłącznie na dashboardzie testowym z atrapą.
 //
 // Uruchomienie (dwa terminale):
-//   1) node testy/start-test.mjs                      → dashboard testowy na http://127.0.0.1:4331 (atrapa Notion)
+//   1) node testy/start-test.mjs                      → dashboard testowy na http://127.0.0.1:4331 (atrapa Notion);
+//      inne porty: ATRAPA_PORT=4398 TEST_PORT=4399 node testy/start-test.mjs, potem BASE=http://127.0.0.1:4399
+// Okno v2 (1.3.0, P52): kontrolki klikane po data-fk, w trybie obrazu i filmu, z rozwiniętym „Więcej opcji”; Kopiuj sprawdza zapis PNG do schowka.
 //   2) PW_CORE=<katalog z node_modules/playwright-core> [PW_CHROME=<chrome.exe>] node testy/udostepnij-e2e.mjs
 // PW_CORE: ścieżka do pakietu playwright-core (np. ~/projekt/node_modules/playwright-core), wymagana.
 // PW_CHROME: opcjonalnie plik wykonywalny chrome/chrome-headless-shell (domyślnie szukany w %LOCALAPPDATA%/ms-playwright).
@@ -53,10 +55,31 @@ try {
     const { ctx, p } = await page({ width: 375, height: h }, true);
     check(`nazwa: tytuł strony to JustJournal (375×${h})`, (await p.title()) === 'JustJournal', await p.title());
     await openWeek(p);
-    const btns = p.locator('.sh-ctl button');
-    const n = await btns.count(); let ok = 0, bad = '';
-    for (let i = 0; i < n; i++) { const b = btns.nth(i); if (!(await b.isEnabled())) continue; try { await b.click({ timeout: 4000 }); ok++; } catch (e) { bad += ` #${i}`; } }
-    check(`375×${h}: prawdziwe kliknięcie (bez force) każdego aktywnego przycisku w oknie`, !bad && ok >= 10, `ok=${ok} błędy:${bad}`);
+    // Okno v2 (P52, 29.10.2026) przebudowuje kontrolki po każdym kliknięciu, a „Obraz | Film” podmienia ich zestaw, więc przyciski
+    // klikamy po data-fk (nie po indeksie), z rozwiniętym „Więcej opcji”, osobno w trybie obrazu i filmu. Każdy przycisk szukany od nowa.
+    const clickAll = async (skip) => {
+      if (!(await p.locator('.sh .sh-more').evaluate((d) => d.open))) await p.locator('.sh .sh-more > summary').click();
+      const fks = await p.evaluate(() => [...document.querySelectorAll('.sh-ctl button[data-fk]')].map((b) => b.dataset.fk));
+      let ok = 0, bad = '';
+      for (const fk of fks) {
+        if (skip.includes(fk)) continue;
+        const b = p.locator(`.sh-ctl button[data-fk="${fk}"]`);
+        if (!(await b.count()) || !(await b.isVisible()) || !(await b.isEnabled())) continue;
+        try { await b.click({ timeout: 4000 }); ok++; } catch { bad += ` ${fk}`; }
+      }
+      return { ok, bad, n: fks.length };
+    };
+    const img = await clickAll(['mode-film']);
+    check(`375×${h}: obraz: prawdziwe kliknięcie (bez force) każdego aktywnego przycisku w oknie, także w „Więcej opcji”`, !img.bad && img.ok >= 20, `ok=${img.ok} z ${img.n} błędy:${img.bad}`);
+    if (await p.locator('.sh [data-sh="mode"][data-v="film"]').isEnabled()) {
+      await p.locator('.sh [data-sh="mode"][data-v="film"]').click();
+      const film = await clickAll(['mode-image', 'vpick', 'pick']);
+      check(`375×${h}: film: prawdziwe kliknięcie każdego aktywnego przycisku (bez wyboru pliku)`, !film.bad && film.ok >= 10, `ok=${film.ok} z ${film.n} błędy:${film.bad}`);
+      await p.locator('.sh [data-sh="mode"][data-v="image"]').click();
+    }
+    // stan wyjściowy dla formatów: obraz, karta tygodnia, tło z motywu
+    await p.locator('.sh [data-sh="kind"][data-v="week"]').click();
+    await p.locator('.sh [data-sh="bg"][data-v="theme"]').click();
     for (const f of Object.keys(DIMS)) {
       await p.locator(`.sh [data-sh="format"][data-v="${f}"]`).click();
       await p.waitForFunction(() => !document.querySelector('[data-sh="download"]').disabled);
@@ -113,6 +136,17 @@ try {
   await openWeek(p);
   const preBlob = await p.evaluate(() => new Promise((res) => { const c = document.querySelector('#sh-cv'); let t0 = performance.now(); c.toBlob((b) => res({ ok: !!b, ms: performance.now() - t0 }), 'image/png'); }));
   check('toBlob działa na gotowej karcie', preBlob.ok);
+  // Kopiuj: prawdziwe kliknięcie zapisuje do schowka jeden obraz PNG (zapis przechwycony w stronie, bez systemowego schowka) i pokazuje potwierdzenie
+  await p.evaluate(() => { window.__clip = null; navigator.clipboard.write = async (items) => { window.__clip = await Promise.all(items.map(async (i) => ({ types: [...i.types], size: (await i.getType('image/png')).size }))); }; });
+  const copyBtn = p.locator('.sh [data-sh="copy"]').first();
+  if (await copyBtn.isVisible()) {
+    await copyBtn.click();
+    await p.waitForFunction(() => window.__clip, null, { timeout: 5000 }).catch(() => {});
+    const clip = await p.evaluate(() => window.__clip);
+    check('Kopiuj: schowek dostaje jeden obraz image/png z treścią', clip?.length === 1 && clip[0].types.join() === 'image/png' && clip[0].size > 1000, JSON.stringify(clip));
+    await p.waitForTimeout(300);
+    check('Kopiuj: komunikat „Skopiowano obraz do schowka”', (await p.evaluate(() => document.body.innerText)).includes('Skopiowano obraz do schowka'));
+  } else check('Kopiuj: przycisk widoczny na komputerze (schowek obrazów dostępny)', false, 'brak przycisku Kopiuj');
   await p.keyboard.press('Escape');
 
   // Backtest/Paper: przycisk Udostępnij w hero zniknął (karty okresów tylko dla Live)
@@ -121,15 +155,20 @@ try {
   await p.locator('[data-act="typ"][data-v="Live"]').click(); await p.waitForTimeout(400);
 
   // kalendarz: komórka „Tydz.” na przełomie miesięcy otwiera kartę z tym samym zakresem
-  const wk = p.locator('.cell.wk[data-from]').first();
+  // (1.3.0) komórka przycięta na początku albo na końcu miesiąca, nie zawsze pierwsza: która jest pierwsza, zależy od danych atrapy
+  const wkIdx = await p.evaluate(() => [...document.querySelectorAll('.cell.wk[data-from]')].findIndex((el) => (new Date(el.dataset.to) - new Date(el.dataset.from)) / 864e5 < 6));
+  const wk = p.locator('.cell.wk[data-from]').nth(Math.max(0, wkIdx));
   const fromTo = await wk.evaluate((el) => [el.dataset.from, el.dataset.to]);
-  check('komórka „Tydz.” przy początku miesiąca niesie przycięty zakres (mniej niż 7 dni)', fromTo[0] < fromTo[1] && (new Date(fromTo[1]) - new Date(fromTo[0])) / 864e5 < 6, fromTo.join('..'));
+  check('komórka „Tydz.” na przełomie miesięcy niesie przycięty zakres (mniej niż 7 dni)', fromTo[0] < fromTo[1] && (new Date(fromTo[1]) - new Date(fromTo[0])) / 864e5 < 6, fromTo.join('..'));
   await wk.click(); await p.waitForSelector('.sh #sh-cv');
   const lbl = await p.locator('.sh-per-t').textContent();
   const d1 = Number(fromTo[0].slice(8)), d2 = Number(fromTo[1].slice(8));
   check('karta z komórki pokazuje ten sam zakres dni co komórka (nie cały tydzień)', lbl.includes(d1 + '–' + d2), lbl + ' vs ' + fromTo.join('..'));
-  await p.locator('.sh [data-sh="next"]').click(); await p.waitForTimeout(400);
-  check('po przejściu do następnego okresu przycięcie znika (pełny tydzień)', /–/.test(await p.locator('.sh-per-t').textContent()));
+  // tydzień przycięty na końcu bieżącego miesiąca nie ma następnego okresu (przyszłość), wtedy przejście do poprzedniego
+  const step = (await p.locator('.sh [data-sh="next"]').isEnabled()) ? 'next' : 'prev';
+  await p.locator(`.sh [data-sh="${step}"]`).click(); await p.waitForTimeout(400);
+  const lbl2 = await p.locator('.sh-per-t').textContent();
+  check(`po przejściu do ${step === 'next' ? 'następnego' : 'poprzedniego'} okresu przycięcie znika (pełny tydzień)`, /–/.test(lbl2) && lbl2 !== lbl, `${lbl} → ${lbl2}`);
   await ctx.close();
 } catch (e) {
   check('wyjątek w teście', false, e.stack || e.message);

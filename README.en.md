@@ -23,6 +23,9 @@ Screenshots come from the mock with sample data.
 - [Updating](#updating)
 - [Multiple devices](#multiple-devices)
 - [Backup and restore](#backup-and-restore)
+- [Candlestick charts](#candlestick-charts)
+- [Cards and videos](#cards-and-videos)
+- [Licenses and market data](#licenses-and-market-data)
 - [How numbers are calculated](#how-numbers-are-calculated)
 - [FAQ](#faq)
 - [Security and network connections](#security-and-network-connections)
@@ -38,7 +41,8 @@ Screenshots come from the mock with sample data.
   - Trades (sortable table), Prop (accounts, payouts, ROI, balance) and Gallery tabs;
   - add and edit trades, accounts and finance entries, saved straight to Notion;
   - add screenshots to a trade: in the detail view and in the edit form you pick a file (from the gallery or camera on a phone), drag it in, or paste a screenshot from the clipboard (Ctrl+V after Win+Shift+S). PNG, JPEG, WebP or GIF up to 10 MB (free Notion plan: 5 MB). The screenshot goes to Notion as an image at the end of the trade page (screenshots in the "Screenshot" property stay untouched) and needs the integration's "Insert content" capability; removing screenshots stays in Notion. The dashboard also shows images pasted by hand into a trade page body in Notion (e.g. from a phone), so a screenshot added on one device shows up on the other;
-  - share results as an image ("Share" button): a card for a trade, day, week, month or year in 9:16, 4:5, 1:1 and 16:9, result in R, $ or %, theme background or your own photo; download a PNG, copy it or share from a phone; set the "JustJournal × nickname" signature in Settings;
+  - candlestick charts for ES, NQ, MES and MNQ trades: a preview in the dashboard's look, an editor with drawings saved to Notion, thumbnails in the trade list, candles from Databento on your own key (see [Candlestick charts](#candlestick-charts));
+  - share results as an image or a video ("Share" button): a trade card with the price chart and the position drawing, or a day, week, month or year card with the equity curve, in 9:16, 4:5, 1:1 and 16:9 (videos: 9:16, 1:1 and 16:9), result in R, $ or %, chosen data rows, theme background, your own photo or video; download a PNG, an MP4 (or WebM), copy it or share from a phone; set the "JustJournal × nickname" signature in Settings;
   - Onyx and Platinum themes, data palettes (including colour-blind friendly), Polish and English;
   - an update module and "Getting started" (installation check and a guided tour).
 
@@ -389,6 +393,77 @@ Your data lives in Notion, so every device sees the same trades, accounts and en
 - A backup is made on every update in `backups/<date>/` (JSON: schema and all entries with their values). The folder is in `.gitignore`.
 - Restore: `node restore.mjs` shows a **preview only** (what would be restored from the latest backup). `node restore.mjs --apply` writes after you type "YES". Pick another backup by path: `node restore.mjs backups/2026-10-26T10-00-00Z`.
 - Restore puts field values back, takes entries out of the trash and recreates missing ones. It deletes nothing: entries added after the backup stay. Files uploaded to Notion (screenshots) are not in the backup because their URLs expire after an hour.
+- Chart drawings live in the "Drawings" property in Notion, so backup and restore cover them unchanged. Downloaded candles (`chart-data/`) are not in the backup.
+
+## Candlestick charts
+
+Since version 1.3.0 every ES, NQ, MES or MNQ trade has a candlestick chart with the trade's levels. MES uses ES candles and MNQ uses NQ candles. Other instruments (e.g. EURUSD, XAUUSD, NAS100) show "No data source for this instrument" and download nothing.
+
+**Preview and editing.** In the trade details the "Chart | Screenshots" switch opens the preview: a chart in the dashboard's look (Onyx or Platinum theme, palette colours) with entry, exit, SL, TP and BE, panning and zooming. Timeframes: 15s, 1m, 5m, 15m, 1h, 4h, 1D, 1W, 1M and a "Custom" field (e.g. `3m`, `45s`, `2h`). The "Edit" button switches to the TradingView Lightweight Charts™ editor with drawings: horizontal line, trend line, rectangle, FVG, Fibonacci, text and long/short position, undo with Ctrl+Z. After unlocking it in the editor you can also move the trade's position drawing (SL, TP, BE, exit and time), and the changes go to the trade's properties in Notion. The R result and P&L stay as you typed them. "Done" returns to the preview in the same frame and timeframe. The trade list and the day view in the calendar show chart thumbnails (candles and levels, no drawings).
+
+**Drawings in Notion.** Drawings are saved 2 s after a change to the trade's "Drawings" text property (JSON, up to 190,000 characters per trade). The dashboard adds it with migration 003 during an update, together with the price properties; migrations 004 and 005 add the "BE" and "Contract" properties. With two devices the last save wins. Without internet the drawings wait in a local cache and are sent the next time the chart opens. In a Notion table the "Drawings" column shows raw JSON. Migrations cannot change existing views, so hide it by hand in every view where it gets in the way: above the table "•••" → "Properties" → the eye icon next to "Drawings". Hiding deletes nothing, and the dashboard still reads and writes the property.
+
+**Contracts and rolls.** Candles come from Databento's continuous symbol `ES.v.0` / `NQ.v.0` (the contract with the highest volume), with the contracts' real prices, not adjusted at rolls. A vertical line marks a contract change. In the "Contract" property (e.g. `ESZ6`) you can set the trade's contract; an empty property means the contract by date. The B-ADJ switch (like in TradingView, on by default) shifts the other contracts' prices by the roll gaps relative to the trade's contract, so entry, SL and TP land on the exact tick. Session hours, PDH/PDL and the axis time zone are in Settings → Charts.
+
+**Databento key.** You download candles from [Databento](https://databento.com) (the CME Globex MDP 3.0 dataset, `GLBX.MDP3`) with your own key, without a subscription, paying for usage. Create an account, open "API keys" in the Databento portal, click "Create a new key" and copy the key. In the dashboard: Settings → Charts → "Databento data" → paste the key → "Save and check". The key is checked with a free request and saved only in `.env` on this computer (`DATABENTO_API_KEY`). It never reaches the browser, the logs, Notion or settings sync. Without a key the charts show the candles that are already on disk.
+
+**What downloads by itself and what on a click.**
+- For every trade a background queue adds a 1s candle window from 30 min before entry to 30 min after exit (usually about 0.02 USD per trade).
+- Daily NQ 1s window 9:30–11:00 New York time: the "Download NQ 1s 9:30–11:00 NY every day" switch in Settings → Charts (on by default, this computer only). The queue downloads the window every Monday to Friday once Databento makes it available (about 0.02 USD per day) and catches up at most the last 7 days during which the dashboard was off. Older days only with the import tool (below).
+- The minute candles of the trade's session and longer history are downloaded with the "Check cost" button next to the chart: you first see the quote from a free Databento request, then you confirm.
+- Windows and days already on disk are never downloaded again.
+
+**Costs and app limits.** Before every download the server asks Databento for the cost (free) and asks again right before downloading. Hard limits in the app:
+- at most **1 USD per download**;
+- at most **3 USD per UTC day** (counter of today's spending);
+- **credit counter:** Databento gives new accounts starting credit (125 USD valid for 6 months according to Databento's pricing page in October 2026). The dashboard cannot see the Databento balance, so it counts spending itself and rejects a download when the quote exceeds the remaining credit or the credit has expired, so your card is not charged. Enter your starting amount and expiry date in `config.local.json` (`chartCredit: { startUsd, spentUsd, expires }`).
+
+Settings → Charts shows the limits, today's spending, the credit and the size of downloaded candles as view-only. You change them in `config.local.json` (`chartCostLimitUsd`, `chartDailyLimitUsd`, `chartCredit`). Estimate from Databento quotes in October 2026 (prices may change; the real cost is always the quote before a download): the full 1m history of ES and NQ since 2010 about 41 USD, NQ 1s windows 9:30–11:00 since 2020 about 34 USD.
+
+**Data embargo.** Without a subscription Databento releases historical data with a delay of about 8 hours. Candles from a session in progress therefore appear later: the chart shows "Candles available until: …", and trades from such a session show "Candles from this session will be available around …". The queue waits by itself for windows that are not there yet.
+
+**Timeframes below one minute.** Real one-second candles exist only where a downloaded 1s window lies (trades and the daily NQ window). Outside the windows, timeframes below a minute (e.g. 30s, 15s, 5s, 1s) still work across the whole chart: each 1m candle is split into parts along the path open → extreme → other extreme → close and drawn slightly dimmed, and the tooltip says "from 1m". A minute even partly covered by a 1s window is real as a whole. Share cards use real seconds only: when the trade frame is not fully covered by a 1s window, the card uses 1m candles.
+
+**History import with a budget.** The tools in `narzedzia/` talk to the running dashboard (the key and counters stay in the server) and by default only quote, costing nothing:
+- `node narzedzia/import-okien-1s.mjs`: quote for NQ 1s windows 9:30–11:00 NY since 2020-01-02 (or `--od=`/`--do=`, from/to). Downloading starts only with `--potwierdzam-usd=AMOUNT` (the amount from the quote), with a hard budget `--budzet-usd` (36 USD by default and at most) counted in `chart-data/import-1s-nq.json`. The server downloads in batches of up to 1 USD and checks the budget before each batch; the import counts towards the 3 USD daily limit, so on an import day regular downloads may wait until UTC midnight. Resume an interrupted import with the same command.
+- `node narzedzia/import-historii-1m.mjs`: quote for the 1m history of ES and NQ (`--instrument=ES|NQ|ALL`). Downloading needs `--potwierdzam-usd=AMOUNT` and an explicit raise of the app limits for this import only (`--limity-do-usd=AMOUNT`); the credit guard still applies.
+
+**Candle store.** Candles live in the `chart-data/` folder next to `config.local.json` (binary format, 24 bytes per candle, separate 1m and 1s layers plus contract layers). The folder is in `.gitignore`, updates do not touch it, and the update backup does not include it. Estimate: one 1m session of one symbol is about 35 KB, a 1s window 9:30–11:00 about 130 KB, and the full 1m history of ES and NQ since 2010 with NQ 1s windows since 2020 is about 0.5 GB. The size is shown in Settings → Charts. You delete candles by hand on disk; downloading them again costs money.
+
+**Settings → Charts.** The tab has these groups:
+- "Chart look": candles or close line (separately for thumbnails), palette colours or your own per theme with a contrast check, grid, which trade levels to show;
+- "Overlays": Asia, London and NY session background (hours in New York time) with high/low lines until the sweep, and PDH/PDL;
+- "Share cards": price chart on cards (on / off), style, position drawing, equity curve on period cards, and starting values for videos (format, length, black and white, background dimming);
+- "Time and prices": axis time zone and B-ADJ;
+- "Databento data": the key, limits and credit as view-only, the size of `chart-data/`, the daily NQ 1s window switch;
+- "Licenses": TradingView attribution, the drawing package, the note on CME data and background videos.
+
+Look, overlays and cards sync through Notion like the other settings. The key, limits, credit and the 1s window switch stay on this computer only.
+
+## Cards and videos
+
+The "Share" window has a large preview and groups: File (image or video, format) → Card (trade, day, week, month, year) → Chart → Big number (R, $ or %) → Data → Background, with the rarer options under "More options".
+
+- **The price chart on a trade card** comes from candles already on disk (the card downloads nothing). Style: candles or a light line. Position drawing: "Position" (profit and loss zones to TP and SL, like in TradingView) or "Entry and exit" (markers only). Period cards show the equity curve.
+- **Data rows** under the big number are picked with pills, at most 4 (e.g. entry and exit price, the other unit, SL, TP, duration; for a period: trades, win rate, best trade, profit factor). The 6 most common are shown, the rest after "Show all".
+- **Formats:** a PNG image in 9:16, 4:5, 1:1 and 16:9, a video in 9:16, 1:1 and 16:9.
+- **Videos** are recorded in the browser in real time (keep the tab in front), as MP4 in Chrome, Edge and Safari, and as WebM in browsers without MP4. Videos have no sound. Length, quality, black and white and background dimming are under "More options".
+- **Background:** theme, your own photo or (for videos) your own video. **The background video and photo stay local:** you pick them from disk for each recording, they are processed only in the browser and never reach the server, Notion or settings sync. **Rights to the video and the music are yours to clear:** use only footage you have the rights to (picture and music).
+- Before publishing a card or video with a price chart, read [Licenses and market data](#licenses-and-market-data). Turn the chart on cards off in Settings → Charts → "Share cards".
+
+## Licenses and market data
+
+**TradingView Lightweight Charts™.** The chart editor uses the TradingView Lightweight Charts™ 5.2.1 library (Apache-2.0 license). Attribution: "TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.", https://www.tradingview.com/. The licence and the NOTICE file are in `public/vendor/lightweight-charts/`, and the attribution with a link is under the chart and in Settings → Charts → "Licenses". Drawing tools: `lightweight-charts-drawing` 0.6.2 (MIT, `public/vendor/lightweight-charts-drawing/LICENSE`). Both libraries are included unchanged, with checksums in `public/vendor/VENDOR.md`.
+
+**CME data via Databento.** The candles are CME Group market data downloaded with your key from Databento, under the terms of your Databento account and the CME license that Databento passes on to its users. This is not legal advice, only a summary of the sources we read:
+- Databento says that redistribution rights depend on the dataset and that it passes through the licensing restrictions of the original publisher, here CME ([Databento pricing](https://databento.com/pricing)).
+- CME's guidelines on historical data say that making historical information available on a public website, e.g. in chart or table form, requires a CME distribution license (a sentence from the CME document "Data Licensing Policy Guidelines: Historical Information Distribution", known to us from a search engine index).
+- The standard CME agreement for data users at distributors (Subscriber Addendum) allows displaying the data for your own business activities and forbids redistributing it outside the subscriber group without CME's permission.
+
+What this means for you:
+- **Historical data is for your own use in the journal only, not for redistribution.** Do not share the `chart-data/` folder or candle files with others. The repository contains no candles and no key; test data is synthetic.
+- **You publish cards and videos with a price chart at your own risk.** The chart on cards is on by default because the author uses it at his own risk, but every user decides alone whether their data license allows it. If you are not sure, turn the chart on cards off (Settings → Charts) or ask Databento or CME. The equity curve, the result and the prices you typed are your data, not CME data.
+- Drawings saved in Notion are coordinates and styles, not candles.
 
 ## How numbers are calculated
 
@@ -425,7 +500,9 @@ Your data lives in Notion, so every device sees the same trades, accounts and en
 - **The Notion key stays local** in `.env`. It never reaches the browser, the logs or the repository (`.env` is in `.gitignore`).
 - **The server listens on 127.0.0.1 only**, so other devices on your network cannot reach it.
 - **Writes are CSRF-protected:** every write, update and stop request needs the dashboard's Host and Origin, a custom `X-THQ` header and `Content-Type: application/json`. A foreign page open in your browser cannot write anything silently. The server validates all data itself.
-- **Connections:** the server talks to the Notion API and, as its only connection besides Notion, to the public GitHub API once a day (new version check, none of your data is sent; switch it off in Settings). An update downloads the archive from `codeload.github.com`. In addition the browser loads fonts from Fontshare and Google Fonts (without internet it falls back to system fonts), and a TradingView link preview loads the image from TradingView.
+- **Connections:** the server talks to the Notion API, to the public GitHub API once a day (new version check, none of your data is sent; switch it off in Settings) and, since 1.3.0, to `hist.databento.com` (see below). An update downloads the archive from `codeload.github.com`. In addition the browser loads fonts from Fontshare and Google Fonts (without internet it falls back to system fonts), and a TradingView link preview loads the image from TradingView.
+- **Databento (`hist.databento.com`, since 1.3.0):** the only new connection. It is used only after you save a Databento key: key check, free quotes (`metadata.get_cost`), the available data range (`metadata.get_dataset_range`, cached for 15 minutes), contract symbol mapping and candle downloads (`timeseries.get_range`). Only the symbol (`ES.v.0`, `NQ.v.0` or a contract), the schema and the time range are sent, never data from your journal. The service address is fixed: the server refuses anything other than `hist.databento.com`. The key goes only in the authentication header of this connection; it never reaches the browser, the logs, Notion or API responses. Without a key the dashboard does not connect to Databento at all.
+- **Reads protected from other sites:** `GET /api/*` requests with a `Sec-Fetch-Site` header other than `same-origin` or `none` are rejected, so a foreign page cannot read your data or candles.
 
 ## Prop firm logos
 
@@ -452,11 +529,13 @@ The `public/img/firmy/custom/` folder is yours: updates never touch it.
 | `lib/` | Notion client, property roles, read and write, backups, migrations, updater |
 | `public/` | the interface (HTML, CSS, JS modules, `i18n/` dictionaries) |
 | `testy/` | Notion API mock and tests: `node testy/run.mjs` |
-| `narzedzia/` | `suma-wydania.mjs` (release checksum), `schemat.mjs` (database property dump), `utworz-skrot.ps1` |
+| `narzedzia/` | `suma-wydania.mjs` (release checksum), `schemat.mjs` (database property dump), `utworz-skrot.ps1`, `import-okien-1s.mjs` and `import-historii-1m.mjs` (candle import with a budget) |
+| `public/vendor/` | TradingView Lightweight Charts™ and `lightweight-charts-drawing`, unchanged, with licenses and checksums (`VENDOR.md`) |
+| `chart-data/` | downloaded candles and the drawings cache (created on the first download, outside the repository) |
 
 ### Tests
 
-`node testy/run.mjs` runs every test against the Notion mock (`testy/atrapa-notion.mjs`) and a fake release server: PL and EN install, existing install, backup and restore, ZIP and git update, update module with restart, readiness and schema repair, translations. No test talks to the real Notion or GitHub. The dashboard on the mock alone: `node testy/start-test.mjs` (http://127.0.0.1:4331).
+`node testy/run.mjs` runs every test against the Notion mock (`testy/atrapa-notion.mjs`) and a fake release server: PL and EN install, existing install, backup and restore, ZIP and git update, update module with restart, readiness and schema repair, translations, the chart module against a Databento mock (`testy/atrapa-databento.mjs`). No test talks to the real Notion, GitHub or Databento. Browser tests (`testy/wykresy-e2e-*.mjs`, `testy/udostepnij-e2e.mjs`, `testy/zrzuty-e2e.mjs`) run separately with Playwright (`PW_CORE`); instructions are in the header of each file. The dashboard on the mock alone: `node testy/start-test.mjs` (http://127.0.0.1:4331).
 
 ## License
 

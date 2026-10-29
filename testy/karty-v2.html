@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>JustJournal: karty v2 (seria testowa)</title>
+<!-- Karty v2 (P43-P48, P52, 29.10.2026). Strona robocza pod /__testy/ (tylko dashboard testowy, THQ_TEST_PAGES=1):
+     - window.KV2.png(spec) / KV2.film(spec): syntetyczny trade (albo okres) na PRAWDZIWYCH świecach z lokalnego magazynu (GET /api/candles, zero pobrań),
+       karta przez renderCard, wynik jako data URL (seria testowa P48, narzędzie generujące galerię: wykresy-wyniki/tmp-v2/galeria.mjs);
+     - ?part=unit: asercje w przeglądarce dla testy/wykresy-29-v2.mjs (bez sieci, świece syntetyczne).
+     Ceny trade'a liczone ze świec: wejście = otwarcie świecy wejścia, wyjście = zamknięcie świecy wyjścia, SL/TP tak, żeby wynik był prawdziwy dla tych świec. -->
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+// seria testowa: prawdziwy krój Satoshi z CDN jak w index.html; ?part=unit bez sieci zewnętrznej (krój zastępczy)
+if (new URLSearchParams(location.search).get('part') !== 'unit') await new Promise((res) => { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap'; l.onload = l.onerror = res; document.head.appendChild(l); });
+const S = await import('/js/stats.js');
+const U = await import('/js/udostepnij-dane.js');
+const R = await import('/js/udostepnij-render.js');
+const W = await import('/js/udostepnij.js');
+const C = await import('/js/styl-wykresu.js');
+const F = await import('/js/film.js');
+const root = document.documentElement;
+const A = 'aaaaaaaa-0000-4000-8000-000000000001';
+const konta = S.normalizeKonta([{ _id: A, name: 'A 50k', size: 50000 }]);
+const POINT = { ES: 50, NQ: 20, MES: 5, MNQ: 2 };
+const TICK = 0.25, r4 = (x) => Math.round(x / TICK) * TICK;
+const sec = (iso) => Math.floor(Date.parse(iso) / 1000);
+const isoOf = (s) => new Date(s * 1000).toISOString().replace('.000Z', '.000+00:00');
+
+async function candles(inst, from, to, tf) {
+  const q = new URLSearchParams({ instrument: inst, from: String(from), to: String(to), tf });
+  const r = await fetch('/api/candles?' + q, { cache: 'no-store' });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return j && !j.noSource && j.bars?.length ? j : null;
+}
+// Syntetyczny trade na prawdziwych świecach: spec { inst, at (ISO UTC), dur (s), want: win|loss|be, dir?, levels: both|none|sl, qty, typ }
+async function simTrade(spec) {
+  const inst = spec.inst, root4 = inst.replace(/^M/, '');
+  const a = sec(spec.at);
+  let dur = spec.dur;
+  if (!POINT[inst]) { // instrument bez danych (EURUSD)
+    const e = 1.08425, x = spec.want === 'loss' ? 1.08185 : 1.08865;
+    return { row: rowOf(spec, a, a + dur, 'Long', e, x, spec.levels === 'none' ? null : 1.08245, spec.levels === 'both' ? 1.08865 : null, spec.want === 'loss' ? -1 : 2.44, spec.want === 'loss' ? -240 : 440) };
+  }
+  // świece do symulacji: 1s, gdy są (krótkie trade'y NQ), inaczej 1m
+  let bars = dur <= 1800 ? await candles(root4, a - 60, a + Math.ceil(dur * 1.35) + 60, '1s') : null;
+  if (!bars || bars.bars.length < 30) bars = await candles(root4, a - 120, a + Math.ceil(dur * 1.35) + 120, '1m');
+  if (!bars) throw new Error('brak świec ' + inst + ' ' + spec.at);
+  const B = bars.bars, step = bars.tf === '1s' ? 1 : 60;
+  const at = (t) => { let i = B.findIndex((b) => b[0] + step > t); return i < 0 ? B.length - 1 : i; };
+  const i0 = at(a), e = r4(B[i0][1]);
+  // wyjście: w przedziale [0,7 ; 1,3] × czas trwania, gdzie ruch jest największy (zysk/strata) albo najbliżej wejścia (BE)
+  let best = null;
+  const fs = spec.dir === 'Long' ? 1 : spec.dir === 'Short' ? -1 : 0; // kierunek z przypadku: ruch liczony w jego stronę
+  for (let t = a + Math.round(dur * 0.7); t <= a + Math.round(dur * 1.3); t += step) {
+    const j = at(t); if (j <= i0) continue;
+    const x = r4(B[j][4]), mv = x - e;
+    const score = spec.want === 'be' ? -Math.abs(mv) : fs ? (spec.want === 'win' ? mv * fs : -mv * fs) : Math.abs(mv);
+    if (!best || score > best.score) best = { j, x, mv, score, t: B[j][0] + step };
+  }
+  if (!best) throw new Error('brak wyjścia');
+  const j = best.j, x = best.x;
+  const dir = spec.dir || (spec.want === 'be' ? 'Long' : (spec.want === 'win') === (best.mv >= 0) ? 'Long' : 'Short');
+  const s = dir === 'Long' ? 1 : -1;
+  let mae = 0, mfe = 0;
+  for (let k = i0; k <= j; k++) { mae = Math.max(mae, s > 0 ? e - B[k][3] : B[k][2] - e); mfe = Math.max(mfe, s > 0 ? B[k][2] - e : e - B[k][3]); }
+  const move = (x - e) * s;
+  let risk, sl, tp;
+  if (spec.want === 'win') { risk = r4(Math.max(Math.abs(move) / (spec.rr || 2.4), mae * 1.15, 4 * TICK)); sl = e - s * risk; tp = x; }
+  else if (spec.want === 'loss') { risk = Math.max(Math.abs(move), 4 * TICK); sl = x; tp = e + s * r4(risk * 2); }
+  else { risk = r4(Math.max(mae * 1.2, mfe * 0.5, 8 * TICK)); sl = e - s * risk; tp = e + s * r4(risk * 2); }
+  const r = Math.round((move / risk) * 100) / 100;
+  const pnl = Math.round(move * POINT[inst] * (spec.qty || 1) * 100) / 100;
+  const lv = spec.levels || 'both';
+  return { row: rowOf(spec, a, best.t, dir, e, x, lv === 'none' ? null : sl, lv === 'both' ? tp : null, r, pnl), tf: bars.tf };
+}
+function rowOf(spec, a, b, dir, e, x, sl, tp, r, pnl) {
+  return { _id: spec.id || 'tr1', _created: isoOf(a), title: '', typ: { name: spec.typ || 'Live' }, date: isoOf(a), exit: isoOf(b),
+    r: spec.want === 'be' ? 0 : r, pnl: spec.want === 'be' ? 0 : pnl, konta: [A], dir: { name: dir }, instrument: { name: spec.inst }, entryPrice: e, exitPrice: x, sl, tp,
+    setup: { name: spec.setup || 'Pullback' }, session: { name: 'Nowy Jork' }, contract: spec.contract || '' };
+}
+// Okres: spec.trades = [{ d: '2026-10-21', r, pnl }]
+function periodCard(spec, metric) {
+  let i = 0;
+  const rows = spec.trades.map((x) => ({ _id: `p${++i}`, _created: `${x.d}T14:${String(i % 60).padStart(2, '0')}:00.000Z`, typ: { name: 'Live' }, date: `${x.d}T14:${String(i % 60).padStart(2, '0')}:00.000+00:00`, r: x.r, pnl: x.pnl, konta: [A], dir: { name: x.r >= 0 ? 'Long' : 'Short' }, instrument: { name: x.i || 'NQ' } }));
+  const ts = S.normalizeTrades(rows);
+  const d0 = spec.anchor;
+  const [y, m] = d0.split('-').map(Number);
+  if (spec.kind === 'day') return U.dayCard(ts, konta, d0, metric);
+  if (spec.kind === 'week') return U.weekCard(ts, konta, d0, metric);
+  if (spec.kind === 'month') return U.monthCard(ts, konta, y, m, metric);
+  return U.yearCard(ts, konta, y, metric);
+}
+// tło: zdjęcie i film z adresów podstawionych przez narzędzie (page.route), bez sieci zewnętrznej
+const media = {};
+async function bgOf(kind) {
+  if (kind === 'photo') { if (!media.photo) { const im = new Image(); im.src = '/__bg/photo.jpg'; await im.decode(); media.photo = im; } return media.photo; }
+  if (kind === 'video') {
+    if (!media.video) { const blob = await (await fetch('/__bg/video.mp4')).blob(); media.video = await F.loadVideo(new File([blob], 'bg.mp4', { type: 'video/mp4' })); }
+    return media.video;
+  }
+  return null;
+}
+async function prepare(spec) {
+  root.setAttribute('data-theme', spec.theme || 'onyx');
+  await R.ensureFonts();
+  const tokens = R.readTokens();
+  let metric = spec.metric || 'R';
+  let data, chart = null, info = {};
+  if (spec.kind === 'trade') {
+    const sim = await simTrade(spec);
+    const [t] = S.normalizeTrades([sim.row]);
+    data = U.tradeCard(t, konta);
+    const cfg = { ...C.chartDefaults(), shareChart: spec.chart !== false };
+    const charts = W.createCardCharts({ cfg: () => cfg, badj: () => spec.badj !== false });
+    const resp = await charts.get(data);
+    if (resp) chart = { bars: W.cardBars(resp, spec.style || 'candles'), tf: resp.tf, style: spec.style || 'candles', draw: spec.draw || 'position' };
+    info = { res: resp?.res || null, tf: resp?.tf || null, n: resp?.bars?.length || 0, nDrawn: chart?.bars.length || 0, row: sim.row };
+  } else data = periodCard(spec, metric);
+  { const av = U.availableMetrics(data); if (av.length && !av.includes(metric)) metric = av[0]; } // jak okno: jednostka niedostępna na tej karcie → pierwsza dostępna
+  const photo = await bgOf(spec.bg);
+  const opts = { kind: spec.kind, format: spec.format || '9:16', metric, numberColor: spec.numberColor || 'result', data, photo, nick: spec.nick ?? 'twoj.nick', tokens,
+    equity: spec.kind !== 'trade' && spec.equity !== false, chart, rows: spec.rows, film: !!spec.film, bg: spec.bg === 'video' ? 'video' : 'photo', dim: spec.dim ?? 0.6, bw: !!spec.bw };
+  return { opts, info };
+}
+window.KV2 = {
+  async png(spec) {
+    const { opts, info } = await prepare(spec);
+    const cv = document.createElement('canvas');
+    const r = R.renderCard(cv, opts);
+    return { url: cv.toDataURL('image/png'), info: { ...info, chart: r.chart, curve: r.curve, rows: r.rows, scale: r.scale } };
+  },
+  // klatka filmu w chwili at (s) jako PNG (ocena animacji bez nagrywania)
+  async frame(spec, at) {
+    const { opts } = await prepare({ ...spec, film: true });
+    const cv = document.createElement('canvas');
+    R.renderCard(cv, { ...opts, at });
+    return cv.toDataURL('image/png');
+  },
+  async film(spec) {
+    const { opts, info } = await prepare({ ...spec, film: true });
+    const cv = document.createElement('canvas');
+    const mimeInfo = F.supportedMime();
+    if (!mimeInfo) throw new Error('brak MediaRecorder');
+    const size = F.filmSize(opts.format, '1080p');
+    const fo = { ...opts, scale: size.scale, keep: true, cache: {} };
+    R.renderCard(cv, fo);
+    const r = await F.record({ canvas: cv, seconds: spec.seconds || 6, draw: (at) => R.renderCard(cv, { ...fo, at }), video: spec.bg === 'video' ? opts.photo : null, mimeInfo, bitrate: F.bitrate('1080p'), onProgress: () => {} });
+    const buf = new Uint8Array(await r.blob.arrayBuffer());
+    let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return { b64: btoa(bin), mime: r.mime, ext: r.ext, fps: r.fps, info };
+  },
+};
+
+// ---------- ?part=unit: asercje dla testy/wykresy-29-v2.mjs (świece syntetyczne, bez sieci) ----------
+if (new URLSearchParams(location.search).get('part') === 'unit') {
+  const fails = [];
+  const ok = (c, m) => { if (!c) fails.push(m); };
+  try {
+    const AT = Date.parse('2026-10-20T15:30:00Z');
+    const [t] = S.normalizeTrades([{ _id: 'u1', _created: '2026-10-20T15:30:00.000Z', typ: { name: 'Live' }, date: '2026-10-20T15:30:00.000+00:00', exit: '2026-10-20T15:40:00.000+00:00',
+      r: 2, pnl: 600, konta: [A], dir: { name: 'Long' }, instrument: { name: 'ES' }, entryPrice: 5812.25, exitPrice: 5824.25, sl: 5806.25, tp: 5824.25 }]);
+    const data = U.tradeCard(t, konta);
+    const bars = []; let p = 5810;
+    for (let k = 0; k < 120; k++) { const tt = AT / 1000 - 300 + k * 5; const o = p, c = p + ((k % 7) - 3) * 0.5; bars.push([tt, o, Math.max(o, c) + 0.25, Math.min(o, c) - 0.25, c, 10]); p = c; }
+    const hash = (cv) => { const d = new Uint32Array(cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data.buffer); let a = 0x811c9dc5; for (let i = 0; i < d.length; i += 7) { a ^= d[i]; a = Math.imul(a, 0x01000193) >>> 0; } return a; };
+    const draw = (o) => { const cv = document.createElement('canvas'); const info = R.renderCard(cv, { kind: 'trade', data, nick: 'u', ...o }); return { cv, info, h: hash(cv) }; };
+    for (const th of ['onyx', 'platinum']) {
+      root.setAttribute('data-theme', th);
+      const tokens = R.readTokens();
+      for (const format of Object.keys(R.FORMATS)) {
+        const none = draw({ format, tokens });
+        const c = draw({ format, tokens, chart: { bars, tf: '5s', style: 'candles', draw: 'position' } });
+        const l = draw({ format, tokens, chart: { bars, tf: '5s', style: 'line', draw: 'position' } });
+        const mk = draw({ format, tokens, chart: { bars, tf: '5s', style: 'line', draw: 'marks' } });
+        ok(c.info.chart && l.info.chart && mk.info.chart && !none.info.chart, `${th} ${format}: info.chart`);
+        ok(new Set([none.h, c.h, l.h, mk.h]).size === 4, `${th} ${format}: style i rysunek zmieniają obraz`);
+        ok(c.info.rows.length === 3, `${th} ${format}: domyślnie 3 wiersze, jest ${c.info.rows.join(',')}`);
+        // P43: bez poświaty: pod liczbą-bohaterem i nad nią tło jednolite (sprawdzamy pas nad liczbą przy lewym marginesie)
+        const film = draw({ format, tokens, chart: { bars, tf: '5s', style: 'line', draw: 'position' }, film: true, at: 0 });
+        ok(film.h !== l.h, `${th} ${format}: klatka 0 filmu różni się od PNG`);
+        const end = draw({ format, tokens, chart: { bars, tf: '5s', style: 'line', draw: 'position' }, film: true, at: 99 });
+        ok(end.h === l.h, `${th} ${format}: klatka po końcu animacji = PNG`);
+      }
+    }
+    // P52: wiersze
+    root.setAttribute('data-theme', 'onyx');
+    const T = R.readTokens();
+    const lab = (rows, metric = 'R') => R.cardModel('trade', data, metric, T, 'result', { rows }).rows.map((r) => r.label);
+    ok(JSON.stringify(lab(['entry', 'exit', 'alt'])) === JSON.stringify(['Cena wejścia', 'Cena wyjścia', 'Wynik w $']), 'domyślne wiersze trade: ' + lab(['entry', 'exit', 'alt']));
+    ok(!lab(['R', 'alt'], 'R').includes('Wynik w R'), 'R przy dużej liczbie w R nie wraca w wierszach');
+    ok(lab(['alt'], '$')[0] === 'Wynik w R', 'alt przy $ = R');
+    ok(lab(['$', 'alt'], 'R').filter((x) => x === 'Wynik w $').length === 1, 'alt nie dubluje $');
+    ok(lab(['entry', 'exit', 'dur', 'sl', 'tp']).length === 4, 'najwyżej 4 wiersze');
+    const [t2] = S.normalizeTrades([{ _id: 'u2', _created: '2026-10-20T15:30:00.000Z', typ: { name: 'Live' }, date: '2026-10-20T15:30:00.000+00:00', r: 1, konta: [], instrument: { name: 'ES' } }]);
+    ok(R.cardModel('trade', U.tradeCard(t2, konta), 'R', T, 'result', { rows: ['entry', 'exit', 'sl', 'setup'] }).rows.length === 0, 'puste pola: wiersze znikają');
+    // Błąd z filmu v2 (29.10.2026, słowa użytkownika: «czcionka jest rozna w roznych momentach filmu»): kanwa w DOM dziedziczyła font-variant-numeric: tabular-nums
+    // z body, a warstwa statyczna filmu (OffscreenCanvas) i kanwa poza DOM nie, więc cyfry zmieniały się między klatkami. Karta ma wyglądać tak samo wszędzie.
+    const host = document.createElement('div');
+    host.style.cssText = 'font-variant-numeric: tabular-nums; font-feature-settings: "tnum", "ss01"; letter-spacing: 3px; font-kerning: none; font-variant-ligatures: none; font-stretch: condensed';
+    document.body.appendChild(host);
+    for (const format of ['9:16', '1:1']) {
+      const base = { kind: 'trade', data, nick: 'u', format, metric: '$', tokens: T, rows: ['entry', 'exit', 'R', 'dur'], chart: { bars, tf: '5s', style: 'line', draw: 'position' } };
+      const live = document.createElement('canvas'); host.appendChild(live);
+      R.renderCard(live, base);
+      const free = document.createElement('canvas'); R.renderCard(free, base);
+      ok(hash(live) === hash(free), `${format}: kanwa w DOM (tabular-nums z rodzica) rysuje inaczej niż kanwa poza DOM`);
+      // film: klatka animacji (kanwa w DOM) i klatka z warstwy statycznej (OffscreenCanvas) po końcu animacji
+      R.renderCard(live, { ...base, film: true, at: 99 }); // klatka rysowana wprost na kanwie nagrania (jak w trakcie animacji)
+      const c = live.getContext('2d').getImageData(0, 0, live.width, live.height).data;
+      const cache = {};
+      R.renderCard(live, { ...base, film: true, at: 99, cache }); // ta sama klatka z warstwy statycznej (OffscreenCanvas)
+      const a = live.getContext('2d').getImageData(0, 0, live.width, live.height).data;
+      let sum = 0; for (let j = 0; j < a.length; j++) sum += Math.abs(a[j] - c[j]);
+      ok(cache.fg && sum / a.length < 0.2, `${format}: warstwa statyczna filmu różni się od klatki animacji (średnio ${(sum / a.length).toFixed(3)})`);
+      live.remove();
+    }
+    host.remove();
+  } catch (e) { fails.push('wyjątek: ' + (e?.stack || e)); }
+  out.textContent = fails.length ? 'FAIL ' + fails.join(' | ') : 'PASS';
+} else out.textContent = 'READY';
+</script>
+</body>
+</html>

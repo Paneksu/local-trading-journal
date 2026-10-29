@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: tryb edycji wykresu (strona robocza)</title>
+<!-- Strona robocza testu wykresy-08 (testy/przegladarka.mjs, Chrome/Edge headless), podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Uruchamia createEditor (public/js/wykres.js) na syntetycznych świecach z atrapą fetch dla /api/drawings/save i sprawdza: tło LWC przezroczyste
+     (piksel alfa 0), kolory z tokenów przez sondę canvas, kadr identyczny po przejściu podgląd → LWC (±1,5 px), pasek 8 przycisków, blokadę pozycji
+     z pól trade'a poza zapisem, jeden zapis po dziesięciu zmianach. -->
+<style>
+  :root { --font: sans-serif; --fg: #f3f3f3; --fg-rgb: 243 243 243; --fg-2: #b4b9be; --popover: #26292b; --line: rgb(80 86 90 / .7); --be: oklch(0.72 0.12 260); }
+  body { margin: 0; padding: 16px; background: #0e0f10; color: #f3f3f3; font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  .lb { --profit: oklch(0.72 0.19 150); --loss: rgb(255 106 106); }
+  #c { width: 900px; height: 520px; display: flex; flex-direction: column; }
+  .swc { display: flex; flex-direction: column; gap: 8px; width: 100%; height: 100%; }
+  .swc-plot { flex: 1; min-height: 200px; position: relative; }
+</style>
+</head>
+<body>
+<div class="lb"><div id="c"></div></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const errors = [];
+let checks = 0;
+const ok = (cond, msg) => { checks++; if (!cond) errors.push(msg); };
+const near = (a, b, tol, what) => { checks++; if (!(Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tol)) errors.push(`${what}: ${a} vs ${b} (±${tol})`); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => errors.push('błąd strony: ' + (e.error?.stack || e.message)));
+
+try {
+  const saves = [];
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (url, opts) => {
+    if (String(url).includes('/api/drawings/save')) { saves.push(JSON.parse(opts.body)); return Promise.resolve(new Response(JSON.stringify({ ok: true, pending: false }), { status: 200 })); }
+    return realFetch(url, opts);
+  };
+  const W = await import('/js/wykres.js');
+  const D = await import('/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js');
+
+  // świece 1m (200 sztuk), trade z poziomami
+  const T0 = 1793000000 - (1793000000 % 60);
+  const candles = [];
+  let p = 5840;
+  for (let k = 0; k < 200; k++) { const o = p, c = p + Math.sin(k / 5) * 1.5; candles.push([T0 + k * 60, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c, 10]); p = c; }
+  const trade = { at: candles[90][0] * 1000, exitAt: candles[120][0] * 1000, instrument: 'ES', entryPrice: 5840, exitPrice: 5846, sl: 5836, tp: 5848, be: 5842 };
+  const P = await import('/js/podglad.js');
+  P.setChartTzDefault('UTC');
+
+  // 1) kolory z tokenów przez sondę: wszystkie w postaci #rrggbb albo rgba()
+  const host = document.querySelector('.lb');
+  const col = W.readColors(host);
+  for (const k of ['profit', 'loss', 'be', 'fg', 'fg2', 'grid', 'popover', 'cross']) ok(/^(#[0-9a-f]{6}|rgba?\(.+\))$/i.test(col[k]), `kolor ${k}: ${col[k]}`);
+  ok(col.profit !== col.loss, 'zysk i strata mają różne kolory (OKLCH i rgb przez sondę)');
+
+  // 2) edytor
+  const root = document.getElementById('c');
+  const frame = { tf: '1m', fromIndex: 60, toIndex: 140.5, candles, rolls: [] };
+  let doneArg = null;
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: true, pdhl: false })); } catch { /* bez localStorage nakładki są wyłączone */ }
+  try { localStorage.removeItem('thq.chart.tfs.v1'); localStorage.removeItem('thq.chart.toolStyle.v1'); } catch { /* brak */ }
+  const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame, doc: null, edited: '2026-10-27T09:00:00.000Z', onDone: (f) => { doneArg = f; } });
+  await sleep(400);
+  ok(root.querySelectorAll('.swc-lwc canvas').length >= 1, 'LWC narysował canvas');
+  ok(root.querySelectorAll('.swc-tools [data-tool]').length === 9, 'pasek ma 9 narzędzi (8 rodzajów z Gann boxem + preset FVG)');
+  ok(root.querySelector('.swc-done') && root.querySelector('.swc-foot a[href^="https://www.tradingview.com"]'), 'przycisk Gotowe i link do tradingview.com');
+
+  // tło przezroczyste: istnieje piksel o alfie 0 na dolnej warstwie
+  const cv = root.querySelector('.swc-lwc canvas');
+  const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let transparent = 0;
+  for (let i = 3; i < px.length; i += 4 * 97) if (px[i] === 0) transparent++;
+  ok(transparent > 50, `tło przezroczyste (próbek z alfą 0: ${transparent})`);
+
+  // nakładki (etap 10): stan z localStorage, przełączniki .check w pasku, pas sesji (London 06-09 UTC, ~8% koloru) rysuje prymityw serii; wyłączenie go usuwa
+  const semi = () => {
+    let n = 0;
+    for (const c of root.querySelectorAll('.swc-lwc canvas')) {
+      if (c.width < 200 || c.height < 100) continue;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 0 && d[i] < 60) n++;
+    }
+    return n;
+  };
+  ok(root.querySelectorAll('.swc-ov input[type="checkbox"]').length === 2, 'dwa przełączniki nakładek w pasku edycji');
+  ok(root.querySelector('[data-swc-ov="sessions"]').checked === true && root.querySelector('[data-swc-ov="pdhl"]').checked === false, 'przełączniki odzwierciedlają zapisany stan');
+  const withBands = semi();
+  ok(withBands > 2000, `pas sesji narysowany przez prymityw LWC (półprzezroczystych pikseli: ${withBands})`);
+  root.querySelector('[data-swc-ov="sessions"]').click();
+  // (ubywanie pikseli po wyłączeniu sprawdza się w prawdziwej przeglądarce: tryb --dump-dom z czasem wirtualnym nie uruchamia już klatek requestAnimationFrame)
+  ok(JSON.parse(localStorage.getItem('thq.chart.overlays.v1')).sessions === false, 'stan nakładek zapisany po przełączeniu');
+
+  // kadr: LWC pokazuje ten sam zakres indeksów, a krawędzie leżą na krawędziach pola (±1,5 px)
+  const st = ed.state();
+  near(st.fromIndex, 60, 0.05, 'fromIndex po przejściu');
+  near(st.toIndex, 140.5, 0.05, 'toIndex po przejściu');
+  const ts = ed.chart.timeScale();
+  const spacing = ts.logicalToCoordinate(101) - ts.logicalToCoordinate(100);
+  window.__dbg = JSON.stringify({ st, w: ts.width(), a: ts.logicalToCoordinate(st.fromIndex), b: ts.logicalToCoordinate(st.toIndex), c: ts.logicalToCoordinate(140), d: ts.logicalToCoordinate(139.5), n: candles.length, vr: ts.getVisibleLogicalRange() });
+  // LWC liczy współrzędną tylko dla całkowitych indeksów: środek świecy 60 leży na lewej krawędzi pola, środek świecy 140 pół odstępu przed prawą (toIndex 140,5)
+  near(ts.logicalToCoordinate(60), 0, 1.5, 'lewa krawędź kadru (px)');
+  near(ts.logicalToCoordinate(140), ts.width() - spacing / 2, 1.5, 'prawa krawędź kadru (px)');
+  ok(spacing > 5, `odstęp świec ${spacing}`);
+
+  // pozycja z pól trade'a: jest w modelu, ale poza zapisem
+  ok(ed.manager.drawings().length === 1, `blokada pozycji z pól trade'a (${ed.manager.drawings().length} rysunków w modelu)`);
+  ok(ed.manager.drawings()[0].locked === true, 'pozycja z pól jest zablokowana');
+  ok(ed.currentDoc().d.length === 0, 'pozycji z pól nie ma w dokumencie do zapisu');
+
+  // narzędzia: FVG uzbraja prostokąt, Esc zdejmuje
+  root.querySelector('[data-tool="fvg"]').click();
+  ok(ed.manager.tool() === 'rectangle', 'FVG to prostokąt');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ok(ed.manager.tool() === null, 'Esc zdejmuje narzędzie');
+
+  // dziesięć zmian w jednej chwili: jeden zapis po opóźnieniu, bez pozycji z pól
+  for (let i = 0; i < 10; i++) {
+    ed.manager.add({ kind: 'horizontal-line', points: [{ time: candles[100][0], price: 5835 + i }], style: { ...D.defaultStyleFor('horizontal-line') } });
+  }
+  await sleep(300);
+  ok(saves.length === 0, 'przed upływem opóźnienia nic nie wysłano');
+  await sleep(2600);
+  ok(saves.length === 1, `jeden zapis po dziesięciu zmianach (było ${saves.length})`);
+  const doc = saves[0]?.doc;
+  ok(doc && doc.v === 1 && Array.isArray(doc.d) && doc.d.length === 10 && !doc.d.some((x) => x.locked), 'zapis: 10 rysunków bez pozycji z pól');
+  ok(saves[0]?.id === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'zapis z identyfikatorem trade\'a');
+  ok(/^\d{4}-\d\d-\d\dT/.test(doc?.at || ''), 'znacznik czasu ISO');
+
+  // P26: przełącznik „Auto” skali ceny, kółko nad osią ceny, strefa czasowa, limit oddalenia
+  const autoBtn = root.querySelector('[data-swc="auto"]'), tzBtn = root.querySelector('[data-swc="tz"]');
+  const pscale = ed.chart.priceScale('right');
+  ok(autoBtn && autoBtn.getAttribute('aria-pressed') === 'true' && pscale.options().autoScale === true, 'edytor: Auto domyślnie włączone');
+  autoBtn.click();
+  ok(pscale.options().autoScale === false && autoBtn.getAttribute('aria-pressed') === 'false', 'edytor: Auto wyłączone w LWC');
+  ok(localStorage.getItem(P.AUTO_KEY) === '0', 'edytor: stan Auto zapisany w localStorage');
+  const r0 = pscale.getVisibleRange();
+  const cr = root.querySelector('.swc-lwc').getBoundingClientRect();
+  root.querySelector('.swc-lwc canvas').dispatchEvent(new WheelEvent('wheel', { deltaY: 300, clientX: cr.right - 5, clientY: cr.top + cr.height / 3, bubbles: true, cancelable: true }));
+  const r1 = pscale.getVisibleRange();
+  ok(r0 && r1 && (r1.to - r1.from) > (r0.to - r0.from) * 1.2, `edytor: kółko nad osią ceny oddala cenę (${r0 && (r0.to - r0.from).toFixed(2)} → ${r1 && (r1.to - r1.from).toFixed(2)})`);
+  autoBtn.click();
+  ok(pscale.options().autoScale === true && localStorage.getItem(P.AUTO_KEY) === '1', 'edytor: Auto z powrotem włączone');
+  // P27: lista rozwijana wszystkich stref zamiast przycisku
+  ok(tzBtn && tzBtn.tagName === 'SELECT' && tzBtn.value === '' && P.chartTz() === 'UTC', `edytor: strefa osi z Ustawień (UTC)`);
+  // P29 (28.10.2026): krótka lista (popularne + każda pełna godzina UTC) zamiast wszystkich stref IANA z P27
+  ok(tzBtn.options.length >= 30 && tzBtn.options.length <= 46, `edytor: krótka lista stref (${tzBtn.options.length})`);
+  ok([...tzBtn.options].some((o) => o.value === 'Etc/GMT-5' && o.textContent === 'UTC+5') && [...tzBtn.options].some((o) => o.value === 'Asia/Tokyo' && /UTC\+9/.test(o.textContent)), 'edytor: przesunięcie UTC w opisie strefy (UTC+5, Tokio UTC+9)');
+  tzBtn.value = 'America/New_York'; tzBtn.dispatchEvent(new Event('change', { bubbles: true }));
+  ok(P.chartTz() === 'America/New_York', `edytor: wybór strefy z listy (${P.chartTz()})`);
+  const tf = ed.chart.options().localization.timeFormatter(candles[90][0]);
+  ok(tf === P.fmtIn('America/New_York').FULL.format(new Date(candles[90][0] * 1000)), `edytor: czas w strefie Nowego Jorku (${tf})`);
+  P.setChartTzDefault('UTC');
+  ok(ed.chart.timeScale().options().minBarSpacing >= ed.chart.timeScale().width() / 1500 - 1e-9, 'edytor: limit oddalenia 1 500 świec (minBarSpacing)');
+
+  // ---- P27 (28.10.2026): Gann box, BE na pozycji trade'a, panel stylu, zapamiętany styl, poziomy Fibonacciego, Wyczyść wszystkie, kłódka, ulubione interwały ----
+  const M = ed.manager, panel = root.querySelector('.swc-style');
+  const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+  ok(root.querySelector('[data-tool="gann-box"]'), 'P27: narzędzie Gann box w pasku');
+  const posD = M.drawings().find((d) => d.locked);
+  ok(posD && Math.abs(posD.style.beLevel - 2) < 1e-9, `P27: zablokowana pozycja ma poziom BE z pola trade'a (${posD && posD.style.beLevel})`);
+  const rid = M.add({ kind: 'rectangle', points: [{ time: candles[100][0], price: 5838 }, { time: candles[110][0], price: 5844 }], style: D.defaultStyleFor('rectangle') });
+  M.select([rid]); await sleep(50);
+  root.querySelector('.swc-gear').click(); await sleep(30); // P32: panel (także przypięty) otwiera zębatka
+  ok(!panel.hidden && panel.querySelector('[data-k="text"]') && panel.querySelector('[data-k="width"]') && panel.querySelector('[data-k="opacity"]') && panel.querySelector('[data-k="textColor"]') && panel.querySelector('[data-k="lineStyle"]'), 'P27: panel prostokąta: tekst, kolor tekstu, grubość, styl linii, krycie');
+  const ti = panel.querySelector('[data-k="text"]'); ti.value = 'OB'; fire(ti, 'input');
+  ok(M.get(rid).style.text === 'OB' && M.get(rid).text === 'OB', 'P27: tekst w prostokącie (styl i rysunek: paczka czyta drawing.text)');
+  const ws = panel.querySelector('[data-k="width"]'); ws.value = '3'; fire(ws, 'change');
+  ok(M.get(rid).style.width === 3, 'P27: grubość obramowania');
+  panel.querySelector('[data-k="horzLabelsAlign"][data-v="left"]').click();
+  ok(M.get(rid).style.horzLabelsAlign === 'left', 'P27: wyrównanie tekstu');
+  const opr = panel.querySelector('[data-k="opacity"]'); opr.value = '40'; fire(opr, 'input');
+  ok(M.get(rid).style.transparency === 60, 'P27: krycie wypełnienia');
+  const savedSt = JSON.parse(localStorage.getItem('thq.chart.toolStyle.v1') || '{}');
+  ok(savedSt.rectangle && savedSt.rectangle.width === 3 && savedSt.rectangle.text === undefined, 'P27: styl prostokąta zapamiętany (bez tekstu)');
+  ok(D.defaultStyleFor('rectangle').width === 3 && D.defaultStyleFor('rectangle').transparency === 60, 'P27: nowy prostokąt rysuje się zapamiętanym stylem');
+  const fid = M.add({ kind: 'fib-retracement', points: [{ time: candles[95][0], price: 5836 }, { time: candles[115][0], price: 5846 }], style: D.defaultStyleFor('fib-retracement') });
+  M.select([fid]); await sleep(50);
+  const n0 = M.get(fid).style.levels.length;
+  panel.querySelector('[data-lvadd]').click();
+  ok(M.get(fid).style.levels.length === n0 + 1, 'P27: dodanie poziomu Fibonacciego');
+  panel.querySelector('[data-lvdel="0"]').click();
+  ok(M.get(fid).style.levels.length === n0 && M.get(fid).style.levels[0].coeff === 0.5, 'P27: usunięcie poziomu 0');
+  const cIn = panel.querySelector('[data-lv="0"][data-lk="coeff"]'); cIn.value = '0,25'; fire(cIn, 'change');
+  ok(M.get(fid).style.levels[0].coeff === 0.25, 'P27: zmiana wartości poziomu (przecinek)');
+  // Wyczyść wszystkie: potwierdzenie, zostaje tylko pozycja trade'a, Cofnij przywraca
+  const before = ed.currentDoc().d.length;
+  root.querySelector('[data-act="clear"]').click(); await sleep(60);
+  const yes = document.querySelector('.scrim [data-cd="yes"]');
+  ok(!!yes, 'P27: Wyczyść wszystkie pyta o potwierdzenie');
+  yes?.click(); await sleep(80);
+  ok(ed.currentDoc().d.length === 0 && M.drawings().some((d) => d.locked), `P27: wyczyszczone wszystko poza pozycją trade'a (${ed.currentDoc().d.length})`);
+  root.querySelector('[data-act="undo"]').click(); await sleep(60);
+  ok(ed.currentDoc().d.length === before, `P27: Cofnij przywraca rysunki (${ed.currentDoc().d.length}/${before})`);
+  // kłódka: odblokowanie, edycja ceną z panelu i przesunięciem, zapis do pól trade'a (PATCH z edited), powrót do blokady
+  const patches = [];
+  const fPrev = window.fetch;
+  window.fetch = (url, opts) => {
+    if (/\/api\/trades\//.test(String(url)) && opts && opts.method === 'PATCH') { patches.push(JSON.parse(opts.body)); return Promise.resolve(new Response(JSON.stringify({ ok: true, edited: '2026-10-28T10:00:00.000Z' }), { status: 200 })); }
+    return fPrev(url, opts);
+  };
+  root.querySelector('[data-act="lock"]').click(); await sleep(60);
+  let pid = ed.rys.positionId();
+  ok(ed.rys.unlocked() && M.get(pid) && M.get(pid).locked === false, 'P27: kłódka odblokowuje pozycję trade\'a');
+  ok(!panel.hidden && panel.dataset.mode === 'trade' && panel.querySelector('[data-tk="sl"]')?.value === '5836', `P27: panel pozycji z cenami trade'a (${panel.querySelector('[data-tk="sl"]')?.value})`);
+  const slIn = panel.querySelector('[data-tk="sl"]'); slIn.value = '5834,1'; fire(slIn, 'change');
+  ok(Math.abs(M.get(pid).style.stopLevel - 6) < 1e-9, `P27: SL z panelu zaokrąglony do ticku 0,25 (odległość ${M.get(pid).style.stopLevel})`);
+  M.update({ ...M.get(pid), points: M.get(pid).points.map((q) => ({ ...q, price: q.price + 1.1 })) }); await sleep(60);
+  ok(panel.querySelector('[data-tk="entryPrice"]').value === '5841', `P27: przesunięcie pozycji aktualizuje pole wejścia (${panel.querySelector('[data-tk="entryPrice"]').value})`);
+  const exIn = panel.querySelector('[data-tk="exitPrice"]'); exIn.value = '5847'; fire(exIn, 'change');
+  panel.querySelector('[data-act="tsave"]').click(); await sleep(200);
+  const pb = patches[0] || {};
+  ok(patches.length === 1 && pb.entryPrice === 5841 && pb.sl === 5835 && pb.tp === 5849 && pb.be === 5843 && pb.exitPrice === 5847 && pb.edited === '2026-10-27T09:00:00.000Z', `P27: zapis cen do trade'a: ${JSON.stringify(pb)}`);
+  pid = ed.rys.positionId();
+  ok(!ed.rys.unlocked() && M.get(pid)?.locked === true && ed.trade().sl === 5835 && ed.edited() === '2026-10-28T10:00:00.000Z', 'P27: po zapisie pozycja wraca do blokady z nowych pól, nowy znacznik edycji');
+  window.fetch = fPrev;
+  // ulubione interwały: dodanie, usunięcie, tydzień i miesiąc
+  ok(root.querySelector('.swc-tfs [data-swc-tf="1W"]') && root.querySelector('.swc-tfs [data-swc-tf="1M"]'), 'P27: 1W i 1M na liście interwałów');
+  root.querySelector('.swc-tfedit').click();
+  const tpop = root.querySelector('.swc-tfpop');
+  ok(!tpop.hidden, 'P27: lista interwałów otwarta');
+  tpop.querySelector('input').value = '2h'; fire(tpop.querySelector('form'), 'submit');
+  ok(JSON.parse(localStorage.getItem('thq.chart.tfs.v1') || '[]').includes('2h') && root.querySelector('.swc-tfs [data-swc-tf="2h"]'), 'P27: dodany interwał 2h (zapamiętany)');
+  tpop.querySelector('[data-swc-tfdel="15s"]').click();
+  ok(!root.querySelector('.swc-tfs [data-swc-tf="15s"]'), 'P27: usunięty interwał 15s');
+  root.querySelector('.swc-tfedit').click();
+  ok(tpop.hidden, 'P27: lista interwałów zamknięta');
+
+  // Gotowe: zwraca kadr (ułamkowy, w sekundach) i dokument
+  root.querySelector('.swc-done').click();
+  await sleep(300);
+  ok(doneArg && doneArg.tf === '1m' && doneArg.to > doneArg.from && doneArg.doc.d.length === 12, 'onDone zwraca kadr i dokument (10 linii + prostokąt i Fibonacci z P27)');
+  near(doneArg?.from, candles[60][0], 1, 'czas lewej krawędzi kadru');
+  near(doneArg?.to, candles[140][0] + 0.5 * 60, 1, 'czas prawej krawędzi kadru');
+  ok(!root.querySelector('canvas'), 'po Gotowe wykres LWC jest usunięty');
+
+  // ---- P26: podgląd SVG (te same świece z atrapy /api/candles) ----
+  const fetch0 = window.fetch;
+  window.fetch = (url, opts) => String(url).startsWith('/api/candles?')
+    ? Promise.resolve(new Response(JSON.stringify({ bars: candles, rolls: [], layer: '1m' }), { status: 200 })) : fetch0(url, opts);
+  // headless --dump-dom nie odpala requestAnimationFrame po wirtualnym czasie: podgląd rysuje przez setTimeout
+  window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+  window.cancelAnimationFrame = (id) => clearTimeout(id);
+  const svg = () => root.querySelector('.swc-plot svg');
+  const pv = P.createPodglad(root, { trade, tf: '1m' });
+  await pv.ready; await sleep(200);
+  ok(pv.status() === 'ok', 'podgląd: status ' + pv.status() + ' ' + root.querySelector('.swc-state')?.textContent);
+  if (!svg()) throw new Error('podgląd bez SVG: ' + errors.join(' | ') + ' plot=' + (root.querySelector('.swc-plot')?.hidden) + ' w=' + root.querySelector('.swc-plot')?.clientWidth + ' html=' + root.querySelector('.swc-plot')?.innerHTML.slice(0,200));
+  
+  ok(svg() && svg().querySelector('.lvl.be') && svg().querySelector('.lvl-l.be'), 'podgląd: linia BE na pozycji i cena BE na osi');
+  ok(!svg().querySelector('.lvl-n') && svg().querySelectorAll('.lvl-d').length === 2 && svg().querySelectorAll('.lvl-k').length === 2, 'podgląd: kropki i kreski wejścia/wyjścia bez podpisów');
+  ok(!root.querySelector('.swc-raised'), 'podgląd: bez etykiety „wyświetlane”');
+  const beY = () => Number(svg().querySelector('.lvl.be').getAttribute('y1'));
+  const pAuto = root.querySelector('[data-swc="auto"]'), pTz = root.querySelector('[data-swc="tz"]');
+  ok(pAuto.getAttribute('aria-pressed') === 'true', 'podgląd: Auto włączone (stan z localStorage)');
+  // przeciąganie w pionie przy Auto: nic się nie rusza w pionie
+  const plotEl = root.querySelector('.swc-plot'), pr = plotEl.getBoundingClientRect();
+  const drag = async (x0, y0, dx, dy) => {
+    const o = { pointerId: 7, pointerType: 'mouse', bubbles: true, button: 0, buttons: 1 };
+    plotEl.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: x0, clientY: y0 }));
+    for (let k = 1; k <= 5; k++) plotEl.dispatchEvent(new PointerEvent('pointermove', { ...o, clientX: x0 + (dx * k) / 5, clientY: y0 + (dy * k) / 5 }));
+    plotEl.dispatchEvent(new PointerEvent('pointerup', { ...o, clientX: x0 + dx, clientY: y0 + dy }));
+    await sleep(80);
+  };
+  const y0 = beY();
+  await drag(pr.left + 200, pr.top + 100, 0, 40);
+  near(beY(), y0, 0.5, 'podgląd: z Auto przeciąganie w pionie nie przesuwa ceny');
+  pAuto.click(); await sleep(80);
+  ok(pAuto.getAttribute('aria-pressed') === 'false' && localStorage.getItem(P.AUTO_KEY) === '0', 'podgląd: Auto wyłączone i zapisane');
+  near(beY(), y0, 0.5, 'podgląd: wyłączenie Auto bez skoku skali');
+  await drag(pr.left + 200, pr.top + 100, 0, 40);
+  near(beY(), y0 + 40, 1.5, 'podgląd: bez Auto przeciąganie przesuwa wykres w pionie');
+  const y1 = beY();
+  plotEl.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: pr.right - 10, clientY: pr.top + pr.height / 2, bubbles: true, cancelable: true }));
+  await sleep(80);
+  ok(Math.abs(beY() - y1) > 2, `podgląd: kółko nad osią ceny skaluje cenę (${y1} → ${beY()})`);
+  plotEl.dispatchEvent(new MouseEvent('dblclick', { clientX: pr.right - 10, clientY: pr.top + 50, bubbles: true }));
+  await sleep(80);
+  ok(pAuto.getAttribute('aria-pressed') === 'true', 'podgląd: dwuklik na osi ceny włącza Auto');
+  near(beY(), y0, 0.5, 'podgląd: po włączeniu Auto skala jak na początku');
+  // strefa czasowa: przycisk i oś
+  const axisTxt = () => [...svg().querySelectorAll('text.axis')].filter((e) => /\d\d:\d\d/.test(e.textContent)).map((e) => e.textContent).join(' ');
+  ok(pTz.tagName === 'SELECT' && pTz.value === '', `podgląd: strefa z Ustawień (${pTz.value})`);
+  const a0 = axisTxt();
+  pTz.value = 'America/New_York'; pTz.dispatchEvent(new Event('change', { bubbles: true })); await sleep(80);
+  ok(pTz.value === 'America/New_York' && P.chartTz() === 'America/New_York', `podgląd: wybór strefy z listy (${pTz.value})`);
+  ok(a0 && axisTxt() && axisTxt() !== a0, `podgląd: oś czasu w nowej strefie (${a0} | ${axisTxt()})`);
+  const firstUtc = a0.split(' ')[0], offH = P.tzOffset('America/New_York', candles[0][0]) / 3600;
+  const conv = `${String((Number(firstUtc.slice(0, 2)) + offH + 24) % 24).padStart(2, '0')}${firstUtc.slice(2, 5)}`;
+  ok(axisTxt().split(' ').includes(conv), `podgląd: etykieta ${firstUtc} UTC to ${conv} w Nowym Jorku (${axisTxt()})`);
+  P.setChartTzDefault('UTC');
+  // limit oddalenia: kółko daleko na zewnątrz nie zmienia TF i nie przekracza 1 500 świec
+  for (let k = 0; k < 40; k++) plotEl.dispatchEvent(new WheelEvent('wheel', { deltaY: 600, clientX: pr.left + 300, clientY: pr.top + 100, bubbles: true, cancelable: true }));
+  await sleep(80);
+  const st2 = pv.state();
+  ok(st2.tf === '1m', `podgląd: oddalenie nie zmienia interwału (${st2.tf})`);
+  ok(st2.toIndex - st2.fromIndex <= 1500 + 1e-6, `podgląd: najwyżej 1 500 świec w kadrze (${(st2.toIndex - st2.fromIndex).toFixed(1)})`);
+  pv.destroy();
+  window.fetch = fetch0;
+
+  if (errors.length) errors.push('DBG ' + window.__dbg);
+  out.textContent = errors.length ? `FAIL ${errors.length}/${checks}\n${errors.join('\n')}` : `PASS ${checks} sprawdzeń`;
+} catch (e) {
+  out.textContent = `FAIL wyjątek: ${e && e.stack || e}`;
+}
+</script>
+</body>
+</html>

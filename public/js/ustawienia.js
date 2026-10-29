@@ -1,11 +1,15 @@
-// Popover Ustawień (koło zębate): zakładka „Kolory danych” (gotowe palety, własna paleta osobno dla Onyx i Platinum, kontrast, podgląd na żywo)
-// oraz „Wynik BE” (marginesy). Układ w dwóch zakładkach zamiast jednej długiej kolumny: popover mieści się przy 1080 px bez przewijania
+// Popover Ustawień (koło zębate): zakładka „Kolory danych” (gotowe palety, własna paleta osobno dla Onyx i Platinum, kontrast, podgląd na żywo),
+// „Wynik BE” (marginesy) i „Wykresy” (etap 14, pakiet H: styl i kolory świec, siatka, poziomy trade'a, nakładki, strefa czasowa, B-ADJ, dane Databento, licencje). Układ w dwóch zakładkach zamiast jednej długiej kolumny: popover mieści się przy 1080 px bez przewijania
 // okna, a sekcja własnych kolorów rozwija się tylko wtedy, gdy jest potrzebna.
 import * as F from './format.js';
 import { BE_DEFAULTS } from './stats.js';
 import { PALETTES, THEMES, SWATCHES, SURFACES, normHex, ratioOn, fixContrast, defaultCustom, resolve } from './palety.js';
 import { t, getLang } from './i18n.js';
 import { sanitizeShare } from './udostepnij.js';
+import { sanitizeChart, resetChartGroup, chartContrast, fixChartColor, previewSvg, FILM_FORMATS, FILM_SECONDS, FILM_DIMS } from './styl-wykresu.js';
+import { filterSupported } from './film.js';
+import { SESSION_IDS } from './podglad.js';
+import { BROWSER_TZ, validTz, tzLabel, tzOptionLabel, allZones, tzGroupsHtml, loadStyleDock, saveStyleDock } from './podglad.js';
 
 const { esc } = F;
 const L = (s) => esc(t(s));
@@ -19,7 +23,11 @@ const svgI = (body, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 
 // getMeta(): { lang, version, updateCheck } z serwera; onConfig(patch): zapis do config.local.json (język, sprawdzanie aktualizacji)
 // updateHtml(): sekcja „Aktualizacje” z modułu aktualizacja.js (wersja, stan, „Sprawdź teraz”, przycisk okna aktualizacji)
 // devicesHtml(): zakładka „Urządzenia” (synchronizacja ustawień, lista urządzeń, dodanie urządzenia) z modułu urzadzenia.js
-export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {} }) {
+// onChartTz(tz): zmiana stałej strefy osi wykresu (P26, '' = strefa przeglądarki)
+// onChart(chart): etap 14, zmiana settings.chart (app.js: stan bieżący, kolory świec, przerysowanie podglądu i miniatur)
+// onDatabentoKey(key): zapis klucza Databento do .env po bezpłatnym sprawdzeniu (POST /api/candles/key); loadDataSize(): rozmiar chart-data/ w bajtach (GET /api/candles/size)
+// onChartBadj(on): P38, „B-ADJ domyślnie włączony” (wartość początkowa przycisku B-ADJ na wykresie; przycisk przełącza chwilowo)
+export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {}, onChartTz = () => {}, onChartBadj = () => {}, onChart = () => {}, onDatabentoKey = async () => ({}), loadDataSize = async () => null }) {
   let pop = null, scrim = null;
   let tab = 'dane';
   let editTheme = getTheme();
@@ -95,11 +103,197 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
       <input id="sp-nick" class="sp-in sp-nick" type="text" maxlength="40" value="${esc(settings.share?.nick || '')}" placeholder="JustJournal" autocomplete="off" spellcheck="false" aria-describedby="sp-nick-d">
       <p class="note" id="sp-nick-d">${L('Podpis na kartach z okna Udostępnij: „JustJournal × nick”. Puste pole oznacza sam podpis JustJournal.')}</p></div>
     <div class="rule-x"></div>
+    ${dockHtml()}
+    <div class="rule-x"></div>
     <div class="sp-f"><label class="check"><input type="checkbox" data-act="sp-upd" data-fk="upd" ${upd ? 'checked' : ''}> ${L('Sprawdzaj aktualizacje')}</label>
       <p class="note">${L('Raz na dobę serwer pyta publiczne API GitHub o najnowsze wydanie. To jedyne połączenie poza Notion; nie wysyła żadnych danych.')}</p></div>
     ${updateHtml()}
     <div class="rule-x"></div>
     <p class="note sp-foot">${m.installedSchema != null ? esc(t('schemat baz {v}', { v: m.installedSchema })) : ''}</p>`;
+  }
+
+  // P26 (28.10.2026): stała strefa czasowa osi wykresów świecowych; słowa użytkownika: «nie mam pojecia jaki czas utc jest ustawiony
+  // dla dziennika, wiec powinien byc do ustawienia na wykresie jak i staly w ustawieniach». Szybki przełącznik na wykresie nadpisuje ją tymczasowo.
+  // P27 (28.10.2026), słowa użytkownika: «strefy czasowe powinny byc wszystkie»: wszystkie strefy IANA z przesunięciem UTC w opisie
+  // i pole filtra nad listą (wpisanie „warsz”, „new york” albo „+5:30” zawęża listę; wybrana strefa zostaje na liście zawsze).
+  // P29 (28.10.2026), słowa użytkownika: «utc nie mialoby by wszystkich, mialy byc najpopularniejsze ale kazde utc zeby dalo sie wybrac przynajmniej
+  // kazda godzine, aktualna lista jest za duza»: krótka lista (popularne + pełne godziny UTC) bez pola filtra; zapisana strefa spoza listy zostaje na górze.
+  function tzOptions() {
+    const cur = validTz(settings.chartTz) ? settings.chartTz : '';
+    const opt = (v, label) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+    return opt('', t('Strefa przeglądarki ({tz})', { tz: tzLabel(BROWSER_TZ) })) + (cur && !allZones().includes(cur) ? opt(cur, tzOptionLabel(cur)) : '') + tzGroupsHtml(opt);
+  }
+  function tzHtml() {
+    return `<div class="sp-f"><label class="lbl" for="sp-tz">${L('Strefa czasowa wykresu')}</label>
+      <select id="sp-tz" class="sp-in sp-sel" data-fk="tz" aria-describedby="sp-tz-d">${tzOptions()}</select>
+      <p class="note" id="sp-tz-d">${L('Oś czasu wykresów świecowych. Czasy trade\'ów zostają te same, zmienia się tylko opis osi. Lista na wykresie zmienia strefę tymczasowo.')}</p></div>`;
+  }
+  // P38 (28.10.2026), słowa użytkownika: «okej wedle naszej rozmowy  BADJ domyslnie wlaczony w ustawieniach przelacznik»: wartość początkowa przycisku B-ADJ na wykresie.
+  function badjHtml() {
+    return `<div class="sp-f"><label class="check"><input type="checkbox" id="sp-badj" data-fk="badj" ${settings.chartBadj !== false ? 'checked' : ''} aria-describedby="sp-badj-d"> ${L('B-ADJ domyślnie włączony')}</label>
+      <p class="note" id="sp-badj-d">${L('Wykresy świecowe pokazują ceny wszystkich kontraktów przeliczone o luki rolli do kontraktu trade\'a (struktura wyższych interwałów bez skoków na rollach). Wejście, SL, TP i rysunki zostają w prawdziwych cenach kontraktu trade\'a. Przycisk B-ADJ na wykresie przełącza widok tylko chwilowo.')}</p></div>`;
+  }
+  // P29 (28.10.2026), słowa użytkownika: «powinien byc do tego tez przelacznik ogolny» (ustawienia rysunku: okienko po kliknięciu zębatki albo stały panel z lewej).
+  function dockHtml() {
+    const v = loadStyleDock();
+    const b = (k, label) => `<button type="button" data-act="sp-dock" data-v="${k}" data-fk="dock-${k}" aria-pressed="${v === k}">${L(label)}</button>`;
+    return `<div class="sp-f"><span class="lbl" id="sp-dock">${L('Ustawienia rysunku')}</span>
+      <div class="seg full" role="group" aria-labelledby="sp-dock">${b('pop', 'Okienko')}${b('pin', 'Panel przypięty')}</div>
+      <p class="note">${L('Okienko otwiera zębatka przy rysunku i znika po kliknięciu obok. Panel przypięty stoi stale po lewej stronie wykresu w trybie edycji, bez zmiany rozmiaru wykresu.')}</p></div>`;
+  }
+
+  // ---------- zakładka: wykresy (etap 14, pakiet H) ----------
+  // Jeden obiekt settings.chart (styl-wykresu.js), synchronizowany przez Notion. Strefa czasowa (P26/P33) i B-ADJ (P38) przeniesione z „Ogólne” (P41, 28.10.2026,
+  // słowa użytkownika: «Przenieść do „Wykresy”»; klucze chartTz i chartBadj bez zmian). Dane Databento tylko lokalne: klucz w .env, limity w config.local.json;
+  // P40 (28.10.2026, «Tylko podgląd»): limity, dzisiejsze wydatki i kredyt bez pól edycji; P39 («Bez przycisku»): rozmiar chart-data/ bez usuwania.
+  // Grupa „Karty i filmy”: kontrolki kart od pakietu I (karty()), opcje filmów bez kontrolek do pakietu J (decyzja sesji głównej, 28.10.2026: kontrolka razem z funkcją).
+  let dataBytes = null; // rozmiar chart-data/ (bajty), wczytywany po wejściu w zakładkę
+  let keyMsg = null;    // { text, error } po próbie zapisu klucza
+  const chart = () => (settings.chart = sanitizeChart(settings.chart));
+  const fmtBytes = (n) => (n == null ? '-' : n < 1024 ? `${F.num(n, 0)} B` : n < 1024 ** 2 ? `${F.num(n / 1024, 1)} KB` : n < 1024 ** 3 ? `${F.num(n / 1024 ** 2, 1)} MB` : `${F.num(n / 1024 ** 3, 2)} GB`);
+  const usdTxt = (x) => `${F.num(x, 2)} USD`;
+  function setChart(p, { render = false } = {}) {
+    settings.chart = sanitizeChart({ ...chart(), ...p });
+    save();
+    onChart(settings.chart);
+    if (render) rerender(); else refreshPreview();
+  }
+  function setOverlays(fn) { const o = JSON.parse(JSON.stringify(chart().overlays)); fn(o); setChart({ overlays: o }); }
+  const refreshPreview = () => { const el = pop?.querySelector('.pvc'); if (el) el.innerHTML = previewSvg(chart()); };
+  const gHead = (id, label) => `<h3 class="sp-g" id="${id}">${L(label)}</h3>`;
+  const chk = (key, on, label) => `<label class="check"><input type="checkbox" data-chk="${key}" data-fk="chk-${key}" ${on ? 'checked' : ''}> ${L(label)}</label>`;
+
+  function chartContrastHtml(k, hex) {
+    const { ratio, weak } = chartContrast(hex, editTheme);
+    return weak
+      ? `<span class="warnb">${esc(t('słaby kontrast {ratio}:1', { ratio: ratioTxt(ratio) }))}</span><button type="button" class="btn ghost sm" data-act="ch-fix" data-ck="${k}" data-fk="chfix-${k}">${L('Popraw')}</button>`
+      : `<span class="okb">${esc(t('kontrast {ratio}:1', { ratio: ratioTxt(ratio) }))}</span>`;
+  }
+  function chartColorRow(k, label) {
+    const hex = chart().custom[editTheme][k];
+    return `<div class="cr cc" data-ck="${k}"><span class="lbl cr-l" id="cc-l-${k}">${L(label)}</span>
+      <input type="color" class="cc-c" data-ck="${k}" data-fk="cc-${k}" value="${hex}" aria-labelledby="cc-l-${k}">
+      <span class="cc-x"><input type="text" class="sp-in hexin cc-h" data-ck="${k}" data-fk="cch-${k}" maxlength="7" value="${hex}" spellcheck="false" autocomplete="off" aria-label="${esc(t('{name}: kolor HEX', { name: t(label) }))}"></span>
+      <span class="cr-ct${chartContrast(hex, editTheme).weak ? ' weak' : ''}" data-cct="${k}">${chartContrastHtml(k, hex)}</span></div>`;
+  }
+  function wyglad() {
+    const c = chart();
+    const seg = (name, act, cur, items) => `<div class="seg full" role="group" aria-labelledby="${name}">${items.map(([v, label]) => `<button type="button" data-act="${act}" data-v="${v}" data-fk="${act}-${v}" aria-pressed="${cur === v}">${L(label)}</button>`).join('')}</div>`;
+    return `${gHead('ch-g-look', 'Wygląd wykresu')}
+      <div class="sp-f"><span class="lbl" id="ch-style">${L('Styl wykresu')}</span>${seg('ch-style', 'ch-style', c.style, [['candles', 'Świece'], ['line', 'Linia zamknięć']])}
+        <p class="note">${L('Świece to domyślny wygląd. Linia zamknięć łączy ceny zamknięcia kolejnych świec; rysunki zostają w tym samym miejscu.')}</p></div>
+      <div class="sp-f"><span class="lbl" id="ch-mini">${L('Styl miniatur na liście')}</span>${seg('ch-mini', 'ch-mini-style', c.miniStyle, [['candles', 'Świece'], ['line', 'Linia zamknięć']])}</div>
+      <div class="sp-f"><span class="lbl" id="ch-col">${L('Kolory świec')}</span>${seg('ch-col', 'ch-colors', c.colorMode, [['palette', 'Z palety'], ['custom', 'Własne']])}
+        ${c.colorMode === 'custom' ? `<div class="cust"><div class="cust-h"><span class="lbl" id="cc-t">${L('Własne kolory świec dla motywu')}</span>
+          <div class="seg sm" role="group" aria-labelledby="cc-t">${THEMES.map((th) => `<button type="button" data-act="ch-edit-theme" data-v="${th}" data-fk="cet-${th}" aria-pressed="${editTheme === th}">${THEME_NAME[th]}</button>`).join('')}</div></div>
+          ${chartColorRow('up', 'Świeca wzrostowa')}${chartColorRow('down', 'Świeca spadkowa')}</div>`
+        : `<p class="note">${L('Świece mają kolory zysku i straty z wybranej palety danych (zakładka Kolory).')}</p>`}</div>
+      <div class="sp-f">${chk('grid', c.grid, 'Siatka pozioma')}</div>
+      <div class="sp-f"><span class="lbl" id="ch-lv">${L("Poziomy trade'a")}</span>
+        <div class="sp-chk" role="group" aria-labelledby="ch-lv">${chk('entry', c.entry, 'Wejście')}${chk('exit', c.exit, 'Wyjście')}${chk('sl', c.sl, 'Stop Loss (SL)')}${chk('tp', c.tp, 'Take Profit (TP)')}</div>
+        <p class="note">${L('Dotyczy podglądu, miniatur i edycji wykresu. Linia BE zostaje zawsze.')}</p></div>
+      <div class="sp-reset"><button type="button" class="btn ghost sm" data-act="ch-reset" data-v="look" data-fk="ch-reset-look">${L('Przywróć domyślne (Wygląd)')}</button></div>`;
+  }
+  const SESS_NAME = { asia: 'Azja', london: 'Londyn', ny: 'NY' };
+  function nakladki() {
+    const o = chart().overlays;
+    const rows = SESSION_IDS.map((id) => `<div class="sp-sess"><label class="check"><input type="checkbox" data-chk="sess-${id}" data-fk="chk-sess-${id}" ${o.sess[id].on ? 'checked' : ''}> ${esc(t(SESS_NAME[id]))}</label>
+        <input type="time" class="sp-in" data-ovt="${id}.from" data-fk="ovf-${id}" value="${o.sess[id].from}" aria-label="${esc(t('Początek sesji {name}', { name: t(SESS_NAME[id]) }))}">
+        <span aria-hidden="true">-</span>
+        <input type="time" class="sp-in" data-ovt="${id}.to" data-fk="ovt-${id}" value="${o.sess[id].to}" aria-label="${esc(t('Koniec sesji {name}', { name: t(SESS_NAME[id]) }))}"></div>`).join('');
+    return `${gHead('ch-g-ov', 'Nakładki')}
+      <div class="sp-f">${chk('sessions', o.sessions, 'Tło sesji')}
+        <div class="sp-sessions" role="group" aria-label="${L('Godziny sesji (czas Nowego Jorku)')}">${rows}</div>
+        <p class="note">${L('Godziny sesji w czasie Nowego Jorku (domyślnie Azja 20:00-00:00, Londyn 02:00-05:00, NY 09:30-16:00). Kolory, linie high/low i krycie ustawisz w oknie nakładek na wykresie.')}</p></div>
+      <div class="sp-f">${chk('pdhl', o.pdhl, 'PDH/PDL')}
+        <p class="note">${L('Wysoki i niski punkt poprzedniej sesji; linie wymagają pobranych świec całej poprzedniej sesji.')}</p></div>
+      <div class="sp-reset"><button type="button" class="btn ghost sm" data-act="ch-reset" data-v="overlays" data-fk="ch-reset-overlays">${L('Przywróć domyślne (Nakładki)')}</button></div>`;
+  }
+  // Pakiet I (etapy 16 i 17): grupa „Karty udostępniania” z kontrolkami funkcji, które już działają (decyzja sesji głównej: kontrolka razem z funkcją).
+  // Pakiet J (etap 18, decyzja sesji głównej 28.10.2026): w tej samej grupie opcje filmów (format, długość, czarno-białe, przyciemnienie tła) jako
+  // wartości początkowe okna Udostępnij → Film; „Przywróć domyślne (Karty)” przywraca też je. P21 («bez muzyki narazie»): bez opcji dźwięku.
+  const pctTxt = (v) => `${F.num(v * 100, 0)}%`;
+  function filmy() {
+    const c = chart();
+    const seg = (name, act, cur, items) => `<div class="seg full" role="group" aria-labelledby="${name}">${items.map(([v, label]) => `<button type="button" data-act="${act}" data-v="${v}" data-fk="${act}-${v}" aria-pressed="${String(cur) === String(v)}">${esc(label)}</button>`).join('')}</div>`;
+    return `<div class="sp-f"><span class="lbl" id="ch-film-format">${L('Format filmu')}</span>${seg('ch-film-format', 'ch-film-format', c.filmFormat, FILM_FORMATS.map((v) => [v, v]))}</div>
+      <div class="sp-f"><span class="lbl" id="ch-film-seconds">${L('Długość filmu')}</span>${seg('ch-film-seconds', 'ch-film-seconds', c.filmSeconds, FILM_SECONDS.map((v) => [v, `${v} s`]))}</div>
+      ${filterSupported() ? `<div class="sp-f">${chk('filmBw', c.filmBw, 'Czarno-białe')}</div>` : ''}
+      <div class="sp-f sp-range"><label class="lbl" for="sp-film-dim">${L('Przyciemnienie tła')}</label>
+        <span class="sp-range-row"><input type="range" id="sp-film-dim" data-range="filmDim" data-fk="film-dim" min="${FILM_DIMS[0]}" max="${FILM_DIMS[FILM_DIMS.length - 1]}" step="0.1" value="${c.filmDim}" aria-describedby="sp-film-d"><output data-out="filmDim" for="sp-film-dim">${pctTxt(c.filmDim)}</output></span>
+        <p class="note" id="sp-film-d">${L('Wartości początkowe okna Udostępnij → Film. Czarno-białe i przyciemnienie dotyczą tła ze zdjęcia albo filmu. Filmy nagrywają się bez dźwięku.')}</p></div>`;
+  }
+  function karty() {
+    const c = chart();
+    // v2 (P45, P46): dwa style kart (świece, linia) i rysunek pozycji; to wartości początkowe okna Udostępnij (wybór w oknie je zapisuje)
+    const st = [['candles', 'Świece'], ['line', 'Linia']];
+    const dr = [['position', 'Pozycja'], ['marks', 'Wejście i wyjście']];
+    return `${gHead('ch-g-cards', 'Karty udostępniania')}
+      <div class="sp-f">${chk('shareChart', c.shareChart, 'Wykres ceny w kartach')}
+        <p class="note">${L('Karta trade\'a pokazuje wykres z pobranych świec (bez pobierania nowych). Ceny jak w podglądzie trade\'a, także B-ADJ.')}</p></div>
+      <div class="sp-f"><span class="lbl" id="ch-share-style">${L('Styl wykresu w karcie')}</span><div class="seg full" role="group" aria-labelledby="ch-share-style">${st.map(([v, label]) => `<button type="button" data-act="ch-share-style" data-v="${v}" data-fk="ch-share-style-${v}" aria-pressed="${c.shareStyle === v}"${c.shareChart ? '' : ' disabled'}>${L(label)}</button>`).join('')}</div></div>
+      <div class="sp-f"><span class="lbl" id="ch-share-draw">${L('Rysunek pozycji w karcie')}</span><div class="seg full" role="group" aria-labelledby="ch-share-draw">${dr.map(([v, label]) => `<button type="button" data-act="ch-share-draw" data-v="${v}" data-fk="ch-share-draw-${v}" aria-pressed="${c.shareDraw === v}"${c.shareChart ? '' : ' disabled'}>${L(label)}</button>`).join('')}</div>
+        <p class="note">${L('Pozycja: strefy zysku i straty do TP i SL jak w TradingView. Wejście i wyjście: same znaczniki. Wybór w oknie Udostępnij zapisuje się tutaj.')}</p></div>
+      <div class="sp-f">${chk('equity', c.equity, 'Krzywa kapitału na kartach okresu')}
+        <p class="note">${L('Wartość początkowa przełącznika w oknie Udostępnij (dzień, tydzień, miesiąc, rok).')}</p></div>
+      ${filmy()}
+      <div class="sp-reset"><button type="button" class="btn ghost sm" data-act="ch-reset" data-v="cards" data-fk="ch-reset-cards">${L('Przywróć domyślne (Karty)')}</button></div>`;
+  }
+  function czas() {
+    return `${gHead('ch-g-time', 'Czas i ceny')}${tzHtml()}<div class="rule-x"></div>${badjHtml()}
+      <div class="sp-reset"><button type="button" class="btn ghost sm" data-act="ch-reset" data-v="time" data-fk="ch-reset-time">${L('Przywróć domyślne (Czas i ceny)')}</button></div>`;
+  }
+  function daneDatabento() {
+    const m = getMeta() || {}, cr = m.chartCredit;
+    const kv = (k, v) => `<div class="sp-kv"><span>${L(k)}</span><b>${v}</b></div>`;
+    const credit = cr ? (cr.expired ? esc(t('wygasł {expires}', { expires: cr.expires })) : esc(t('{left} z {start} USD, ważny do {expires}', { left: F.num(cr.leftUsd, 2), start: F.num(cr.startUsd, 2), expires: cr.expires }))) : '-';
+    return `${gHead('ch-g-data', 'Dane Databento')}
+      <div class="sp-f"><label class="lbl" for="sp-dbkey">${L('Klucz Databento')}</label>
+        <div class="sp-keyrow"><input id="sp-dbkey" class="sp-in sp-key" type="password" autocomplete="off" spellcheck="false" maxlength="100" data-fk="dbkey" placeholder="${esc(m.hasDatabentoKey ? t('Zapisany. Wklej nowy, aby zmienić') : t('Wklej klucz Databento'))}" aria-describedby="sp-dbkey-d">
+          <button type="button" class="btn sm" data-act="ch-key-save" data-fk="dbkey-save">${L('Zapisz i sprawdź')}</button></div>
+        <p class="note" id="sp-dbkey-d" aria-live="polite">${keyMsg ? `<span class="${keyMsg.error ? 'warnb' : 'okb'}">${esc(keyMsg.text)}</span> ` : ''}${L('Klucz zapisuje się tylko w pliku .env na tym komputerze, po bezpłatnym sprawdzeniu u Databento. Nie trafia do Notion ani do synchronizacji ustawień.')}</p></div>
+      <div class="sp-f sp-kvs">${kv('Limit na jedno pobranie', usdTxt(m.chartCostLimitUsd ?? 0))}${kv('Limit dzienny', usdTxt(m.chartDailyLimitUsd ?? 0))}${kv('Wydano dziś', usdTxt(m.chartSpentTodayUsd ?? 0))}${kv('Kredyt Databento', credit)}${kv('Pobrane świece na dysku', esc(fmtBytes(dataBytes)))}
+        <p class="note">${L('Limity i kredyt tylko do podglądu. Zmieniasz je w pliku config.local.json (chartCostLimitUsd, chartDailyLimitUsd, chartCredit); świece usuwasz ręcznie z folderu chart-data. Ponowne pobranie jest płatne.')}</p></div>
+      <div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-nq1s" data-fk="ch-nq1s" ${m.chartNq1sDaily !== false ? 'checked' : ''}> ${L('Codziennie pobieraj 1s NQ 9:30–11:00 NY')}</label>
+        <p class="note">${L('Kolejka dokłada okno sekundowe NQ z pierwszych 90 minut sesji Nowego Jorku każdego dnia, gdy Databento je udostępni (ok. 0,02 USD na dzień, w zwykłych limitach). Nadrabia dni, w których dashboard był wyłączony. Ustawienie tylko na tym komputerze.')}</p></div>`;
+  }
+  function licencje() {
+    return `${gHead('ch-g-lic', 'Licencje')}
+      <div class="sp-f sp-lic"><p class="note">TradingView Lightweight Charts™, Copyright © 2025 TradingView, Inc. <a href="https://www.tradingview.com/" target="_blank" rel="noopener">https://www.tradingview.com/</a> (Apache-2.0).</p>
+        <p class="note">${L('Narzędzia rysowania: lightweight-charts-drawing 0.6.2 (MIT).')}</p>
+        <p class="note">${L('Świece pochodzą z Databento (dane CME Group) i służą do użytku własnego w dzienniku. Udostępniając wykres publicznie, odpowiadasz za prawa do danych według licencji Databento i CME.')}</p>
+        <p class="note">${L('Filmy tła wybierasz z dysku przy każdym nagraniu. Zostają w tej przeglądarce (nie trafiają do Notion ani do synchronizacji ustawień), a gotowy film nie ma dźwięku. Używaj tylko nagrań, do których masz prawa (obraz i muzyka).')}</p></div>`;
+  }
+  function wykresyHtml() {
+    return `<div class="pv pvc" role="img" aria-label="${L('Podgląd wykresu na żywo')}">${previewSvg(chart())}</div>
+      ${wyglad()}<div class="rule-x"></div>${nakladki()}<div class="rule-x"></div>${karty()}<div class="rule-x"></div>${czas()}<div class="rule-x"></div>${daneDatabento()}<div class="rule-x"></div>${licencje()}`;
+  }
+  async function loadSize() {
+    try { dataBytes = await loadDataSize(); } catch { dataBytes = null; }
+    if (pop && tab === 'wykresy') { const fk = document.activeElement?.dataset?.fk; rerender({ keep: false }); if (fk) pop.querySelector(`[data-fk="${fk}"]`)?.focus(); }
+  }
+  async function saveKey() {
+    const inp = pop?.querySelector('#sp-dbkey');
+    const key = inp?.value.trim();
+    if (!key) { keyMsg = { text: t('Wklej klucz Databento.'), error: true }; rerender(); return; }
+    keyMsg = { text: t('Sprawdzam klucz…'), error: false }; rerender();
+    try { const r = await onDatabentoKey(key); keyMsg = r?.ok ? { text: t('Klucz sprawdzony i zapisany.'), error: false } : { text: r?.error || t('Nie udało się zapisać klucza.'), error: true }; }
+    catch { keyMsg = { text: t('Nie udało się zapisać klucza.'), error: true }; }
+    // zapisany klucz znika z pola (jest w .env); po błędzie zostaje do poprawienia (przegląd HIJ, pkt 7)
+    if (!keyMsg.error) { const k = pop?.querySelector('#sp-dbkey'); if (k) k.value = ''; }
+    rerender();
+  }
+  function setCustomColor(k, hex) {
+    const c = chart();
+    setChart({ custom: { ...c.custom, [editTheme]: { ...c.custom[editTheme], [k]: hex } } });
+  }
+  function refreshChartRow(k) {
+    const row = pop?.querySelector(`.cc[data-ck="${k}"]`);
+    if (!row) return;
+    const hex = chart().custom[editTheme][k];
+    const c = row.querySelector('.cc-c'); if (c && c.value !== hex) c.value = hex;
+    const h = row.querySelector('.cc-h'); if (h && document.activeElement !== h) h.value = hex;
+    const ct = row.querySelector('.cr-ct'); ct.classList.toggle('weak', chartContrast(hex, editTheme).weak); ct.innerHTML = chartContrastHtml(k, hex);
   }
 
   // ---------- zakładka: wynik BE ----------
@@ -119,15 +313,19 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function html() {
     const tabBtn = (v, label) => `<button type="button" role="tab" data-act="sp-tab" data-v="${v}" data-fk="tab-${v}" aria-selected="${tab === v}">${L(label)}</button>`;
     return `<div class="sp-h"><h2 id="sp-t">${L('Ustawienia')}</h2><button type="button" class="icon-btn" data-act="settings" aria-label="${L('Zamknij ustawienia')}">${svgI('<path d="M6 6l12 12M18 6 6 18"/>')}</button></div>
-      <div class="seg full sp-tabs" role="tablist" aria-label="${L('Sekcje ustawień')}">${tabBtn('dane', 'Kolory')}${tabBtn('be', 'Wynik BE')}${tabBtn('ogolne', 'Ogólne')}${tabBtn('urzadzenia', 'Urządzenia')}</div>
-      <div id="sp-body" role="tabpanel">${tab === 'dane' ? daneHtml() : tab === 'be' ? beHtml() : tab === 'urzadzenia' ? devicesHtml() : ogolneHtml()}</div>`;
+      <div class="seg full sp-tabs" role="tablist" aria-label="${L('Sekcje ustawień')}">${tabBtn('dane', 'Kolory')}${tabBtn('be', 'Wynik BE')}${tabBtn('wykresy', 'Wykresy')}${tabBtn('ogolne', 'Ogólne')}${tabBtn('urzadzenia', 'Urządzenia')}</div>
+      <div id="sp-body" role="tabpanel">${tab === 'dane' ? daneHtml() : tab === 'be' ? beHtml() : tab === 'wykresy' ? wykresyHtml() : tab === 'urzadzenia' ? devicesHtml() : ogolneHtml()}</div>`;
   }
 
   // odświeża zawartość, zachowując fokus (po kluczu data-fk)
   function rerender({ keep = true } = {}) {
     if (!pop) return;
     const fk = keep ? document.activeElement?.dataset?.fk : null;
+    // przegląd HIJ, pkt 7 (29.10.2026): wklejony, jeszcze niezapisany klucz Databento przeżywa przerysowanie (np. po wczytaniu rozmiaru chart-data);
+    // wartość zostaje tylko w polu na stronie, nigdzie nie jest zapisywana
+    const dbkey = pop.querySelector('#sp-dbkey')?.value || '';
     pop.innerHTML = html();
+    if (dbkey) { const k = pop.querySelector('#sp-dbkey'); if (k) k.value = dbkey; }
     if (fk) pop.querySelector(`[data-fk="${fk}"]`)?.focus();
   }
 
@@ -148,6 +346,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     document.body.append(scrim, pop);
     gear().setAttribute('aria-expanded', 'true');
     pop.querySelector(`[data-fk="tab-${tab}"]`).focus();
+    if (tab === 'wykresy') loadSize();
   }
   function close({ restore = true } = {}) {
     if (!pop) return;
@@ -187,7 +386,23 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function handle(act, v, el) {
     switch (act) {
       case 'settings': toggle(); return true;
-      case 'sp-tab': tab = v; picker = null; rerender(); if (v === 'urzadzenia') onTab(v); return true;
+      case 'sp-tab': tab = v; picker = null; rerender(); if (v === 'urzadzenia') onTab(v); if (v === 'wykresy') loadSize(); return true;
+      case 'ch-style': setChart({ style: v }, { render: true }); return true;
+      case 'ch-colors': setChart({ colorMode: v }, { render: true }); return true;
+      case 'ch-share-style': setChart({ shareStyle: v }, { render: true }); return true;
+      case 'ch-share-draw': setChart({ shareDraw: v }, { render: true }); return true;
+      case 'ch-mini-style': setChart({ miniStyle: v }, { render: true }); return true;
+      case 'ch-film-format': setChart({ filmFormat: v }, { render: true }); return true;
+      case 'ch-film-seconds': setChart({ filmSeconds: Number(v) }, { render: true }); return true;
+      case 'ch-edit-theme': editTheme = v; rerender(); return true;
+      case 'ch-fix': { const k = el.dataset.ck; setCustomColor(k, fixChartColor(chart().custom[editTheme][k], editTheme)); rerender(); return true; }
+      case 'ch-key-save': saveKey(); return true;
+      case 'ch-reset': {
+        if (v === 'time') { settings.chartTz = ''; settings.chartBadj = true; save(); onChartTz(''); onChartBadj(true); rerender(); return true; }
+        settings.chart = resetChartGroup(chart(), v === 'look' || v === 'cards' ? v : 'overlays');
+        if (v === 'look') settings.chart = resetChartGroup(settings.chart, 'levels');
+        save(); onChart(settings.chart); rerender(); return true;
+      }
       case 'palette': {
         if (v === 'wlasna' && !settings.customSeeded) {
           // pierwsze wejście w „Własną”: zaczynamy od kolorów aktualnie używanej palety
@@ -203,6 +418,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
         return true;
       }
       case 'pal-edit-theme': editTheme = v; picker = null; rerender(); return true;
+      case 'sp-dock': saveStyleDock(v); pop.querySelectorAll('[data-act="sp-dock"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === v))); return true;
       case 'sp-lang': if (v !== getLang()) onConfig({ lang: v }); return true;
       case 'sw-open': { const k = el.dataset.k; picker = picker === k ? null : k; rerender(); if (picker) (pop.querySelector(`[data-fk="g-${k}-${settings.custom[editTheme][k]}"]`) || pop.querySelector(`#hex-${k}`))?.focus(); return true; }
       case 'sw-pick': setColor(el.dataset.k, el.dataset.v); refreshRow(el.dataset.k); refreshCards(); return true;
@@ -224,6 +440,10 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     if (el.matches('#be-r')) { onBe('beR', el.value); return true; }
     if (el.matches('#be-usd')) { onBe('beUsd', el.value); return true; }
     if (el.matches('#sp-nick')) { settings.share = settings.share || sanitizeShare(); settings.share.nick = sanitizeShare({ nick: el.value }).nick; save(); return true; }
+    // pakiet J: suwak przyciemnienia tła filmu; w trakcie przesuwania tylko podpis wartości, zapis po puszczeniu (onChange)
+    if (el.matches('[data-range="filmDim"]')) { const o = pop.querySelector('[data-out="filmDim"]'); if (o) o.textContent = pctTxt(Number(el.value)); return true; }
+    if (el.matches('.cc-h')) { const hex = normHex(el.value); el.setAttribute('aria-invalid', String(!hex)); if (hex) { setCustomColor(el.dataset.ck, hex); refreshChartRow(el.dataset.ck); } return true; }
+    if (el.matches('.cc-c')) { const hex = normHex(el.value); if (hex) { setCustomColor(el.dataset.ck, hex); refreshChartRow(el.dataset.ck); const h = pop.querySelector(`.cc-h[data-ck="${el.dataset.ck}"]`); if (h) { h.value = hex; h.removeAttribute('aria-invalid'); } } return true; }
     if (el.matches('.hexin')) {
       const k = el.dataset.k, hex = normHex(el.value);
       const err = pop.querySelector(`#hexe-${k}`);
@@ -266,6 +486,19 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function onChange(ev) {
     if (!pop) return false;
     if (ev.target.matches('[data-act="sync-toggle"]')) { onSyncToggle(ev.target.checked); return true; }
+    // P50 (29.10.2026): codzienne okno 1s NQ, stan w config.local.json (chartNq1sDaily), nie w settings ani w Notion
+    if (ev.target.matches('[data-act="ch-nq1s"]')) { onConfig({ chartNq1sDaily: ev.target.checked }); return true; }
+    if (ev.target.matches('[data-chk]')) {
+      const k = ev.target.dataset.chk, on = ev.target.checked;
+      if (k === 'sessions' || k === 'pdhl') setOverlays((o) => { o[k] = on; });
+      else if (k.startsWith('sess-')) setOverlays((o) => { o.sess[k.slice(5)].on = on; });
+      else setChart({ [k]: on }, { render: k === 'shareChart' }); // pakiet I: wyłączony wykres w kartach wyszarza wybór stylu karty
+      return true;
+    }
+    if (ev.target.matches('[data-range="filmDim"]')) { setChart({ filmDim: Math.round(Number(ev.target.value) * 10) / 10 }); return true; }
+    if (ev.target.matches('[data-ovt]')) { const [id, which] = ev.target.dataset.ovt.split('.'); setOverlays((o) => { o.sess[id][which] = ev.target.value; }); rerender(); return true; }
+    if (ev.target.matches('#sp-badj')) { settings.chartBadj = ev.target.checked; save(); onChartBadj(settings.chartBadj); return true; }
+    if (ev.target.matches('#sp-tz')) { settings.chartTz = validTz(ev.target.value) ? ev.target.value : ''; save(); onChartTz(settings.chartTz); return true; }
     if (!ev.target.matches('[data-act="sp-upd"]')) return false;
     onConfig({ updateCheck: ev.target.checked });
     return true;

@@ -189,7 +189,7 @@ const PARENT_PAGE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const store = new Map(); // dsId -> { name, dbId, schema, pages }
 let pidn = 0;
 const assignIds = (schema) => { for (const d of Object.values(schema)) if (!d.id) d.id = `pr${(++pidn).toString(36)}x`; };
-for (const k of Object.keys(IDS)) { assignIds(schemas[k]); store.set(IDS[k], { name: k, dbId: `db-${k}`, schema: schemas[k], pages: pages[k] }); }
+for (const k of Object.keys(IDS)) { assignIds(schemas[k]); store.set(IDS[k], { id: IDS[k], name: k, dbId: `db-${k}`, schema: schemas[k], pages: pages[k] }); }
 if (process.env.ATRAPA_PUSTA) store.clear(); // pusty obszar roboczy: tylko strona nadrzędna, bazy powstają przez setup.mjs
 
 const violations = []; // operacje, których aktualizacje i migracje nie mogą robić (usuwanie, zmiana typu, usuwanie opcji, zmiana nazwy pola z danymi)
@@ -281,7 +281,13 @@ function applyProps(ds, page, props) {
     if (t === 'formula' || t === 'rollup') return `Property "${name}" is a ${t} and cannot be set.`;
     const colorOf = (n) => def[t]?.options?.find((o) => o.name === n)?.color || 'default';
     if (t === 'title') page.properties[name] = { type: 'title', title: txt((v.title || []).map((x) => x.text.content).join('')) };
-    else if (t === 'rich_text') page.properties[name] = { type: 'rich_text', rich_text: txt((v.rich_text || []).map((x) => x.text.content).join('')) };
+    else if (t === 'rich_text') {
+      // jak prawdziwe Notion: każdy kawałek to osobny element (do 2 000 znaków), najwyżej 100 elementów we właściwości
+      const parts = v.rich_text || [];
+      if (parts.length > 100) return 'validation_error: rich_text array should be at most 100 items';
+      if (parts.some((x) => String(x.text?.content ?? '').length > 2000)) return 'validation_error: text.content should be at most 2000 characters';
+      page.properties[name] = { type: 'rich_text', rich_text: parts.map((x) => x.text.content).filter(Boolean).map((c) => ({ type: 'text', plain_text: c, text: { content: c } })) };
+    }
     else if (t === 'select') {
       if (v.select && !def.select.options.some((o) => o.name === v.select.name)) def.select.options.push({ name: v.select.name, color: 'default' }); // jak prawdziwe Notion: tworzy opcję
       page.properties[name] = v.select ? { type: 'select', select: { name: v.select.name, color: colorOf(v.select.name) } } : { type: 'select', select: null };
@@ -517,6 +523,7 @@ http.createServer(async (req, res) => {
     if (!page) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find page' });
     if (req.method === 'GET') return send(res, 200, page);
     if (req.method === 'PATCH') {
+      if (Number(req.headers['content-length']) > 500 * 1024) return send(res, 413, { object: 'error', code: 'validation_error', message: 'Atrapa: ciało żądania większe niż 500 KB' });
       const b = await body(req);
       if (typeof b.in_trash === 'boolean') { page.in_trash = b.in_trash; page.archived = b.in_trash; }
       if (typeof b.archived === 'boolean') { page.archived = b.archived; page.in_trash = b.archived; }

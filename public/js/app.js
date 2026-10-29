@@ -17,6 +17,8 @@ import { createGuide } from './przewodnik.js';
 import { createSync, createDevices } from './urzadzenia.js';
 import { createShare, sanitizeShare } from './udostepnij.js';
 import { bindShots, buttonHtml as shotButtonHtml, statusHtml as shotStatusHtml } from './shots.js';
+import { createPodglad, setChartTzDefault, setBadjDefault, validTz, observeMinis, miniEligible, useOverlayBackend, notifyOverlays } from './podglad.js';
+import { sanitizeChart, setChartSettings, applyChartVars, migrateLegacyOverlays } from './styl-wykresu.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -67,8 +69,9 @@ function saveUi() { try { localStorage.setItem(UI_KEY, JSON.stringify({ closed: 
 const isClosed = (key) => (key in state.ui.closed ? !!state.ui.closed[key] : CLOSED_BY_DEFAULT.has(key));
 
 // ustawienia (ikona koła zębatego): paleta danych (gotowa albo własna, osobno dla Onyx i Platinum) i marginesy BE
+let overlaysMigrated = null; // czas migracji starych nakładek (przegląd HIJ, pkt 2); zapis po utworzeniu sync
 function loadSettings() {
-  const out = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), ...S.BE_DEFAULTS };
+  const out = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), chartTz: '', chartBadj: true, chart: sanitizeChart(null), ...S.BE_DEFAULTS };
   try {
     const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (PALETTE_IDS.includes(o.palette)) out.palette = o.palette; // stare „color” i „mono” zostają bez zmian
@@ -77,10 +80,23 @@ function loadSettings() {
     if (o.custom) out.custom = sanitizeCustom(o.custom);
     out.customSeeded = o.customSeeded === true;
     out.share = sanitizeShare(o.share); // karty „Udostępnij”: nick, format, jednostka, kolor liczby
+    if (validTz(o.chartTz)) out.chartTz = o.chartTz; // P26: stała strefa osi wykresu ('' = strefa przeglądarki)
+    if (typeof o.chartBadj === 'boolean') out.chartBadj = o.chartBadj; // P38: B-ADJ domyślnie włączony
+    out.chart = sanitizeChart(o.chart); // etap 14: Ustawienia → Wykresy (biała lista)
+    // P42 (28.10.2026, słowa użytkownika: «Tak, synchronizować»): nakładki przeszły z localStorage do settings.chart.overlays. Stary zapis jest czytany RAZ
+    // (migrateLegacyOverlays: tylko gdy ustawienia nie mają nakładek, potem znacznik „przeniesione”); wynik zapisuje się od razu, niżej (po utworzeniu sync).
+    // Przegląd HIJ, pkt 2 (29.10.2026), decyzja sesji głównej: po migracji wygrywa zwykła reguła synchronizacji (nowsze updatedAt); migracja daje lokalnym
+    // nakładkom świeży znacznik czasu, więc nie przegrają z domyślnymi (starszymi) nakładkami z innego urządzenia.
+    const mig = migrateLegacyOverlays(o);
+    if (mig) { out.chart.overlays = sanitizeChart({ ...out.chart, overlays: mig.overlays }).overlays; overlaysMigrated = mig.at; }
   } catch { /* brak lub uszkodzone */ }
   return out;
 }
 const settings = loadSettings();
+setChartSettings(settings.chart);
+useOverlayBackend({ get: () => settings.chart.overlays, set: (p) => { settings.chart = sanitizeChart({ ...settings.chart, overlays: p }); setChartSettings(settings.chart); saveSettings(); } });
+// Paleta danych i własne kolory świec (--chart-up / --chart-down) zależą od motywu
+const applyLook = (theme) => { applyPalette(settings, theme); applyChartVars(settings.chart, theme); };
 // „resolved” to gotowe kolory obu motywów: skrypt w <head> stosuje je przed pierwszym malowaniem (bez błysku domyślnych kolorów)
 // sync: synchronizacja ustawień między urządzeniami (urzadzenia.js); przypisywana niżej, po utworzeniu modułów
 let sync = null;
@@ -90,6 +106,8 @@ function saveSettings() {
   sync?.changed();
 }
 S.setBeMargins(settings.beR, settings.beUsd);
+setChartTzDefault(settings.chartTz);
+setBadjDefault(settings.chartBadj);
 
 const state = { ...DEFAULTS, ...loadSaved(), month: null, q: '', ui: { dd: null, sheet: '', closed: loadUi() } };
 let model = null;      // { trades, konta, finanse, colors, fields, notionUrl, fetchedAt, cached, sig }
@@ -136,7 +154,7 @@ function paintTheme(t) {
   const m = document.querySelector('meta[name="theme-color"]');
   if (m) m.content = t === 'platinum' ? '#bfbfbf' : '#1a1a1a';
   $$('#theme-seg [data-v]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === t)));
-  applyPalette(settings, t); // kolory danych zależą od motywu (własna paleta ma osobne wartości dla Onyx i Platinum)
+  applyLook(t); // kolory danych zależą od motywu (własna paleta ma osobne wartości dla Onyx i Platinum)
   ust?.refreshTheme();
 }
 function setTheme(t, origin) {
@@ -844,7 +862,7 @@ function renderSide() {
     const list = rows.length
       ? `<ul class="mini-list">${rows.map((tr) => `<li><button type="button" class="t" data-act="trade-open" data-src="recent" data-id="${esc(tr.id)}" title="${L('{name}: pokaż szczegóły', { name: tLabel(tr) })}">${showTyp ? `${esc(typLabel(tr.typ))} · ` : ''}${esc(tLabel(tr))}</button>
         <span class="s">${esc([whenText(tr), tr.instrument, tr.dir, tr.setup].filter(Boolean).join(' · '))}${tr.pnl != null ? ` · ${fmtMoney(tr.pnl)}` : ''}</span>
-        <span class="r ${cls(tr.r)}">${fmtR(tr.r)}${res(tr)}</span></li>`).join('')}</ul>`
+        <span class="r ${cls(tr.r)}">${fmtR(tr.r)}${res(tr)}</span></li>`).join('')}</ul>` // P29 (28.10.2026), słowa użytkownika: «z ostatnich trade usunmy te miniaturki wykresow»
       : `<p class="note">${L('Brak trade\'ów w wybranym okresie.')}</p>`;
     html += sideSection('recent', t("Ostatnie trade'y"), list + (rows.length ? `<p class="note" style="padding-top:6px">${L('10 najnowszych w wybranym okresie · klik pokazuje szczegóły')}</p>` : ''));
     // prop firmy (domyślnie zwinięte)
@@ -864,6 +882,7 @@ function renderSide() {
   html += `<div class="side-foot"><div class="rule-x" style="margin-bottom:10px"></div>${L('Źródło')}: <a data-notion="app" href="#">Notion</a> · <a data-notion="web" href="#" target="_blank" rel="noopener">${L('w przeglądarce')}</a></div>`;
   $('#side').innerHTML = html;
   linkNotion();
+  bindMinis();
 }
 
 const cmpRecent = (a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || '') || b.created.localeCompare(a.created);
@@ -999,7 +1018,7 @@ const SORT_VAL = {
   r: (t) => t.r,
   pnl: (t) => t.pnl,
 };
-const COLS = [['date', t('Data'), ''], ['name', t('Trade'), ''], ['instrument', t('Instrument'), ''], ['dir', t('Kierunek'), ''], ['setup', t('Setup'), ''], ['dur', t('Czas'), 'r'], ['res', t('Wynik'), ''], ['r', 'R', 'r'], ['pnl', 'P&L', 'r']];
+const COLS = [['date', t('Data'), ''], ['name', t('Trade'), ''], ['instrument', t('Instrument'), ''], ['dir', t('Kierunek'), ''], ['setup', t('Setup'), ''], ['dur', t('Czas'), 'r'], ['mini', t('Wykres'), 'mc'], ['res', t('Wynik'), ''], ['r', 'R', 'r'], ['pnl', 'P&L', 'r']];
 
 function sortRows(rows) {
   const val = SORT_VAL[state.sortK] || SORT_VAL.date;
@@ -1014,6 +1033,20 @@ function sortRows(rows) {
   });
 }
 
+// ---------- miniatury wykresów (etap 11): świece i poziomy z lokalnych danych, bez rysunków (P13); leniwie, po 4 żądania, cache w pamięci ----------
+// Brak świec, instrument spoza ES/NQ albo trade po availableEnd: dotychczasowy zrzut trade'a, a gdy go brak, kreska (decyzja gustu: nie pusty prostokąt).
+const miniFallback = (tr) => (tr.imgs > 0 ? `<img src="${imgSrc({ t: tr, i: 0 })}" alt="" loading="lazy" decoding="async">` : `<span class="swc-mini-none" aria-hidden="true">${DASH}</span>`);
+// W kartach telefonu trade bez wykresu i bez zrzutu nie dostaje pola (kreska zostaje tylko w kolumnie tabeli). P29: panel „Ostatnie trade'y” bez miniatur.
+const miniCell = (tr, size = '') => {
+  if (miniEligible(tr)) return `<span class="swc-mini ${size}" data-mini="${esc(tr.id)}"></span>`;
+  if (size && !(tr.imgs > 0)) return '';
+  return `<span class="swc-mini ${size} is-ready">${miniFallback(tr)}</span>`;
+};
+function bindMinis() {
+  const byId = new Map([...(ctx?.rows || []), ...(ctx?.recent || [])].map((x) => [x.id, x]));
+  observeMinis(document, (id) => { const x = byId.get(id); return x ? { ...tradeArg(x), id: x.id, imgs: x.imgs } : null; }, { fallback: miniFallback });
+}
+
 const TABLE_CAP = 400;
 function renderTrades(range) {
   let all = inRange(baseTrades(state.typ, true), range);
@@ -1026,6 +1059,7 @@ function renderTrades(range) {
   const head = pageHead(t("Trade'y"), `${typLabel(state.typ)} · ${range.label}${searchNote()} · ${nTrades(all.length)}`, add);
   if (!all.length) return `${head}<section class="sec">${emptyState(range)}</section>`;
   const th = COLS.map(([k, l, a]) => {
+    if (k === 'mini') return `<th class="${a}">${esc(l)}</th>`; // miniatura nie ma sortowania
     const on = state.sortK === k;
     return `<th class="${a}" aria-sort="${on ? (state.sortD === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-btn" data-act="sort" data-v="${k}">${esc(l)}<span class="si" aria-hidden="true">${on ? (state.sortD === 'asc' ? ICON.sortUp(12) : ICON.sortDown(12)) : ''}</span></button></th>`;
   }).join('');
@@ -1034,14 +1068,14 @@ function renderTrades(range) {
     return `<tr class="trow" data-act="trade-open" data-src="rows" data-id="${esc(t.id)}"><td class="nw">${esc(F.shortDate(t.date))}${t.time ? `<small>${esc(t.time)}</small>` : ''}</td>
       <td class="nm"><button type="button" class="row-btn" data-act="trade-open" data-src="rows" data-id="${esc(t.id)}" title="${L('Pokaż szczegóły')}">${esc(tLabel(t))}</button></td>
       <td>${t.instrument ? esc(t.instrument) : DASH}</td><td>${t.dir ? badge(t.dir, t.dirColor) : DASH}</td><td class="st" title="${esc(t.setup || '')}">${t.setup ? esc(t.setup) : DASH}</td>
-      <td class="r">${t.dur != null ? esc(F.fmtDur(t.dur)) : DASH}</td><td class="res ${RES_CLASS[r]}">${RES_LABEL[r]}</td>
+      <td class="r">${t.dur != null ? esc(F.fmtDur(t.dur)) : DASH}</td><td class="mc">${miniCell(t)}</td><td class="res ${RES_CLASS[r]}">${RES_LABEL[r]}</td>
       <td class="r ${cls(t.r)}"><b>${rText(t)}</b></td><td class="r ${cls(t.pnl)}">${t.pnl != null ? fmtMoney(t.pnl) : DASH}</td></tr>`;
   }).join('');
   const cards = shown.map((t) => {
     const r = resOf(t);
     return `<button type="button" class="tcard" data-act="trade-open" data-src="rows" data-id="${esc(t.id)}"><span class="tc1"><b>${esc(tLabel(t))}</b><b class="${cls(t.r)}">${rText(t)}</b></span>
       <span class="tc2">${esc([whenText(t), t.instrument, t.dir, t.setup].filter(Boolean).join(' · '))}</span>
-      <span class="tc3"><span class="${RES_CLASS[r]}">${RES_LABEL[r]}</span>${t.dur != null ? `<span>${esc(F.fmtDur(t.dur))}</span>` : ''}${t.pnl != null ? `<span class="${cls(t.pnl)}">${fmtMoney(t.pnl)}</span>` : ''}</span></button>`;
+      <span class="tc3"><span class="${RES_CLASS[r]}">${RES_LABEL[r]}</span>${t.dur != null ? `<span>${esc(F.fmtDur(t.dur))}</span>` : ''}${t.pnl != null ? `<span class="${cls(t.pnl)}">${fmtMoney(t.pnl)}</span>` : ''}${miniCell(t, 'sm')}</span></button>`;
   }).join('');
   const cap = rows.length > TABLE_CAP ? `<p class="note">${L("Pokazuję {a} z {b} trade'ów. Zawęź okres lub filtry, żeby zobaczyć resztę.", { a: TABLE_CAP, b: rows.length })}</p>` : '';
   return `${head}<section class="sec" aria-label="${L("Lista trade'ów")}"><div class="card tt-card"><div class="tbl-wrap tt-table"><table class="tt"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div><div class="tcards">${cards}</div></div>${cap}</section>`;
@@ -1098,7 +1132,10 @@ function bindGallery() {
 
 // ---------- szczegóły trade'a (lightbox) ----------
 // Ten sam podgląd służy galerii (zrzuty) i szczegółom trade'a z listy, panelu i tabeli. Trade bez zrzutu dostaje kartę zamiast obrazu.
-const lb = { open: false, idx: 0, opener: null, el: null, items: [] };
+// view: 'shots' (zrzut albo karta „brak zrzutu”) albo 'chart' (podgląd świec, podglad.js); mode: ostatni wybór użytkownika w przełączniku
+const lb = { open: false, idx: 0, opener: null, el: null, items: [], view: 'shots', mode: null, pv: null, pvId: null, drawings: null, dr: null, saved: false, editSeq: 0 };
+// Wykres świecowy tylko dla trade'a z godziną wejścia i instrumentem (źródło danych rozstrzyga serwer: ES, NQ, MES, MNQ).
+const chartable = (x) => x.at != null && !!x.instrument;
 function lbEl() {
   if (lb.el) return lb.el;
   const d = document.createElement('div');
@@ -1107,11 +1144,18 @@ function lbEl() {
   d.setAttribute('role', 'dialog');
   d.setAttribute('aria-modal', 'true');
   d.setAttribute('aria-label', t("Szczegóły trade'a"));
-  d.innerHTML = `<div class="lb-top"><span class="lb-count" aria-live="polite"></span><button type="button" class="icon-btn lb-close" data-act="lb-close" aria-label="${L('Zamknij podgląd')}">${ICON.close(18)}</button></div>
-    <div class="lb-stage"><button type="button" class="lb-nav prev" data-act="lb-prev" aria-label="${L('Poprzedni')}">‹</button>
+  // P29 (28.10.2026), słowa użytkownika: «glowny pokaz trade to ma byc wykres, drugorzedne sa zrzuty» (przełącznik Wykres | Zrzuty) oraz «powinna byc opcja
+  // schowania detali trade'a ktore sa ponizej wykresu podczas wyswietlania zrzutow lub wykresu lub edycji tego wykresu, zeby caly ekran zajmowal wykres oraz
+  // strzalki lewo prawo do przechodzenia miedzy wykresami mozesz przenisc nad wykres pomiedzy numerem trade'a a zamknieciem w tej samej linii».
+  // Górna linia: numer i przełącznik widoku | poprzedni, następny | schowaj szczegóły, zamknij. Przełącznik widoku jest w górnej linii, bo przy
+  // schowanych szczegółach musi zostać pod ręką.
+  d.innerHTML = `<div class="lb-top"><div class="lb-tl"><span class="lb-count" aria-live="polite"></span><div class="seg sm lb-mode" role="group" aria-label="${L('Widok')}" hidden><button type="button" data-act="lb-mode" data-v="chart" aria-pressed="false">${L('Wykres')}</button><button type="button" data-act="lb-mode" data-v="shots" aria-pressed="true">${L('Zrzuty')}</button></div></div>
+      <div class="lb-navs"><button type="button" class="icon-btn lb-nav prev" data-act="lb-prev" aria-label="${L('Poprzedni')}" title="${L('Poprzedni (←)')}">${svg('<path d="m15 6-6 6 6 6"/>', 18, 2)}</button><button type="button" class="icon-btn lb-nav next" data-act="lb-next" aria-label="${L('Następny')}" title="${L('Następny (→)')}">${svg('<path d="m9 6 6 6-6 6"/>', 18, 2)}</button></div>
+      <div class="lb-tr"><button type="button" class="icon-btn lb-det" data-act="lb-details" aria-pressed="false">${ICON.panel(18)}</button><button type="button" class="icon-btn lb-close" data-act="lb-close" aria-label="${L('Zamknij podgląd')}">${ICON.close(18)}</button></div></div>
+    <div class="lb-stage">
       <div class="lb-frame"><img class="lb-img" alt=""><span class="g-err">${L('Nie udało się wczytać zrzutu')}</span>
-        <div class="lb-empty" hidden><span class="ico-box">${ICON.image(22)}</span><h3>${L('Ten trade nie ma zrzutu')}</h3><p>${L('Dodaj zrzut przyciskiem poniżej albo wklej go (Ctrl+V). Możesz też wkleić link do TradingView w polu „Wykres” (przycisk „Edytuj”).')}</p></div></div>
-      <button type="button" class="lb-nav next" data-act="lb-next" aria-label="${L('Następny')}">›</button></div>
+        <div class="lb-empty" hidden><span class="ico-box">${ICON.image(22)}</span><h3>${L('Ten trade nie ma zrzutu')}</h3><p>${L('Dodaj zrzut przyciskiem poniżej albo wklej go (Ctrl+V). Możesz też wkleić link do TradingView w polu „Wykres” (przycisk „Edytuj”).')}</p></div>
+        <div class="lb-chart" hidden></div></div></div>
     <div class="lb-info"><div class="lb-cap"></div><dl class="lb-facts"></dl><div class="lb-notes"></div>
       <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><button type="button" class="btn lb-share" data-act="share-trade">${ICON.share(14)}${L('Udostępnij')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a>
         <span class="lb-shot">${shotButtonHtml(t('Dodaj zrzut'))}</span></div>${shotStatusHtml()}</div>`;
@@ -1119,7 +1163,7 @@ function lbEl() {
   // dodawanie zrzutu: przycisk, przeciągnięcie na cały podgląd i wklejenie (tylko gdy żadne inne okno nie jest na wierzchu)
   bindShots({
     root: d.querySelector('.lb-info'), zone: d,
-    isActive: () => lb.open && !overlay.current,
+    isActive: () => lb.open && !overlay.current && lb.view !== 'chart', // w widoku wykresu zrzut się nie dodaje
     getTrade: () => lb.items[lb.idx]?.t,
     onUploaded: async (res) => {
       await load(true);
@@ -1133,7 +1177,7 @@ function lbEl() {
   let x0 = null;
   d.querySelector('.lb-stage').addEventListener('pointerdown', (e) => { x0 = e.clientX; });
   d.querySelector('.lb-stage').addEventListener('pointerup', (e) => {
-    if (x0 != null && Math.abs(e.clientX - x0) > 60 && e.pointerType === 'touch') stepLightbox(e.clientX < x0 ? 1 : -1);
+    if (x0 != null && Math.abs(e.clientX - x0) > 60 && e.pointerType === 'touch' && lb.view !== 'chart') stepLightbox(e.clientX < x0 ? 1 : -1); // na wykresie palec przesuwa świece
     x0 = null;
   });
   d.addEventListener('click', (e) => { if (e.target.classList.contains('lb-stage') || e.target === d) closeLightbox(); });
@@ -1156,11 +1200,19 @@ function factsOf(x) {
   return f.filter((x) => x[1]);
 }
 
+// Podpis (wynik, R) i fakty trade'a w lightboxie; P28: także po zapisie pozycji z wykresu (nowe R, czasy, ceny) bez przeładowania widoku.
+function paintLbInfo(d, it) {
+  const tt = it.t, r = resOf(tt), hasImg = it.i >= 0;
+  const bm = S.beByMargin(tt);
+  const bmTxt = bm ? (bm.unit === 'R' ? `±${num(bm.v, 2)}R` : `±${fmtMoney(bm.v, { plus: false })}`) : '';
+  d.querySelector('.lb-cap').innerHTML = `<b>${esc(tLabel(tt))}</b> <span class="${RES_CLASS[r]}">${esc(RES_LABEL[r])}</span>${bm ? ` <span class="muted">(${L('w marginesie {v}', { v: bmTxt })})</span>` : ''} <b class="${cls(tt.r)}">${rText(tt)}</b>${hasImg && it.k > 1 ? `<span class="muted"> · ${L('zrzut {a}/{b}', { a: it.i + 1, b: it.k })}</span>` : ''}`;
+  d.querySelector('.lb-facts').innerHTML = factsOf(tt).map(([k, v, c]) => `<div><dt>${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('');
+}
 function showLightbox() {
   const d = lbEl();
   const it = lb.items[lb.idx];
   if (!it) return;
-  const tt = it.t, r = resOf(tt);
+  const tt = it.t;
   const hasImg = it.i >= 0;
   const frame = d.querySelector('.lb-frame');
   frame.classList.remove('failed');
@@ -1170,19 +1222,189 @@ function showLightbox() {
   frame.querySelector('.lb-empty').hidden = hasImg;
   if (hasImg) { img.src = imgSrc(it); img.alt = t('Zrzut: {c}', { c: capParts(tt).join(', ') }); } else img.removeAttribute('src');
   d.querySelector('.lb-count').textContent = `${lb.idx + 1} / ${lb.items.length}`;
-  const bm = S.beByMargin(tt);
-  const bmTxt = bm ? (bm.unit === 'R' ? `±${num(bm.v, 2)}R` : `±${fmtMoney(bm.v, { plus: false })}`) : '';
-  d.querySelector('.lb-cap').innerHTML = `<b>${esc(tLabel(tt))}</b> <span class="${RES_CLASS[r]}">${esc(RES_LABEL[r])}</span>${bm ? ` <span class="muted">(${L('w marginesie {v}', { v: bmTxt })})</span>` : ''} <b class="${cls(tt.r)}">${rText(tt)}</b>${hasImg && it.k > 1 ? `<span class="muted"> · ${L('zrzut {a}/{b}', { a: it.i + 1, b: it.k })}</span>` : ''}`;
-  d.querySelector('.lb-facts').innerHTML = factsOf(tt).map(([k, v, c]) => `<div><dt>${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('');
+  paintLbInfo(d, it);
   d.querySelector('.lb-notes').textContent = tt.notes || '';
   d.querySelector('.lb-notes').hidden = !tt.notes;
   d.querySelector('.lb-link').href = tt.url;
   d.querySelector('.lb-edit').dataset.id = tt.id;
   d.querySelector('.lb-share').dataset.id = tt.id;
-  d.querySelector('.prev').disabled = lb.idx === 0;
-  d.querySelector('.next').disabled = lb.idx === lb.items.length - 1;
+  d.querySelector('.prev').disabled = lbStepTo(-1) == null;
+  d.querySelector('.next').disabled = lbStepTo(1) == null;
+  paintLbDetails(d);
+  d.querySelector('.lb-mode').hidden = !chartable(tt);
+  if (lb.pvId !== tt.id) dropChart();
+  // P29: domyślnie „Wykres” (słowa użytkownika: «glowny pokaz trade to ma byc wykres, drugorzedne sa zrzuty»); wybór w przełączniku obowiązuje do zamknięcia.
+  // Instrument bez źródła świec (np. EURUSD): zawsze zrzuty (wykres pokazałby tylko „Brak źródła danych”; przełącznik zostaje); brak źródła wykryty dopiero
+  // przez serwer: powrót do zrzutów po odczycie (decyzja gustu).
+  const want = chartable(tt) && miniEligible(tt) ? (lb.mode || 'chart') : 'shots';
+  setLbView(want);
+  if (want === 'chart') {
+    lb.pv?.ready.then(() => {
+      const it2 = lb.items[lb.idx];
+      if (lb.open && it2?.t.id === tt.id && lb.view === 'chart' && lb.pv?.status() === 'nosource') setLbView('shots');
+    });
+  }
   // wczytaj z wyprzedzeniem sąsiednie zrzuty
   [lb.idx - 1, lb.idx + 1].forEach((j) => { const n = lb.items[j]; if (n && n.i >= 0) new Image().src = imgSrc(n); });
+}
+
+// Podgląd świec w lightboxie: jeden na raz, tworzony przy pierwszym pokazaniu trade'a (tylko lokalne świece, bez sieci zewnętrznej).
+// extra: { frame, tf, drawings } przy powrocie z trybu edycji (ten sam kadr i interwał).
+// P35: contract = pole „Kontrakt” (puste = wg reguły), date i time: trade bez godziny bierze kontrakt z dnia handlowego (kontrakty.dateRef)
+const tradeArg = (x) => ({ at: x.at, exitAt: x.dur != null ? x.at + x.dur * 60000 : null, instrument: x.instrument, entryPrice: x.entryPrice, exitPrice: x.exitPrice, sl: x.sl, tp: x.tp, be: x.be, r: x.r, pnl: x.pnl, contract: x.contract || '', date: x.date, time: x.time });
+function ensureChart(x, extra = {}) {
+  if (lb.pv && lb.pvId === x.id) return lb.pv;
+  dropChart();
+  const box = lbEl().querySelector('.lb-chart');
+  const pv = createPodglad(box, {
+    trade: tradeArg(x), drawings: extra.drawings || [], frame: extra.frame, tf: extra.tf, badj: extra.badj,
+    meta: () => meta, openSettings: () => { closeLightbox({ restore: false }); if (!ust.isOpen()) ust.toggle('wykresy'); }, // klucz Databento jest w Ustawienia → Wykresy
+    onEdit: () => startEdit(x),
+    onContract: model?.fields?.trades?.contract ? (code) => saveContract(x, code) : null, // P35: bez pola (przed migracją 005) lista tylko do odczytu
+  });
+  lb.pv = pv; lb.pvId = x.id;
+  if (!extra.drawings) { lb.drawings = null; lb.dr = loadDrawings(x, pv); }
+  return pv;
+}
+// P35 (28.10.2026), słowa użytkownika: «Tak, pole „Kontrakt”»: wybór kontraktu na wykresie zapisuje pole „Kontrakt” tą samą trasą co formularz
+// (PATCH /api/trades/:id, X-THQ, kontrola 409 przez edited). Pusty kod = Auto (kontrakt wg daty trade'a).
+async function saveContract(x, code) {
+  const body = { contract: code, ...(x.edited ? { edited: x.edited } : {}) };
+  const r = await fetch(`/api/trades/${x.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(r.status === 409 && j.code === 'stale' ? t('Ten trade zmieniono w Notion po otwarciu wykresu. Zamknij wykres, odśwież dane i wybierz kontrakt jeszcze raz.')
+      : j.fields ? Object.values(j.fields)[0] : j.error || t('Nie udało się zapisać (błąd {status}).', { status: r.status }));
+  }
+  if (j.edited) x.edited = j.edited;
+  x.contract = code;
+  lb.saved = true;
+  load(false, { silent: true });
+}
+// Rysunki trade'a z serwera (Notion albo cache): trafiają do podglądu; błąd odczytu nie psuje wykresu.
+// W6 (przegląd 28.10.2026): nieudany odczyt zostawia ślad (failed), a edytor nie startuje bez odczytu: pierwszy zapis nadpisałby w Notion rysunki, których nie widzimy.
+async function loadDrawings(x, pv) {
+  try {
+    const r = await fetch(`/api/drawings/${x.id}`, { cache: 'no-store' });
+    const j = await r.json().catch(() => ({}));
+    if (lb.pv !== pv) return;
+    if (!r.ok) { lb.drawings = { failed: true, error: j.error || '' }; return; }
+    lb.drawings = j;
+    if (j.bad) toast(t('Nie udało się odczytać zapisanych rysunków. Pokazuję wykres bez nich.'), { error: true });
+    pv.setDrawings(j.doc?.d || []);
+    if (j.flushed) await refreshEdited(x); // W4: odczyt wysłał zaległy zapis, więc strona w Notion ma nowy znacznik edycji
+  } catch { if (lb.pv === pv) lb.drawings = { failed: true, error: '' }; }
+}
+// W4 (przegląd 28.10.2026): zaległy zapis rysunków poszedł do Notion przy odczycie, więc znacznik edycji trade'a w pamięci jest stary i późniejszy zapis cen dostałby 409.
+async function refreshEdited(x) {
+  try {
+    const j = await (await fetch('/api/data')).json();
+    const fresh = j?.data?.trades?.find((tr) => tr._id === x.id);
+    if (fresh?._edited) x.edited = fresh._edited;
+    load(false, { silent: true });
+  } catch { /* zostaje stary znacznik: zapis cen zgłosi konflikt zrozumiale */ }
+}
+const drawingsReadable = (d) => !!d && !d.failed && !(d.offline && !d.doc); // odczyt rysunków się udał (offline bez cache: nie wiemy, co jest w Notion)
+// Tryb edycji: LWC z tym samym kadrem i TF; „Gotowe” wraca do podglądu bez skoku kadru.
+async function startEdit(x) {
+  const pv = lb.pv;
+  if (!pv || pv.editing || pv.status() !== 'ok') return;
+  // W2 (przegląd 28.10.2026): start edytora jest asynchroniczny (odczyt rysunków, import modułu), więc po każdym await sprawdzamy, czy lightbox
+  // nadal jest otwarty na tym samym trade'ie; inaczej edytor trafiłby do widoku innego trade'a (i zapisywał rysunki tamtego przy widoku tego).
+  const seq = ++lb.editSeq;
+  const same = () => seq === lb.editSeq && lb.open && lb.items[lb.idx]?.t.id === x.id;
+  await lb.dr;
+  if (lb.pv !== pv || !same()) return;
+  if (!drawingsReadable(lb.drawings)) { // jedna ponowna próba odczytu
+    lb.drawings = null; lb.dr = loadDrawings(x, pv);
+    await lb.dr;
+    if (lb.pv !== pv || !same()) return;
+    if (!drawingsReadable(lb.drawings)) { toast(t('Nie udało się odczytać zapisanych rysunków, więc edycja jest wyłączona: zapis mógłby je nadpisać. Sprawdź połączenie i spróbuj jeszcze raz.'), { error: true }); return; }
+  }
+  if (lb.drawings?.noField) { toast(t('W bazie Trade\'y nie ma pola „Rysunki”. Uruchom aktualizację dashboardu.'), { error: true }); return; }
+  if (!(await pv.settle())) { toast(t('Nie udało się wczytać świec w cenach kontraktu, więc edycja jest wyłączona. Spróbuj jeszcze raz.'), { error: true }); return; } // W1: bez trwającego ładowania, świece zgodne ze stanem B-ADJ
+  if (lb.pv !== pv || !same()) return;
+  const st = pv.state();
+  const frame = { tf: st.tf, fromIndex: st.fromIndex, toIndex: st.toIndex, candles: pv.candles(), rolls: pv.rolls(), gaps: pv.gaps(), badj: pv.badj(), adjust: pv.adjust(), yr: st.yr }; // P32: ręczny zakres ceny (wyłączone „Auto”)
+  const box = lbEl().querySelector('.lb-chart');
+  const back = (extra) => { lb.pv = null; lb.pvId = null; ensureChart(x, { drawings: lb.drawings?.doc?.d || [], ...extra }); };
+  pv.destroy();
+  lb.pv = null; lb.pvId = null;
+  try {
+    const { createEditor } = await import('./wykres.js');
+    const ed = await createEditor(box, {
+      trade: tradeArg(x), tradeId: x.id, frame, doc: lb.drawings?.doc || null, edited: x.edited,
+      onSaved: () => { lb.saved = true; },
+      // P27 (28.10.2026): ceny z odblokowanej pozycji zapisane w polach trade'a; podgląd po „Gotowe” ma je od razu, reszta (lista, formularz,
+      // miniatury, wynik) po odświeżeniu danych przy zamknięciu edycji (refreshAfterEdit).
+      onTradeSaved: (p, edited, after = {}) => {
+        for (const k of ['entryPrice', 'exitPrice', 'sl', 'tp', 'be']) x[k] = p[k] ?? null;
+        if (edited) x.edited = edited;
+        // P28 (28.10.2026): R przeliczone z cen i czas wejścia/wyjścia z przesunięcia pozycji; podgląd po „Gotowe” bierze je z x (tradeArg),
+        // lista, formularz, miniatury i statystyki z danych odświeżanych w tle już teraz (render po zamknięciu okna) i przy zamknięciu edycji
+        if ('r' in p) x.r = p.r;
+        if (Number.isFinite(after.at)) {
+          const a = F.parseDT(new Date(after.at).toISOString());
+          x.at = after.at; x.date = a.date; x.time = a.time;
+          const e = after.exitAt != null ? F.parseDT(new Date(after.exitAt).toISOString()) : null;
+          if (e) { x.exitDate = e.date; x.exitTime = e.time; }
+          x.dur = after.exitAt != null ? (after.exitAt - after.at) / 60000 : x.dur;
+        }
+        lb.saved = true;
+        const it = lb.items[lb.idx];
+        if (lb.open && it?.t === x) paintLbInfo(lbEl(), it);
+        load(false, { silent: true });
+      },
+      onDone: (f) => {
+        lb.drawings = { doc: f.doc, source: 'edit' };
+        back({ frame: { from: f.from, to: f.to, yr: f.yr }, tf: f.tf, drawings: f.doc.d, badj: f.badj });
+        refreshAfterEdit();
+      },
+    });
+    if (!same()) { // W2: użytkownik poszedł dalej w trakcie startu; edytor sprząta po sobie, a widok dostaje podgląd bieżącego trade'a
+      await ed.destroy();
+      if (lb.open) { dropChart(); setLbView(lb.view); }
+      return;
+    }
+    lb.pv = ed; lb.pvId = x.id;
+  } catch (e) {
+    console.error('[wykres]', e);
+    if (!same()) return;
+    toast(t('Nie udało się uruchomić trybu edycji wykresu.'), { error: true });
+    back({ tf: frame.tf });
+  }
+}
+// Zapis rysunku zmienia stronę w Notion: odświeżamy dane po zamknięciu edycji, żeby późniejsza edycja trade'a nie trafiła na „zmieniono w Notion”.
+function refreshAfterEdit() { if (lb.saved) { lb.saved = false; load(true); } }
+function dropChart() {
+  if (lb.pv) {
+    const p = lb.pv.destroy();
+    lb.pv = null; lb.pvId = null;
+    if (p && typeof p.then === 'function') p.then((r) => {
+      if (r?.unsaved) toast(t('Ostatnie zmiany rysunków nie zostały zapisane w Notion. Narysuj je ponownie.'), { error: true }); // W3
+      refreshAfterEdit();
+    });
+  }
+}
+function setLbView(v) {
+  const d = lbEl();
+  const it = lb.items[lb.idx];
+  const chart = v === 'chart' && it && chartable(it.t);
+  lb.view = chart ? 'chart' : 'shots';
+  if (chart) ensureChart(it.t);
+  const frame = d.querySelector('.lb-frame');
+  const hasImg = it && it.i >= 0;
+  d.querySelector('.lb-chart').hidden = !chart;
+  d.querySelector('.lb-img').hidden = chart || !hasImg;
+  frame.querySelector('.g-err').hidden = chart || !hasImg;
+  frame.querySelector('.lb-empty').hidden = chart || hasImg;
+  frame.classList.toggle('is-chart', !!chart);
+  if (chart) frame.classList.remove('failed');
+  d.querySelector('.lb-shot').hidden = !!chart; // „Dodaj zrzut” tylko w widoku zrzutów
+  d.querySelectorAll('.lb-mode [data-v]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === lb.view)));
+  d.querySelector('.prev').disabled = lbStepTo(-1) == null; // P29: w widoku wykresu strzałki przechodzą między trade'ami
+  d.querySelector('.next').disabled = lbStepTo(1) == null;
+  if (chart) lb.pv?.redraw();
 }
 
 // Po dodaniu zrzutu: podmienia strony tego trade'a na świeże (nowa liczba zrzutów) i pokazuje ostatni, czyli dodany.
@@ -1225,6 +1447,7 @@ function closeLightbox({ restore = true } = {}) {
   lb.open = false;
   lbEl().hidden = true;
   lbEl().querySelector('.lb-img').removeAttribute('src');
+  dropChart();
   document.documentElement.classList.remove('lb-lock');
   if (restore) {
     const o = lb.opener && document.contains(lb.opener) ? lb.opener : document.querySelector(`.g-tile[data-i="${lb.idx}"]`);
@@ -1232,9 +1455,36 @@ function closeLightbox({ restore = true } = {}) {
   }
   flushPending();
 }
+// P29: w widoku wykresu strzałki idą do następnego trade'a (zrzuty tego samego trade'a mają ten sam wykres), w widoku zrzutów do następnego zrzutu.
+function lbStepTo(dir) {
+  const cur = lb.items[lb.idx];
+  if (!cur) return null;
+  let n = lb.idx + dir;
+  if (lb.view === 'chart') {
+    while (n >= 0 && n < lb.items.length && lb.items[n].t.id === cur.t.id) n += dir;
+    if (dir < 0) while (n > 0 && lb.items[n - 1].t.id === lb.items[n]?.t.id) n--; // pierwsza strona poprzedniego trade'a
+  }
+  return n >= 0 && n < lb.items.length ? n : null;
+}
+// P29: schowane szczegóły (zapamiętane na urządzeniu): wykres, zrzut albo edytor zajmują całą wysokość okna.
+const LB_DET_KEY = 'thq.lb.details.v1';
+let lbDetHidden = (() => { try { return globalThis.localStorage?.getItem(LB_DET_KEY) === '0'; } catch { return false; } })();
+function paintLbDetails(d) {
+  const b = d.querySelector('.lb-det');
+  d.classList.toggle('no-details', lbDetHidden);
+  b.setAttribute('aria-pressed', String(lbDetHidden));
+  const label = lbDetHidden ? t('Pokaż szczegóły trade\'a') : t('Schowaj szczegóły trade\'a');
+  b.setAttribute('aria-label', label); b.title = label;
+}
+function toggleLbDetails() {
+  lbDetHidden = !lbDetHidden;
+  try { globalThis.localStorage?.setItem(LB_DET_KEY, lbDetHidden ? '0' : '1'); } catch { /* localStorage niedostępny: przełącznik działa do przeładowania */ }
+  paintLbDetails(lbEl());
+  if (lb.view === 'chart') lb.pv?.redraw();
+}
 function stepLightbox(d) {
-  const n = lb.idx + d;
-  if (n < 0 || n >= lb.items.length) return;
+  const n = lbStepTo(d);
+  if (n == null) return;
   lb.idx = n;
   showLightbox();
 }
@@ -1279,14 +1529,37 @@ const prop_ = createProp({ state, getModel: () => model, reload: (f) => load(f),
 const prop = prop_;
 
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
-const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyPalette(settings, getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh() });
+const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c),
+  onDatabentoKey: saveDatabentoKey, loadDataSize: async () => { const r = await fetch('/api/candles/size', { cache: 'no-store' }); return r.ok ? (await r.json()).bytes : null; } });
+// Zmiana settings.chart (Ustawienia albo synchronizacja): stan bieżący, kolory świec, otwarty wykres i listy z miniaturami (cache świec zostaje, miniatury tylko rysują się od nowa)
+let chartTimer = null;
+function onChartChanged(c) {
+  setChartSettings(c);
+  applyChartVars(settings.chart, getTheme());
+  notifyOverlays();
+  lb.pv?.redraw();
+  clearTimeout(chartTimer);
+  chartTimer = setTimeout(() => { if (model) renderMain(); }, 150);
+}
+// Klucz Databento: zapis do .env po bezpłatnym sprawdzeniu (serwer); potem świeże meta (hasDatabentoKey)
+async function saveDatabentoKey(key) {
+  try {
+    const r = await fetch('/api/candles/key', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ key }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.error };
+    try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ }
+    return { ok: true };
+  } catch { return { ok: false }; }
+}
 upd.onChange = () => { if (ust.isOpen()) ust.rerender(); };
 
 // ---------- karty do udostępnienia (udostepnij.js) ----------
 // Karty okresów biorą te same filtry co kalendarz i statystyki (baseTrades: konta, setupy, wyszukiwarka; tylko Live), decyzja 26.10.2026,
 // słowa użytkownika «To samo co komórka» (odwraca wcześniejszą decyzję gustu „okno ignoruje filtry”). allTrades: karta pojedynczego trade'a.
 const shareModel = () => (model ? { ...model, trades: baseTrades('Live'), allTrades: model.trades, filtered: !!(state.konta || state.setups || state.q.trim()) } : null);
-const share = createShare({ getModel: shareModel, prefs: settings.share, save: saveSettings, onClose: () => flushPending() });
+// v2 (P45, P46, P52): wybory okna Udostępnij (wygląd wykresu, rysunek pozycji, wiersze danych) zapisują się w settings.chart i synchronizują jak reszta ustawień
+const share = createShare({ getModel: shareModel, prefs: settings.share, save: saveSettings, onClose: () => flushPending(),
+  saveChart: (p) => { settings.chart = sanitizeChart({ ...settings.chart, ...p }); setChartSettings(settings.chart); saveSettings(); } });
 // Dzień startowy okna ze Statystyk: ostatni trade Live w bieżącym zakresie dat (bez niego okno wybierze ostatni okres z trade'ami Live).
 function shareAnchor() {
   const to = ctx?.range?.to;
@@ -1346,6 +1619,8 @@ document.addEventListener('click', (ev) => {
     case 'lb-close': closeLightbox(); break;
     case 'lb-prev': stepLightbox(-1); break;
     case 'lb-next': stepLightbox(1); break;
+    case 'lb-mode': lb.mode = v; setLbView(v); break;
+    case 'lb-details': toggleLbDetails(); break;
     case 'trade-open': {
       const src = t.dataset.src === 'recent' ? ctx?.recent : ctx?.rows;
       if (src) openDetail(src, t.dataset.id, t.closest('.trow')?.querySelector('.row-btn') || t);
@@ -1504,10 +1779,13 @@ async function applyRemoteSettings(r = {}) {
   if (typeof r.beR === 'number') settings.beR = Math.min(0.5, Math.max(0, r.beR));
   if (typeof r.beUsd === 'number') settings.beUsd = Math.max(0, r.beUsd);
   if (r.share) Object.assign(settings.share, sanitizeShare(r.share));
+  if (typeof r.chartBadj === 'boolean') { settings.chartBadj = r.chartBadj; setBadjDefault(settings.chartBadj); }
+  if (r.chart && typeof r.chart === 'object') { settings.chart = sanitizeChart(r.chart); setChartSettings(settings.chart); notifyOverlays(); lb.pv?.redraw(); }
+  if (r.chartTz === '' || validTz(r.chartTz)) { if (r.chartTz !== settings.chartTz) { settings.chartTz = r.chartTz; setChartTzDefault(settings.chartTz); lb.pv?.redraw(); } }
   S.setBeMargins(settings.beR, settings.beUsd);
   saveSettings(); // sync.applying blokuje zapis zwrotny
   if ((r.theme === 'onyx' || r.theme === 'platinum') && r.theme !== getTheme()) { try { localStorage.setItem(THEME_KEY, r.theme); } catch { /* brak */ } paintTheme(r.theme); }
-  applyPalette(settings, getTheme());
+  applyLook(getTheme());
   if (typeof r.updateCheck === 'boolean' && r.updateCheck !== (meta.updateCheck !== false)) {
     try { await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ updateCheck: r.updateCheck }) }); meta.updateCheck = r.updateCheck; upd.check(); } catch { /* następnym razem */ }
   }
@@ -1520,9 +1798,11 @@ async function applyRemoteSettings(r = {}) {
 }
 sync = createSync({
   getMeta: () => meta,
-  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, share: settings.share, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false }),
+  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, share: settings.share, chartTz: settings.chartTz, chartBadj: settings.chartBadj, chart: settings.chart, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false }),
   apply: (r) => applyRemoteSettings(r),
 });
+// przegląd HIJ, pkt 2: wynik migracji starych nakładek zapisany od razu, z lokalnym znacznikiem czasu synchronizacji = chwila migracji (idzie do Notion jak każda zmiana)
+if (overlaysMigrated) { saveSettings(); sync.touch(overlaysMigrated); }
 const devices = createDevices({ getMeta: () => meta, onConfig: (p) => saveConfig(p), onChange: () => { if (ust.isOpen()) ust.rerender(); } });
 
 // ---------- pierwsze kroki (pierwsze-kroki.js) i przewodnik na danych przykładowych (przewodnik.js) ----------
@@ -1566,7 +1846,7 @@ window.__thq = {
 
 translateStatic();
 paintTheme(getTheme());
-applyPalette(settings, getTheme());
+applyLook(getTheme());
 renderDesk();
 renderTabs();
 renderSide();

@@ -11,7 +11,10 @@ import { ROOT, CONFIG_DIR, loadEnv, envSettings, loadConfig, saveConfig, saveEnv
 import { createNotion, NotionError } from './lib/notion.mjs';
 import { createData } from './lib/data.mjs';
 import { createWriter, ValidationError, PAGE_ID_RE } from './lib/writes.mjs';
+import { createCandles } from './lib/candles.mjs';
+import { DatabentoError } from './lib/databento.mjs';
 import { createShots, SHOT_BODY_LIMIT } from './lib/shots.mjs';
+import { createDrawings, BODY_LIMIT as DRAWINGS_BODY_LIMIT } from './lib/drawings.mjs';
 import { setLang, tr as t } from './lib/i18n.mjs';
 import { APP_VERSION, SCHEMA_VERSION, REPO, loadSchemaFile, readDiskVersion } from './lib/version.mjs';
 import { DBS } from './lib/roles.mjs';
@@ -38,9 +41,20 @@ setLang(config.lang);
 const notion = createNotion({ token: S.token, version: S.version, base: S.base, t });
 let saveTimer = 0;
 const persistConfig = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { saveConfig(config); } catch (e) { console.error('[config]', e.message); } }, 50); };
+// Zapis natychmiast (bez opóźnienia 50 ms): liczniki wydatków Databento muszą przetrwać zamknięcie procesu zaraz po wysłaniu get_range (P25).
+const persistConfigNow = () => { clearTimeout(saveTimer); try { saveConfig(config); } catch (e) { console.error('[config]', e.message); } };
 const data = createData({ notion, sources: SOURCES, getConfig: () => config, persistConfig, rootUrl: () => S.rootUrl });
 const writer = createWriter({ notion, sources: SOURCES, data, t });
 const shots = createShots({ notion, sources: SOURCES, data, t });
+const drawings = createDrawings({ notion, sources: SOURCES, data, t, baseDir: path.join(CONFIG_DIR, 'chart-data') });
+// Świece (Databento): klucz tylko z .env, magazyn w CONFIG_DIR/chart-data, limit kosztu w config.local.json (nigdy w settings).
+const candles = createCandles({
+  getKey: () => loadEnv().DATABENTO_API_KEY, getConfig: () => config, persistConfig, persistConfigNow,
+  saveKey: (key) => saveEnv({ DATABENTO_API_KEY: key }), baseDir: path.join(CONFIG_DIR, 'chart-data'), t,
+  // P50: kolejka dokłada codzienne okno 1s NQ 9:30–11:00 NY (przełącznik chartNq1sDaily, domyślnie włączony). THQ_NO_AUTO_1S=1 ustawiają tylko
+  // testy (pomocnicze.cleanEnv): serwer testowy z pustym magazynem nadrabiałby okna od 2020 na atrapie.
+  autoOpenWindows: process.env.THQ_NO_AUTO_1S !== '1',
+});
 function reconfigure() {
   S = envSettings(loadEnv());
   for (const k of Object.keys(SOURCES)) delete SOURCES[k];
@@ -274,7 +288,7 @@ function sendError(res, e) {
     return sendJson(res, e.tooLarge ? 413 : 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
   }
   console.error('[write]', e.message);
-  const s = e instanceof NotionError ? e.status : 500;
+  const s = e instanceof NotionError || e instanceof DatabentoError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
   const status = s === 401 || s < 400 || s > 599 ? 502 : s;
   return sendJson(res, status, { error: e.message, code: e.code, ...(e.left !== undefined ? { left: e.left } : {}) });
@@ -283,7 +297,7 @@ function sendError(res, e) {
 function meta() {
   return {
     ...versionState(), lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
-    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
+    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
 
@@ -295,6 +309,7 @@ const ACTIONS = {
     if (typeof body.updateCheck === 'boolean') config.updateCheck = body.updateCheck;
     if (typeof body.onboarded === 'boolean') config.onboarded = body.onboarded;
     if (typeof body.syncEnabled === 'boolean') config.syncEnabled = body.syncEnabled;
+    if (typeof body.chartNq1sDaily === 'boolean') config.chartNq1sDaily = body.chartNq1sDaily; // P50: urządzenie i pieniądze, nie settings ani Notion
     if (body.lang === 'pl' || body.lang === 'en') { config.lang = body.lang; setLang(body.lang); }
     persistConfig();
     return { ok: true, ...meta() };
@@ -377,6 +392,18 @@ function runSetupJob({ pageId, lang, demo }) {
       Object.assign(setupJob, { running: false, error: { message: e.message, resumable: true } });
     });
 }
+Object.assign(ACTIONS, {
+  '/api/candles/quote': (body) => candles.quote(body ?? {}),
+  '/api/candles/fetch': (body) => candles.fetchDays(body ?? {}),
+  '/api/candles/key': (body) => candles.setKey(body ?? {}),
+  '/api/candles/limit': async (body) => candles.setLimit(body ?? {}),
+  // P25: okna 1s wokół trade'ów trafiają do kolejki (połączone, bez duplikatów); pobieranie rusza od razu, o ile strażniki przepuszczają
+  '/api/candles/windows': async (body) => { const r = candles.enqueue(body ?? {}); setTimeout(() => candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)), 0); return r; },
+  '/api/candles/queue-run': async () => { setTimeout(() => candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)), 0); return { ok: true }; },
+  // P25: import historii 1m (dryRun = sama wycena; pobranie wymaga confirmedCostUsd, ewentualnie limitsOverrideUsd)
+  '/api/candles/import': (body) => candles.importHistory(body ?? {}),
+  '/api/candles/import-1s': (body) => candles.importOpen(body ?? {}), // P49: okna 1s NQ 9:30–11:00 NY, budżet 36 USD (narzedzia/import-okien-1s.mjs)
+});
 Object.assign(ACTIONS, {
   '/api/setup/token': async (body) => {
     const token = String(body.token || '').trim();
@@ -522,7 +549,9 @@ const server = http.createServer(async (req, res) => {
       const isPage = m && ((req.method === 'POST' && !m[2]) || (req.method === 'PATCH' && m[2]));
       // Zrzut do trade'a: JSON { type, data: base64 }, żeby zostać przy Content-Type JSON i nagłówku X-THQ (preflight CORS dla obcych stron).
       const sh = req.method === 'POST' ? url.pathname.match(/^\/api\/trades\/([0-9a-f-]{36})\/shots$/i) : null;
-      if (!isShutdown && !action && !isPage && !sh) { res.writeHead(405, SEC_HEADERS); return res.end(); }
+      // Rysunki wykresu: JSON { id, doc } do 256 KB (maksimum 190 000 znaków po zapisie, z zapasem na znaki specjalne)
+      const dr = req.method === 'POST' && url.pathname === '/api/drawings/save';
+      if (!isShutdown && !action && !isPage && !sh && !dr) { res.writeHead(405, SEC_HEADERS); return res.end(); }
       const bad = guardWrite(req, { json: !isShutdown });
       if (bad) {
         console.error('[write] rejected:', bad);
@@ -540,6 +569,10 @@ const server = http.createServer(async (req, res) => {
           const body = await readJson(req, SHOT_BODY_LIMIT, 'Plik jest za duży: najwyżej 10 MB.');
           return sendJson(res, 200, await shots.add(sh[1].toLowerCase(), body));
         }
+        if (dr) {
+          const body = await readJson(req, DRAWINGS_BODY_LIMIT, 'Rysunki są zbyt duże.');
+          return sendJson(res, 200, await drawings.save(body.id, body.doc));
+        }
         const body = await readJson(req);
         if (action) return sendJson(res, 200, await action(body));
         if (m[2] && !PAGE_ID_RE.test(m[2])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');
@@ -547,6 +580,13 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return sendError(res, e);
       }
+    }
+
+    // Audyt 1.3.0, N1 (29.10.2026): odczyty /api/* odrzucają żądania oznaczone przez przeglądarkę jako obce (obca strona na tej samej przeglądarce nie może na ślepo
+    // zlecać kosztownych odczytów, np. świec); ten sam warunek co w guardWrite, plus 'none' (adres wpisany ręcznie). Brak nagłówka (CLI, testy) przechodzi.
+    if (url.pathname.startsWith('/api/')) {
+      const site = req.headers['sec-fetch-site'];
+      if (site && site !== 'same-origin' && site !== 'none') return sendJson(res, 403, { error: t('Żądanie odrzucone: odczyt jest możliwy tylko z samego dashboardu.') });
     }
 
     if (url.pathname === '/api/data') {
@@ -559,6 +599,15 @@ const server = http.createServer(async (req, res) => {
         const msg = e.missingDs ? t('Brak identyfikatorów baz w .env: {list}.', { list: e.missingDs.join(', ') }) : e.message;
         return sendJson(res, 502, { error: msg, status });
       }
+    }
+    if (url.pathname === '/api/candles/status') return sendJson(res, 200, candles.status());
+    if (url.pathname === '/api/candles/size') return sendJson(res, 200, { bytes: await candles.dataBytes() }); // Ustawienia → Wykresy → Dane (P39: tylko rozmiar); przegląd HIJ, pkt 1: asynchronicznie, wynik z pamięci 60 s
+    if (url.pathname === '/api/candles') {
+      try { return sendJson(res, 200, candles.read(Object.fromEntries(url.searchParams))); } catch (e) { return sendError(res, e); }
+    }
+    const dm = url.pathname.match(/^\/api\/drawings\/([0-9a-f-]{36})$/i);
+    if (dm) {
+      try { return sendJson(res, 200, await drawings.read(dm[1])); } catch (e) { return sendError(res, e); }
     }
     if (url.pathname === '/api/meta') return sendJson(res, 200, meta());
     if (url.pathname === '/api/update-check') return sendJson(res, 200, await updateInfo());
@@ -601,4 +650,6 @@ server.on('error', (e) => {
 });
 
 server.listen(PORT, HOST, () => console.log(`JustJournal ${APP_VERSION}: http://${HOST}:${PORT}`));
+// P25: kolejka okien 1s przechodzi co 5 minut (puste = zero sieci). Start dopiero tu, nie przy imporcie modułu candles.
+setInterval(() => { candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)); }, 5 * 60_000).unref();
 void DBS;

@@ -4,6 +4,7 @@ import { esc, numInput } from './format.js';
 import { t as tr } from './i18n.js';
 import { overlay, trapTab, toast, guide } from './modal.js';
 import { bindShots, buttonHtml, statusHtml } from './shots.js';
+import { contractProblem } from './kontrakty.js';
 
 const ICON_CLOSE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; } catch { return 'Europe/Warsaw'; } })();
@@ -14,6 +15,9 @@ const parseNum = (s) => {
   const n = Number(t);
   return Number.isFinite(n) && Math.abs(n) <= 1e7 ? { val: n } : { err: true };
 };
+
+// pola cen (migracja 003): pokazywane tylko gdy baza Trade'y je ma
+const PRICES = [['entryPrice', 'Cena wejścia'], ['exitPrice', 'Cena wyjścia'], ['sl', 'SL'], ['tp', 'TP'], ['be', 'BE']]; // BE: migracja 004 (P26, 28.10.2026)
 
 export function createForm({ getModel, types, getDefaults, reload, onSaved, onClose }) {
   let root = null, dlg = null, trade = null, opener = null, saving = false, snapshot = '', discarding = false, shotsCtl = null;
@@ -29,11 +33,12 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
 
   function initial(t) {
     if (!t) {
-      return { id: null, edited: '', name: '', typ: getDefaults().typ, date: todayLocal(), time: '', exitDate: '', exitTime: '', instrument: '', dir: '', setup: '', session: '', r: '', pnl: '', konta: [], reason: '', chart: '', notes: '' };
+      return { id: null, edited: '', name: '', typ: getDefaults().typ, date: todayLocal(), time: '', exitDate: '', exitTime: '', instrument: '', dir: '', setup: '', session: '', r: '', pnl: '', entryPrice: '', exitPrice: '', sl: '', tp: '', be: '', contract: '', konta: [], reason: '', chart: '', notes: '' };
     }
     return {
       id: t.id, edited: t.edited, name: t.name, typ: t.typ || 'Live', date: t.date || '', time: t.time || '', exitDate: t.exitDate || '', exitTime: t.exitTime || '',
       instrument: t.instrument || '', dir: t.dir || '', setup: t.setup || '', session: t.session || '', r: numInput(t.r), pnl: numInput(t.pnl),
+      entryPrice: numInput(t.entryPrice), exitPrice: numInput(t.exitPrice), sl: numInput(t.sl), tp: numInput(t.tp), be: numInput(t.be), contract: t.contract || '',
       konta: [...t.konta], reason: t.reason || '', chart: t.chart || '', notes: t.notes || '',
     };
   }
@@ -88,6 +93,8 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
           <div class="span1 only-pnl">${fld('pnl', 'P&amp;L $', `<input id="f-pnl" name="pnl" type="text" inputmode="decimal" value="${esc(v.pnl)}" placeholder="${L('np. 320 lub −150')}" aria-describedby="e-pnl">`)}</div>
           <div class="span1 only-reason">${fld('reason', L('Powód (paper)'), select('reason', 'reason', v.reason))}</div>
           <div class="span4 only-konta">${fld('konta', L('Konta'), konta.length ? pills('konta', konta.map((k) => [k.id, k.name]), v.konta) : `<p class="fhint">${L('Brak kont w bazie Konta.')}</p>`, { labelFor: false })}</div>
+          ${PRICES.filter(([k]) => hasField(k)).map(([k, label]) => fld(k, L(label), `<input id="f-${k}" name="${k}" type="text" inputmode="decimal" value="${esc(v[k])}" placeholder="${L('np. 5842,25')}" aria-describedby="e-${k}">`, { cls: 'span1' })).join('')}
+          ${hasField('contract') ? fld('contract', L('Kontrakt'), `<input id="f-contract" name="contract" type="text" maxlength="8" autocapitalize="characters" spellcheck="false" autocomplete="off" value="${esc(v.contract)}" placeholder="${L('np. ESZ6')}" aria-describedby="e-contract">`, { cls: 'span1', hint: L('Puste = kontrakt wg daty trade\'a.') }) : ''}
           ${fld('chart', L('Wykres (link)'), `<input id="f-chart" name="chart" type="url" inputmode="url" value="${esc(v.chart)}" placeholder="https://www.tradingview.com/x/…" aria-describedby="e-chart">`, { cls: 'span2' })}
           ${fld('name', L('Nazwa'), `<input id="f-name" name="name" type="text" maxlength="200" value="${esc(v.name)}" placeholder="${L('Opcjonalnie')}" aria-describedby="e-name">`, { cls: 'span2' })}
           ${fld('notes', L('Notatki'), `<textarea id="f-notes" name="notes" rows="4" maxlength="8000" aria-describedby="e-notes">${esc(v.notes)}</textarea>`, { cls: 'span4' })}
@@ -135,6 +142,17 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
     if (visible('.only-pnl')) { const x = parseNum(g('pnl')); if (x.err) errs.pnl = tr('Wpisz kwotę w dolarach, np. 320 lub −150.'); else p.pnl = x.val; }
     if (visible('.only-konta')) p.konta = pressed('[data-pills="konta"]');
     if (visible('.only-reason')) p.reason = g('reason');
+    for (const [k, label] of PRICES) {
+      if (!dlg.querySelector(`[name="${k}"]`)) continue;
+      const x = parseNum(g(k));
+      if (x.err || (x.val != null && x.val < 0)) errs[k] = tr('{label}: wpisz liczbę większą od zera, np. 5842,25.', { label: tr(label) }); else p[k] = x.val;
+    }
+    // P35 (28.10.2026): kod kontraktu, ta sama walidacja co na serwerze (kontrakty.contractProblem)
+    if (dlg.querySelector('[name="contract"]')) {
+      p.contract = g('contract').toUpperCase();
+      const pr = contractProblem(p.contract, p.instrument);
+      if (pr) errs.contract = tr(pr.key, pr.vars);
+    }
     p.chart = g('chart');
     p.notes = field('notes').value;
     if (!p.typ) errs.typ = tr('Wybierz typ trade\'a.');

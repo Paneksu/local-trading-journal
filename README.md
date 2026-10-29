@@ -23,6 +23,9 @@ Zrzuty pochodzą z atrapy z przykładowymi danymi.
 - [Aktualizacja](#aktualizacja)
 - [Wiele urządzeń](#wiele-urządzeń)
 - [Kopia i przywracanie](#kopia-i-przywracanie)
+- [Wykresy świecowe](#wykresy-świecowe)
+- [Karty i filmy](#karty-i-filmy)
+- [Licencje i dane rynkowe](#licencje-i-dane-rynkowe)
 - [Zasady liczenia](#zasady-liczenia)
 - [FAQ](#faq)
 - [Bezpieczeństwo i połączenia sieciowe](#bezpieczeństwo-i-połączenia-sieciowe)
@@ -38,7 +41,8 @@ Zrzuty pochodzą z atrapy z przykładowymi danymi.
   - zakładki Trade'y (tabela z sortowaniem), Prop (konta, payouty, ROI, bilans) i Galeria zrzutów;
   - dodawanie i edycja trade'ów, kont i wpisów finansowych, z zapisem prosto do Notion;
   - dodawanie zrzutów ekranu do trade'a: w podglądzie i w formularzu edycji wybierasz plik (na telefonie z galerii lub aparatu), przeciągasz go albo wklejasz zrzut ze schowka (Ctrl+V po Win+Shift+S). PNG, JPEG, WebP lub GIF do 10 MB (darmowy Notion: 5 MB). Zrzut trafia do Notion jako obraz na końcu strony trade'a (zrzuty z pola „Zrzut” zostają nietknięte), wymaga uprawnienia integracji „Insert content”; usuwanie zrzutów zostaje w Notion. Dashboard pokazuje przy trade'ach także obrazy wklejone ręcznie w treść strony trade'a w Notion (np. z telefonu), więc zrzut dodany na jednym urządzeniu widać na drugim;
-  - udostępnianie wyników jako obraz (przycisk „Udostępnij”): karta trade'a, dnia, tygodnia, miesiąca lub roku w formatach 9:16, 4:5, 1:1 i 16:9, wynik w R, $ lub %, tło z motywu albo własne zdjęcie; pobierasz PNG, kopiujesz albo udostępniasz z telefonu; podpis „JustJournal × nick” ustawiasz w Ustawieniach;
+  - wykresy świecowe przy trade'ach ES, NQ, MES i MNQ: podgląd w wyglądzie dashboardu, edycja z rysunkami zapisywanymi w Notion, miniatury na liście trade'ów, świece z Databento na Twoim kluczu (patrz [Wykresy świecowe](#wykresy-świecowe));
+  - udostępnianie wyników jako obraz albo film (przycisk „Udostępnij”): karta trade'a z wykresem ceny i rysunkiem pozycji albo karta dnia, tygodnia, miesiąca lub roku z krzywą kapitału, w formatach 9:16, 4:5, 1:1 i 16:9 (film: 9:16, 1:1 i 16:9), wynik w R, $ lub %, wybrane wiersze danych, tło z motywu, własne zdjęcie albo film; pobierasz PNG, MP4 (albo WebM), kopiujesz albo udostępniasz z telefonu; podpis „JustJournal × nick” ustawiasz w Ustawieniach;
   - motywy Onyx i Platinum, palety danych (także dla daltonistów), język polski i angielski;
   - moduł aktualizacji i „Pierwsze kroki” (sprawdzenie instalacji i przewodnik).
 
@@ -405,6 +409,77 @@ Dane są w Notion, więc każde urządzenie widzi te same trade'y, konta i wpisy
 - Kopia powstaje przy każdej aktualizacji w `backups/<data>/` (JSON: schemat i wszystkie wpisy z wartościami pól). Katalog jest w `.gitignore`.
 - Przywracanie: `node restore.mjs` pokazuje **tylko podgląd** (co zostanie przywrócone z najnowszej kopii). `node restore.mjs --apply` zapisuje po wpisaniu „TAK”. Inną kopię wskażesz ścieżką: `node restore.mjs backups/2026-10-26T10-00-00Z`.
 - Przywracanie przywraca wartości pól, wyjmuje wpisy z kosza i odtwarza brakujące. Niczego nie usuwa: wpisy dodane po kopii zostają. Pliki wgrane do Notion (zrzuty) nie są w kopii, bo ich adresy wygasają po godzinie.
+- Rysunki z wykresów są polem „Rysunki” w Notion, więc kopia i przywracanie obejmują je bez zmian. Pobranych świec (`chart-data/`) kopia nie zawiera.
+
+## Wykresy świecowe
+
+Od wersji 1.3.0 każdy trade ES, NQ, MES lub MNQ ma wykres świecowy z poziomami trade'a. MES korzysta ze świec ES, a MNQ ze świec NQ. Inne instrumenty (np. EURUSD, XAUUSD, NAS100) pokazują „Brak źródła danych dla tego instrumentu” i niczego nie pobierają.
+
+**Podgląd i edycja.** W szczegółach trade'a przełącznik „Wykres | Zrzuty” otwiera podgląd: wykres w wyglądzie dashboardu (motyw Onyx lub Platinum, kolory z palety) z wejściem, wyjściem, SL, TP i BE, przesuwaniem i przybliżaniem. Interwały: 15s, 1m, 5m, 15m, 1h, 4h, 1D, 1W, 1M i pole „Własny” (np. `3m`, `45s`, `2h`). Przycisk „Edytuj” przełącza na edytor TradingView Lightweight Charts™ z rysunkami: linia pozioma, linia trendu, prostokąt, FVG, Fibonacci, tekst i pozycja long/short, cofanie Ctrl+Z. W edytorze po odblokowaniu przesuniesz też rysunek pozycji trade'a (SL, TP, BE, wyjście i czas), a zmiany trafią do pól trade'a w Notion. Wynik w R i P&L zostają takie, jak je wpisałeś. „Gotowe” wraca do podglądu w tym samym kadrze i interwale. Lista trade'ów i widok dnia w kalendarzu mają miniatury wykresu (świece i poziomy, bez rysunków).
+
+**Rysunki w Notion.** Rysunki zapisują się 2 s po zmianie w polu tekstowym „Rysunki” trade'a (JSON, do 190 000 znaków na trade). Dashboard dodaje je migracją 003 przy aktualizacji, razem z polami cen; migracje 004 i 005 dodają pola „BE” i „Kontrakt”. Przy dwóch urządzeniach wygrywa ostatni zapis. Bez internetu rysunki czekają w pamięci lokalnej i wysyłają się przy następnym otwarciu wykresu. Kolumna „Rysunki” pokazuje w tabeli Notion surowy JSON. Migracje nie mogą zmieniać istniejących widoków, więc ukryj ją ręcznie w każdym widoku, w którym przeszkadza: nad tabelą „•••” → „Properties” → ikona oka przy „Rysunki”. Ukrycie niczego nie usuwa, a dashboard dalej czyta i zapisuje pole.
+
+**Kontrakty i rolowanie.** Świece pochodzą z ciągłego symbolu Databento `ES.v.0` / `NQ.v.0` (kontrakt o największym obrocie), z prawdziwymi cenami kontraktów, bez wyrównania na rolowaniu. Zmianę kontraktu wykres oznacza pionową linią. W polu „Kontrakt” (np. `ESZ6`) możesz wskazać kontrakt trade'a; puste pole oznacza kontrakt według daty. Przełącznik B-ADJ (jak w TradingView, domyślnie włączony) przesuwa ceny innych kontraktów o luki rolli względem kontraktu trade'a, więc wejście, SL i TP trafiają co do ticka. Godziny sesji, PDH/PDL i strefę czasową osi ustawisz w Ustawieniach → Wykresy.
+
+**Klucz Databento.** Świece pobierasz z [Databento](https://databento.com) (zbiór CME Globex MDP 3.0, `GLBX.MDP3`) własnym kluczem, bez abonamentu, płacąc za zużycie. Załóż konto, w portalu Databento otwórz „API keys”, kliknij „Create a new key” i skopiuj klucz. W dashboardzie: Ustawienia → Wykresy → „Dane Databento” → wklej klucz → „Zapisz i sprawdź”. Klucz jest sprawdzany bezpłatnym zapytaniem i zapisuje się wyłącznie w `.env` na tym komputerze (`DATABENTO_API_KEY`). Nie trafia do przeglądarki, logów, Notion ani synchronizacji ustawień. Bez klucza wykresy pokazują świece, które już są na dysku.
+
+**Co pobiera się samo, a co po kliknięciu.**
+- Dla każdego trade'a kolejka w tle dokłada okno świec 1s od 30 min przed wejściem do 30 min po wyjściu (zwykle ok. 0,02 USD na trade).
+- Codzienne okno 1s NQ 9:30–11:00 czasu Nowego Jorku: przełącznik „Codziennie pobieraj 1s NQ 9:30–11:00 NY” w Ustawieniach → Wykresy (domyślnie włączony, ustawienie tylko na tym komputerze). Kolejka pobiera okno każdego dnia pon–pt, gdy Databento je udostępni (ok. 0,02 USD na dzień), i nadrabia najwyżej 7 ostatnich dni, w których dashboard był wyłączony. Starsze dni tylko narzędziem importu (niżej).
+- Minutówki sesji trade'a i dłuższą historię pobierasz przyciskiem „Sprawdź koszt” przy wykresie: najpierw widzisz wycenę z bezpłatnego zapytania Databento, potem potwierdzasz.
+- Okna i dni, które są już na dysku, nigdy nie pobierają się drugi raz.
+
+**Koszty i limity aplikacji.** Przed każdym pobraniem serwer pyta Databento o koszt (bezpłatnie) i powtarza pytanie tuż przed pobraniem. Twarde limity w aplikacji:
+- najwyżej **1 USD na jedno pobranie**;
+- najwyżej **3 USD na dobę UTC** (licznik dzisiejszych wydatków);
+- **licznik kredytu:** Databento daje nowym kontom kredyt na start (125 USD ważne 6 miesięcy według cennika Databento z października 2026). Dashboard nie widzi salda Databento, więc liczy wydatki sam i odrzuca pobranie, gdy wycena przekracza pozostały kredyt albo kredyt wygasł, żeby nie obciążyć karty. Wpisz swój stan startowy i datę wygaśnięcia w `config.local.json` (`chartCredit: { startUsd, spentUsd, expires }`).
+
+Ustawienia → Wykresy pokazują limity, dzisiejsze wydatki, stan kredytu i rozmiar pobranych świec tylko do podglądu. Zmieniasz je w `config.local.json` (`chartCostLimitUsd`, `chartDailyLimitUsd`, `chartCredit`). Szacunek według wycen Databento z października 2026 (ceny mogą się zmienić, prawdziwy koszt zawsze pokazuje wycena przed pobraniem): pełna historia 1m ES i NQ od 2010 ok. 41 USD, okna 1s NQ 9:30–11:00 od 2020 ok. 34 USD.
+
+**Embargo danych.** Bez abonamentu Databento udostępnia dane historyczne z opóźnieniem około 8 godzin. Świece z trwającej sesji pojawią się więc dopiero później: wykres pokazuje „Świece dostępne do: …”, a przy trade'ach z takiej sesji „Świece z tej sesji będą dostępne ok. …”. Kolejka sama poczeka na okna, których jeszcze nie ma.
+
+**Interwały poniżej minuty.** Prawdziwe świece sekundowe są tylko tam, gdzie leży pobrane okno 1s (trade'y i codzienne okno NQ). Poza oknami interwały poniżej minuty (np. 30s, 15s, 5s, 1s) nadal działają na całym wykresie: świeca 1m jest dzielona na części wzdłuż ścieżki open → ekstremum → drugie ekstremum → close i rysowana lekko przygaszona, a dymek ma dopisek „z 1m”. Minuta choćby częściowo pokryta oknem 1s jest w całości prawdziwa. Karty udostępniania biorą tylko prawdziwe sekundy: gdy kadr trade'a nie jest w całości pokryty oknem 1s, karta używa świec 1m.
+
+**Import historii z budżetem.** Narzędzia w `narzedzia/` rozmawiają z działającym dashboardem (klucz i liczniki zostają w serwerze) i domyślnie tylko wyceniają, nic nie kosztując:
+- `node narzedzia/import-okien-1s.mjs`: wycena okien 1s NQ 9:30–11:00 NY od 2020-01-02 (lub `--od=`/`--do=`). Pobranie startuje dopiero z `--potwierdzam-usd=KWOTA` (kwota z wyceny), z twardym budżetem `--budzet-usd` (domyślnie i najwyżej 36 USD) liczonym w `chart-data/import-1s-nq.json`. Serwer pobiera partiami do 1 USD i przed każdą partią sprawdza budżet; import liczy się do dziennego limitu 3 USD, więc w dniu importu zwykłe pobrania mogą czekać do północy UTC. Przerwany import wznawiasz tą samą komendą.
+- `node narzedzia/import-historii-1m.mjs`: wycena historii 1m ES i NQ (`--instrument=ES|NQ|ALL`). Pobranie wymaga `--potwierdzam-usd=KWOTA` i jawnego podniesienia limitów aplikacji tylko dla tego importu (`--limity-do-usd=KWOTA`); strażnik kredytu działa dalej.
+
+**Magazyn świec.** Świece leżą w katalogu `chart-data/` obok `config.local.json` (format binarny, 24 bajty na świecę, osobna warstwa 1m i 1s oraz warstwy kontraktów). Katalog jest w `.gitignore`, aktualizacja go nie rusza, a kopia przy aktualizacji go nie obejmuje. Szacunek: jedna sesja 1m jednego symbolu to ok. 35 KB, okno 1s 9:30–11:00 ok. 130 KB, a pełna historia 1m ES i NQ od 2010 z oknami 1s NQ od 2020 to około 0,5 GB. Rozmiar widzisz w Ustawieniach → Wykresy. Świece usuwasz ręcznie z dysku; ponowne pobranie jest płatne.
+
+**Ustawienia → Wykresy.** Zakładka ma grupy:
+- „Wygląd wykresu”: świece albo linia zamknięć (osobno dla miniatur), kolory z palety albo własne dla każdego motywu z kontrolą kontrastu, siatka, które poziomy trade'a pokazać;
+- „Nakładki”: tło sesji Azja, Londyn i NY (godziny w czasie Nowego Jorku) z liniami high/low do sweepu oraz PDH/PDL;
+- „Karty udostępniania”: wykres ceny w kartach (włącz / wyłącz), styl, rysunek pozycji, krzywa kapitału na kartach okresu oraz wartości początkowe filmów (format, długość, czarno-białe, przyciemnienie tła);
+- „Czas i ceny”: strefa czasowa osi i B-ADJ;
+- „Dane Databento”: klucz, limity i kredyt do podglądu, rozmiar `chart-data/`, przełącznik codziennego okna 1s NQ;
+- „Licencje”: atrybucja TradingView, paczka rysowania, notka o danych CME i o filmach tła.
+
+Wygląd, nakładki i karty synchronizują się przez Notion jak reszta ustawień. Klucz, limity, kredyt i przełącznik okna 1s zostają tylko na tym komputerze.
+
+## Karty i filmy
+
+Okno „Udostępnij” ma duży podgląd i grupy: Plik (obraz albo film, format) → Karta (trade, dzień, tydzień, miesiąc, rok) → Wykres → Duża liczba (R, $ albo %) → Dane → Tło, a rzadsze opcje w „Więcej opcji”.
+
+- **Wykres ceny na karcie trade'a** pochodzi ze świec już pobranych na dysk (karta niczego nie pobiera). Styl: świece albo jasna linia. Rysunek pozycji: „Pozycja” (strefy zysku i straty do TP i SL jak w TradingView) albo „Wejście i wyjście” (same znaczniki). Karty okresu pokazują krzywą kapitału.
+- **Wiersze danych** pod dużą liczbą wybierasz pigułkami, najwyżej 4 (np. cena wejścia i wyjścia, druga jednostka, SL, TP, czas trwania; dla okresu: trade'y, win rate, najlepszy trade, profit factor). Widać 6 najczęstszych, resztę po „Pokaż wszystkie”.
+- **Formaty:** obraz PNG w 9:16, 4:5, 1:1 i 16:9, film w 9:16, 1:1 i 16:9.
+- **Filmy** nagrywają się w przeglądarce w czasie rzeczywistym (zostaw kartę na wierzchu), w MP4 w Chrome, Edge i Safari, a w przeglądarkach bez MP4 w WebM. Filmy są bez dźwięku. Długość, jakość, czarno-białe i przyciemnienie tła ustawisz w „Więcej opcji”.
+- **Tło:** motyw, własne zdjęcie albo (w filmie) własny film. **Film i zdjęcie tła zostają lokalnie:** wybierasz je z dysku przy każdym nagraniu, są przetwarzane tylko w przeglądarce i nigdy nie trafiają na serwer, do Notion ani do synchronizacji ustawień. **Prawa do filmu i muzyki są po Twojej stronie:** używaj tylko nagrań, do których masz prawa (obraz i muzyka).
+- Publikując kartę albo film z wykresem ceny, przeczytaj [Licencje i dane rynkowe](#licencje-i-dane-rynkowe). Wykres w kartach wyłączysz w Ustawieniach → Wykresy → „Karty udostępniania”.
+
+## Licencje i dane rynkowe
+
+**TradingView Lightweight Charts™.** Edytor wykresu używa biblioteki TradingView Lightweight Charts™ 5.2.1 (licencja Apache-2.0). Atrybucja: „TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.”, https://www.tradingview.com/. Licencja i plik NOTICE leżą w `public/vendor/lightweight-charts/`, a atrybucja z linkiem jest pod wykresem i w Ustawieniach → Wykresy → „Licencje”. Narzędzia rysowania: `lightweight-charts-drawing` 0.6.2 (MIT, `public/vendor/lightweight-charts-drawing/LICENSE`). Biblioteki są wklejone bez zmian, z sumami w `public/vendor/VENDOR.md`.
+
+**Dane CME przez Databento.** Świece to dane rynkowe CME Group pobrane Twoim kluczem z Databento, na warunkach Twojego konta Databento i licencji CME, które Databento przenosi na użytkowników. To nie jest porada prawna, tylko streszczenie przeczytanych źródeł:
+- Databento pisze, że prawa do redystrybucji zależą od zbioru danych i że przenosi ograniczenia licencyjne wydawcy, czyli tu CME ([cennik Databento](https://databento.com/pricing)).
+- Wytyczne CME o danych historycznych mówią, że udostępnienie danych historycznych na publicznej stronie, np. w formie wykresu lub tabeli, wymaga licencji dystrybucyjnej CME (zdanie z dokumentu CME „Data Licensing Policy Guidelines: Historical Information Distribution”, który znamy z indeksu wyszukiwarki).
+- Standardowa umowa CME dla użytkowników danych u dystrybutorów (Subscriber Addendum) pozwala wyświetlać dane do własnej działalności i zabrania ich redystrybucji poza grupę użytkownika bez zgody CME.
+
+Co z tego wynika dla Ciebie:
+- **Dane historyczne są tylko do własnego użytku w dzienniku, nie do redystrybucji.** Nie udostępniaj innym katalogu `chart-data/` ani plików ze świecami. Repozytorium nie zawiera żadnych świec ani klucza; dane w testach są syntetyczne.
+- **Karty i filmy z wykresem ceny publikujesz na własną odpowiedzialność.** Wykres w kartach jest domyślnie włączony, bo autor używa go na swoje ryzyko, ale każdy użytkownik decyduje sam, czy jego licencja danych na to pozwala. Gdy nie masz pewności, wyłącz wykres w kartach (Ustawienia → Wykresy) albo zapytaj Databento lub CME. Krzywa kapitału, wynik i ceny wpisane przez Ciebie to Twoje dane, nie dane CME.
+- Rysunki zapisane w Notion to współrzędne i style, nie świece.
 
 ## Zasady liczenia
 
@@ -445,7 +520,9 @@ Dane są w Notion, więc każde urządzenie widzi te same trade'y, konta i wpisy
 - **Klucz Notion zostaje lokalnie** w `.env`. Nigdy nie trafia do przeglądarki, logów ani repozytorium (`.env` jest w `.gitignore`).
 - **Serwer słucha tylko na 127.0.0.1**, więc nie jest dostępny z innych urządzeń w sieci.
 - **Zapis chroniony przed CSRF:** każde żądanie zapisu, aktualizacji i zatrzymania musi mieć Host i Origin dashboardu, własny nagłówek `X-THQ` i `Content-Type: application/json`. Obca strona otwarta w przeglądarce nie zapisze niczego po cichu. Serwer waliduje wszystkie dane sam.
-- **Połączenia:** serwer łączy się z Notion API oraz, jako jedyne połączenie poza Notion, z publicznym API GitHub raz na dobę (sprawdzenie nowej wersji, bez żadnych Twoich danych; wyłącznik w Ustawieniach). Aktualizacja pobiera archiwum z `codeload.github.com`. Dodatkowo przeglądarka pobiera fonty z Fontshare i Google Fonts (bez internetu działa na fontach systemowych), a podgląd zrzutu z linku TradingView pobiera obraz z serwera TradingView.
+- **Połączenia:** serwer łączy się z Notion API, z publicznym API GitHub raz na dobę (sprawdzenie nowej wersji, bez żadnych Twoich danych; wyłącznik w Ustawieniach) oraz, od 1.3.0, z `hist.databento.com` (patrz niżej). Aktualizacja pobiera archiwum z `codeload.github.com`. Dodatkowo przeglądarka pobiera fonty z Fontshare i Google Fonts (bez internetu działa na fontach systemowych), a podgląd zrzutu z linku TradingView pobiera obraz z serwera TradingView.
+- **Databento (`hist.databento.com`, od 1.3.0):** jedyne nowe połączenie. Działa tylko wtedy, gdy zapiszesz klucz Databento: sprawdzenie klucza, bezpłatne wyceny (`metadata.get_cost`), zakres dostępnych danych (`metadata.get_dataset_range`, pamiętany 15 minut), mapowanie symboli kontraktów i pobieranie świec (`timeseries.get_range`). Wysyłane są tylko symbol (`ES.v.0`, `NQ.v.0` albo kontrakt), schemat i zakres czasu, nigdy dane z Twojego dziennika. Adres usługi jest na sztywno: serwer odmawia innego niż `hist.databento.com`. Klucz idzie wyłącznie w nagłówku uwierzytelnienia tego połączenia; nie trafia do przeglądarki, logów, Notion ani odpowiedzi API. Bez klucza dashboard nie łączy się z Databento wcale.
+- **Odczyty chronione przed obcymi stronami:** żądania `GET /api/*` z nagłówkiem `Sec-Fetch-Site` innym niż `same-origin` albo `none` są odrzucane, więc obca strona nie odczyta Twoich danych ani świec.
 
 ## Logo firm prop
 
@@ -472,11 +549,13 @@ Katalog `public/img/firmy/custom/` jest Twój: aktualizacje go nie ruszają.
 | `lib/` | klient Notion, role pól, odczyt i zapis, kopie, migracje, aktualizator |
 | `public/` | interfejs (HTML, CSS, moduły JS, słowniki `i18n/`) |
 | `testy/` | atrapa Notion API i testy: `node testy/run.mjs` |
-| `narzedzia/` | `suma-wydania.mjs` (suma wydania), `schemat.mjs` (podgląd pól bazy), `utworz-skrot.ps1` |
+| `narzedzia/` | `suma-wydania.mjs` (suma wydania), `schemat.mjs` (podgląd pól bazy), `utworz-skrot.ps1`, `import-okien-1s.mjs` i `import-historii-1m.mjs` (import świec z budżetem) |
+| `public/vendor/` | TradingView Lightweight Charts™ i `lightweight-charts-drawing` bez zmian, z licencjami i sumami (`VENDOR.md`) |
+| `chart-data/` | pobrane świece i pamięć rysunków (tworzone przy pierwszym pobraniu, poza repozytorium) |
 
 ### Testy
 
-`node testy/run.mjs` uruchamia wszystkie testy na atrapie Notion (`testy/atrapa-notion.mjs`) i fałszywym serwerze wydań: instalacja PL i EN, istniejąca instalacja, kopia i przywracanie, aktualizacja ZIP i git, moduł aktualizacji z restartem, gotowość i naprawa schematu, tłumaczenia. Żaden test nie łączy się z prawdziwym Notion ani GitHubem. Dashboard na samej atrapie: `node testy/start-test.mjs` (http://127.0.0.1:4331).
+`node testy/run.mjs` uruchamia wszystkie testy na atrapie Notion (`testy/atrapa-notion.mjs`) i fałszywym serwerze wydań: instalacja PL i EN, istniejąca instalacja, kopia i przywracanie, aktualizacja ZIP i git, moduł aktualizacji z restartem, gotowość i naprawa schematu, tłumaczenia, moduł wykresów na atrapie Databento (`testy/atrapa-databento.mjs`). Żaden test nie łączy się z prawdziwym Notion, GitHubem ani Databento. Testy przeglądarkowe (`testy/wykresy-e2e-*.mjs`, `testy/udostepnij-e2e.mjs`, `testy/zrzuty-e2e.mjs`) uruchamiasz osobno z Playwrightem (`PW_CORE`), instrukcja w nagłówku każdego pliku. Dashboard na samej atrapie: `node testy/start-test.mjs` (http://127.0.0.1:4331).
 
 ## Licencja
 

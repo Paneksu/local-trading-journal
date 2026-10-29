@@ -99,6 +99,12 @@
   --ease: cubic-bezier(.4, 0, .2, 1);
   --spring: cubic-bezier(.32, .72, 0, 1);
   --card-ease: cubic-bezier(.22, .61, .36, 1);
+  /* tokeny lightboxa (zawsze ciemny, niezależnie od motywu): wartości Onyx w jednym miejscu, features.css używa tylko ich (poprawka po przeglądzie 28.10.2026) */
+  --lb-primary: #f5f5f7; --lb-primary-fg: #0b0b0c; --lb-well: #1e2022; --lb-edge: #2d3134; --lb-input: #1e2022;
+  --lb-seg-on: rgb(243 243 243 / .15); --lb-well-shadow: inset 0 2px 6px rgb(0 0 0 / .45);
+  --lb-n-blue: oklch(0.78 0.11 250); --lb-n-orange: oklch(0.8 0.14 55); --lb-n-purple: oklch(0.79 0.12 305);
+  --lb-warn: #ffb454;           /* ostrzeżenie na zawsze ciemnym tle lightboxa (P35: back-adjust) */
+  --on-danger: #fff;           /* tekst na wypełnieniu kolorem błędu */
   /* skala (root 90% => 1rem = 14,4 px) */
   --t-xs: .66rem;    /* 9,5 */
   --t-sm: .729rem;   /* 10,5 */
@@ -360,6 +366,215 @@ svg .bar-g.hl path { filter: brightness(1.18); }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: var(--t-sm); color: var(--fg-2); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 
+/* podgląd wykresu świecowego (podglad.js): kolory tylko z tokenów, tło przezroczyste; kolor zapisany w rysunku przychodzi atrybutem stroke/fill */
+.swc { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; height: 100%; }
+.swc-bar { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+.swc-own { display: inline-flex; align-items: center; gap: 6px; }
+.swc-own .sp-in { width: 60px; height: 28px; }
+.swc-own .sp-in[aria-invalid] { box-shadow: inset 0 0 0 1px var(--danger); }
+.swc-plot { flex: 1; min-height: 200px; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.swc-plot.dragging { cursor: grabbing; }
+.swc-plot.on-axis { cursor: ns-resize; } /* P26: oś ceny skaluje w pionie */
+.swc-tz { font-variant-numeric: tabular-nums; }
+/* P27: strefa czasowa jako lista rozwijana, ulubione interwały z popoverem listy, panel ustawień rysunku */
+.swc-bar .sp-in.sp-sel.swc-tz { width: auto; max-width: 210px; height: 28px; font-size: var(--t-sm); }
+.swc-tfwrap { position: relative; display: inline-flex; }
+.swc-tfpop { position: absolute; z-index: 8; top: calc(100% + 6px); left: 0; width: 248px; padding: 10px 12px; border-radius: 10px; background: var(--popover); color: var(--fg); box-shadow: var(--float-shadow); display: flex; flex-direction: column; gap: 8px; }
+.swc-tfpop[hidden] { display: none; }
+.swc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.swc-chip { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 2px 0 8px; border-radius: 6px; background: var(--seg-track); font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.swc-chip button { width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; color: var(--fg-2); cursor: pointer; }
+.swc-chip button:disabled { opacity: .35; cursor: default; }
+@media (hover: hover) { .swc-chip button:not(:disabled):hover { color: var(--fg); background: rgb(var(--fg-rgb) / .08); } }
+.swc-tfadd { display: flex; gap: 6px; }
+.swc-tfadd .sp-in { width: 80px; height: 28px; }
+.swc-tfadd .sp-in[aria-invalid] { box-shadow: inset 0 0 0 1px var(--danger); }
+/* P29: ustawienia rysunku: zębatka przy rysunku, okienko przesuwane za nagłówek albo panel przypięty z lewej. Obie formy leżą NA wykresie
+   (position: absolute w .swc-stage), więc wykres nie zmienia szerokości ani wysokości. Tokeny jak popover interwałów (.swc-tfpop). */
+.swc-stage { position: relative; flex: 1; display: flex; min-width: 0; min-height: 200px; }
+.swc-stage > .swc-plot { flex: 1; min-width: 0; }
+.swc-gear { position: absolute; z-index: 7; width: 28px; height: 28px; border-radius: 6px; background: var(--popover); color: var(--fg); box-shadow: var(--float-shadow); }
+.swc-gear[hidden] { display: none; }
+.swc-style {
+  position: absolute; z-index: 8; display: flex; flex-direction: column; width: 264px; max-height: calc(100% - 8px); overflow: hidden;
+  border-radius: 10px; background: var(--popover); color: var(--fg); box-shadow: var(--float-shadow); font-size: var(--t-sm);
+}
+.swc-style[hidden] { display: none; }
+.swc-style[data-dock="pin"] { left: 4px; top: 4px; }
+.swc-ph { display: flex; align-items: center; gap: 2px; flex: none; min-height: 38px; padding: 4px 4px 4px 12px; border-bottom: 1px solid var(--line); }
+.swc-style[data-dock="pop"] .swc-ph { cursor: move; touch-action: none; user-select: none; -webkit-user-select: none; }
+.swc-ptitle { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swc-ph .icon-btn { width: 28px; height: 28px; flex: none; }
+.swc-pb { overflow-y: auto; padding: 2px 12px 12px; scrollbar-width: thin; scrollbar-color: rgb(var(--fg-rgb) / .22) transparent; }
+.swc-pb > .note { padding-top: 10px; }
+.swc-grp { padding: 10px 0 4px; }
+.swc-grp + .swc-grp { border-top: 1px solid var(--line); }
+.swc-grp > .lbl { margin-bottom: 4px; font-size: var(--t-xs); }
+.swc-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 32px; }
+.swc-ctl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
+.swc-f { display: inline-flex; align-items: center; gap: 6px; }
+.swc-style .sp-in { height: 28px; font-size: var(--t-sm); }
+.swc-style .sp-in.sp-sel { width: auto; max-width: none; }
+.swc-style .sp-in.swc-ftext { width: 100%; min-width: 0; }
+.swc-num { width: 96px; font-variant-numeric: tabular-nums; }
+.swc-style .sp-in[aria-invalid] { box-shadow: inset 0 0 0 1px var(--danger); }
+.swc-style input[type="color"] { width: 28px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; cursor: pointer; }
+.swc-style input[type="range"] { flex: 1; min-width: 0; accent-color: var(--fg); }
+.swc-op { min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.swc-lvs { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.swc-lv { display: inline-flex; align-items: center; gap: 6px; }
+.swc-lv .sp-in { width: 64px; padding: 0 6px; font-variant-numeric: tabular-nums; }
+.swc-lv .icon-btn { width: 24px; height: 24px; }
+.swc-lvs .btn { margin-top: 2px; }
+/* pozycja trade'a po odblokowaniu: ceny w dwóch kolumnach, lista zmian, zapis */
+.swc-tgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; padding-top: 10px; }
+.swc-tgrid .swc-f { flex-direction: column; align-items: stretch; gap: 2px; min-width: 0; }
+.swc-tgrid .sp-in { width: 100%; min-width: 0; }
+.swc-tact { display: flex; gap: 6px; margin-top: 10px; }
+.swc-tmsg { display: block; margin-top: 6px; }
+.swc-tmsg:empty { display: none; }
+/* P28: co się zmieni w trade'zie, uchwyt wyjścia na wykresie; P29: uchwyt BE (przeciąganie w pionie) */
+.swc-tdiff { margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.swc-tdiff:empty { display: none; }
+.swc-chg { white-space: nowrap; }
+.swc-terr { color: var(--danger); }
+.swc-plot[data-exit-hover="1"], .swc-plot[data-exit-hover="1"] * { cursor: grab !important; }
+.swc-plot[data-exit-hover="be"], .swc-plot[data-exit-hover="be"] * { cursor: ns-resize !important; }
+@media (max-width: 640px) {
+  .swc-style { width: min(300px, calc(100% - 8px)); }
+}
+.swc-plot:focus-visible { outline-offset: -2px; }
+.swc-state { flex: 1; display: grid; place-items: center; min-height: 200px; }
+.swc-state .empty { max-width: 440px; }
+.swc-foot { display: flex; flex-wrap: wrap; gap: 2px 16px; font-size: var(--t-xs); color: var(--fg-2); }
+.swc-foot a { color: inherit; }
+.swc-foot span:empty { display: none; }
+/* P35: ostrzeżenie back-adjust (wyraźne, nad stopką), lista kontraktów w pasku, przycisk tekstowy w stopce */
+.swc-warn { margin: 0; padding: 6px 10px; border-left: 2px solid var(--warn); color: var(--warn); font-size: var(--t-sm); line-height: 1.4; }
+.swc-warn[hidden] { display: none; }
+.swc-bar .sp-in.sp-sel.swc-contract { width: auto; height: 28px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.swc-foot button.link { padding: 0; border: 0; background: none; color: var(--fg); font: inherit; text-decoration: underline; cursor: pointer; }
+/* tryb edycji (wykres.js, rysunki.js): pasek narzędzi w stylu .seg/.icon-btn, tekst rysunku jako małe pole input */
+.swc-edit { margin-left: auto; }
+.swc-lwc { position: relative; }
+.swc-tools { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; margin-left: auto; }
+.swc-tools .icon-btn[aria-pressed="true"] { background: var(--seg-on); color: var(--fg); box-shadow: var(--seg-on-shadow); }
+.swc-tools .icon-btn:disabled { opacity: .35; cursor: default; }
+.swc-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--line); }
+.swc-draw { display: none; }
+/* P32: edycja tekstu w miejscu: tekst rysuje wykres, pole jest przezroczyste (bez ramki i tła), widać tylko kursor; krój, rozmiar i położenie ustawia rysunki.js */
+.swc-text { position: absolute; z-index: 6; margin: 0; padding: 0; border: 0; outline: none; background: transparent; color: transparent; box-shadow: none; white-space: pre; }
+.swc-caret { position: absolute; z-index: 7; width: 2px; margin: 0; padding: 0; pointer-events: none; border-radius: 1px; animation: swc-caret-blink 1s steps(1, end) infinite; }
+@keyframes swc-caret-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .swc-caret { animation: none; opacity: 1; } }
+.swc-text::selection { color: transparent; background: rgb(var(--fg-rgb) / .22); }
+.swc-plot[data-text-hover="1"], .swc-plot[data-text-hover="1"] * { cursor: text !important; }
+.swc-psub { font-weight: 400; margin-left: 4px; }
+.swc-save[data-kind="error"] { color: var(--danger); }
+.swc-save[data-kind="local"], .swc-meter[data-warn="1"] { color: var(--warn); }
+@media (max-width: 640px) {
+  .swc-draw { display: inline-flex; margin-left: auto; }
+  .swc-tools { display: none; flex-basis: 100%; margin-left: 0; order: 3; }
+  .swc-tools.open { display: flex; }
+  .swc-sep { display: none; }
+}
+/* P27: pola w pasku i panelu na telefonie: 16 px (iOS nie przybliża strony po dotknięciu pola), cel dotyku 32 px */
+@media (max-width: 1023px) {
+  .swc-bar .sp-in.sp-sel.swc-tz, .swc-style .sp-in, .swc-tfadd .sp-in { height: 34px; font-size: 16px; }
+  .swc-bar .sp-in.sp-sel.swc-tz { max-width: 170px; }
+  .swc-bar .sp-in.sp-sel.swc-contract { height: 34px; font-size: 16px; }
+  .swc-style input[type="color"] { width: 32px; height: 28px; }
+}
+.swc-progress { width: 220px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.swc-progress-bar { height: 100%; width: 0; background: var(--fg); transition: width .3s var(--ease); }
+.swc-ov { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px 14px; }
+/* nakładki (etap 10): pasy sesji ~8% (Azja, Londyn, Nowy Jork) i PDH/PDL; te same klasy w podglądzie SVG, a w edycji LWC rysuje je prymityw z tych samych tokenów */
+svg .sess { fill-opacity: .08; }
+svg .sess.asia { fill: var(--n-blue); }
+svg .sess.london { fill: var(--n-orange); }
+svg .sess.ny { fill: var(--n-purple); }
+svg .pdhl { fill: none; stroke: var(--fg-2); stroke-width: 1; }
+svg .pdhl-l { fill: var(--fg-2); font-size: 10.5px; font-family: var(--font); }
+/* P32: box sesji (wypełnienie i ramka w kolorze sesji, krycie i grubość z ustawień w atrybucie style), linie high/low i PDH/PDL do sweepu z opisem */
+svg .ovl { fill: none; }
+svg .ovl-l { font-size: 10.5px; font-family: var(--font); }
+.swc-ovwrap { position: relative; display: inline-flex; }
+.swc-ovbtn { width: 28px; height: 28px; }
+.swc-ovpop { position: absolute; z-index: 8; top: calc(100% + 6px); right: 0; width: min(330px, calc(100vw - 32px)); max-height: min(70vh, 520px); overflow-y: auto; padding: 10px 12px 12px; border-radius: 10px;
+  background: var(--popover); color: var(--fg); box-shadow: var(--float-shadow); display: flex; flex-direction: column; gap: 6px; font-size: var(--t-sm); scrollbar-width: thin; }
+.swc-ovpop[hidden] { display: none; }
+.swc-ovpop .lbl { font-size: var(--t-xs); margin-top: 4px; }
+.swc-ovpop .lbl:first-child { margin-top: 0; }
+.swc-ovs { display: grid; grid-template-columns: minmax(84px, 1fr) auto; align-items: center; gap: 4px 8px; padding: 2px 0; }
+.swc-ovs .check { grid-column: 1; }
+.swc-ovt { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 4px; color: var(--fg-2); }
+.swc-ovs .swc-ovt { grid-column: 1; grid-row: 2; }
+.swc-ovc { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; gap: 6px; }
+.swc-ovpop .sp-in { height: 28px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.swc-ovpop .sp-in[type="time"] { width: 92px; padding: 0 6px; }
+.swc-ovpop .sp-in.sp-sel { width: auto; max-width: none; }
+.swc-ovpop .sp-in[aria-invalid] { box-shadow: inset 0 0 0 1px var(--danger); }
+.swc-ovpop input[type="color"] { width: 28px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; cursor: pointer; }
+.swc-ovchk { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.swc-ovr { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-height: 32px; }
+.swc-ovr > .note { min-width: 64px; }
+.swc-ovpop > .btn { align-self: flex-start; margin-top: 4px; }
+@media (max-width: 1023px) { .swc-ovpop .sp-in { height: 34px; font-size: 16px; } .swc-ovpop .sp-in[type="time"] { width: 104px; } }
+/* miniatury (etap 11): pole na liście trade'ów, w kartach telefonu i w panelu; do czasu odczytu tylko ledwo widoczne tło, bez napisów */
+.swc-mini { position: relative; display: block; width: 104px; height: 32px; border-radius: 6px; overflow: hidden; background: rgb(var(--fg-rgb) / .04); }
+.swc-mini.is-ready { background: transparent; }
+.swc-mini.sm { width: 92px; height: 26px; margin-left: auto; }
+.swc-mini-svg { display: block; }
+.swc-mini img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: .85; }
+.swc-mini-none { display: grid; align-items: center; width: 100%; height: 100%; color: var(--fg-2); }
+table.tt th.mc, .trow td.mc { width: 116px; padding-right: 12px; }
+/* Ustawienia → Wykresy (etap 14): własne kolory świec to --chart-up / --chart-down ustawiane na <html> (applyChartVars); bez nich kolory palety. */
+svg .candle.up { fill: var(--chart-up, var(--profit)); }
+svg .candle.down { fill: var(--chart-down, var(--loss)); }
+svg .wick { fill: none; stroke-width: 1; }
+svg .wick.up { stroke: var(--chart-up, var(--profit)); }
+svg .wick.down { stroke: var(--chart-down, var(--loss)); }
+/* P55 (29.10.2026), «Lekko przygaszone»: świece z podziału 1m (TF poniżej minuty poza oknami 1s); wartość = SYNTH_ALPHA w geometria.js */
+svg .synth { opacity: .55; }
+/* Etap 15: styl „Linia zamknięć” (jak krzywa kapitału: --chart-line, bez wypełnienia) */
+svg .close-line { fill: none; stroke: var(--chart-line); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+svg .axis.day { fill: var(--fg); font-weight: 600; }
+svg .pos-profit { fill: var(--profit); fill-opacity: .13; stroke: none; }
+svg .pos-loss { fill: var(--loss); fill-opacity: .13; stroke: none; }
+svg .lvl { fill: none; stroke-width: 1; }
+svg .lvl.sl { stroke: var(--loss); stroke-dasharray: 4 4; }
+svg .lvl.tp { stroke: var(--profit); stroke-dasharray: 4 4; }
+svg .lvl.be { stroke: var(--be); stroke-dasharray: 4 4; } /* P26: BE na pozycji (pole „BE”, migracja 004) */
+svg .lvl.path { stroke: rgb(var(--fg-rgb) / .55); stroke-dasharray: 2 3; }
+svg .lvl-t { stroke: rgb(var(--fg-rgb) / .22); stroke-dasharray: 3 4; }
+svg .lvl-k { stroke: var(--fg); stroke-width: 1.5; }
+svg .lvl-d { fill: var(--fg); }
+svg .lvl-l, svg .roll-l, svg .gap-l, svg .drw text { font-size: 10.5px; font-family: var(--font); font-variant-numeric: tabular-nums; }
+svg .lvl-l.sl { fill: var(--loss); }
+svg .lvl-l.tp { fill: var(--profit); }
+svg .lvl-l.be { fill: var(--be); }
+svg .roll { stroke: var(--be); stroke-width: 1; stroke-dasharray: 5 4; }
+svg .roll-l { fill: var(--be); }
+/* P37 (P2): znacznik dziury w danych, jak znacznik rolla, ale w kolorze ostrzeżeń */
+svg .gap { stroke: var(--warn, var(--be)); stroke-width: 1; stroke-dasharray: 2 4; }
+svg .gap-l { fill: var(--warn, var(--be)); }
+svg .drw :is(line, rect) { stroke-width: 1.5; }
+svg .drw :is(line, rect):not([stroke]):not(.pos-profit):not(.pos-loss) { stroke: var(--fg); }
+svg .drw rect:not(.fill):not(.pos-profit):not(.pos-loss) { fill: none; }
+svg .drw rect.fill { fill-opacity: .14; }
+svg .drw rect.fill:not([fill]):not(.pos-profit):not(.pos-loss) { fill: var(--fg); }
+svg .drw .drw-fib { stroke-width: 1; }
+svg .drw .drw-mid { stroke-width: 1; }
+svg .drw .drw-entry { stroke: var(--fg-2); stroke-width: 1; }
+svg .drw text:not([fill]) { fill: var(--fg); }
+svg .drw .drw-label:not([fill]) { fill: var(--fg-2); }
+/* P27: Fibonacci i Gann box (strefy bez obramowania), BE i R:R na pozycjach rysowanych */
+svg .drw rect.nostroke { stroke: none; }
+svg .drw .drw-gann { stroke-width: 1; }
+svg .drw .drw-be { stroke: var(--be); stroke-width: 1; }
+svg .drw .drw-be-l { fill: var(--be); }
+svg .drw .drw-rr { fill: var(--fg); }
+
 /* kalendarz */
 .cal-nav { display: flex; align-items: center; gap: 6px; }
 .cal-nav .ttl { min-width: 128px; text-align: center; font-weight: 700; font-size: var(--t-md); text-transform: capitalize; }
@@ -456,20 +671,26 @@ td.name { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-spa
 /* lightbox: zawsze ciemny, niezależnie od motywu */
 .lb {
   --fg: #f3f3f3; --fg-rgb: 243 243 243; --fg-2: #b4b9be; --float: #2b2f31; --popover: #26292b; --line: rgb(80 86 90 / .7);
-  --profit: var(--lb-profit, #1db954); --loss: var(--lb-loss, #ff6a6a); --be: var(--lb-be, #7aa7ff); --on-fg: #111315; --seg-track: rgb(243 243 243 / .06);
+  --profit: var(--lb-profit, #1db954); --loss: var(--lb-loss, #ff6a6a); --be: var(--lb-be, #7aa7ff); --warn: var(--lb-warn); --on-fg: #111315; --seg-track: rgb(243 243 243 / .06);
   position: fixed; inset: 0; z-index: 100; color: var(--fg); background: rgb(14 15 16 / .97); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
 }
 .lb[hidden] { display: none !important; }
 .lb-lock { overflow: hidden; }
-.lb-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
+/* P29: górna linia: numer i widok | poprzedni, następny | szczegóły, zamknij */
+.lb-top { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 14px; }
+.lb-tl { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.lb-tl .lb-count { white-space: nowrap; }
+.lb-navs, .lb-tr { display: flex; align-items: center; gap: 4px; }
+.lb-tr { justify-content: flex-end; }
 .lb-count { color: var(--fg-2); font-size: var(--t-base); font-family: var(--mono); }
-.lb-stage { flex: 1; min-height: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px; touch-action: pan-y; }
+.lb-stage { flex: 1; min-height: 0; display: flex; align-items: center; padding: 0 8px; touch-action: pan-y; }
 .lb-frame { position: relative; flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
 .lb-img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; border-radius: 6px; }
-.lb-nav { position: relative; flex: none; width: 44px; height: 64px; border-radius: 12px; border: 0; background: var(--float); color: var(--fg); font-size: 26px; cursor: pointer; }
 .lb-nav:disabled { opacity: .3; cursor: default; }
-@media (hover: hover) { .lb-nav:not(:disabled):hover { background: #363b3e; } }
+.lb.no-details .lb-info { display: none; } /* P29: schowane szczegóły, wykres na całą wysokość */
+.lb.no-details .lb-stage { padding-bottom: 8px; }
+.lb-det[aria-pressed="true"] { background: var(--seg-on); }
 .lb-info { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 6px; max-height: 32vh; overflow: auto; align-items: flex-start; }
 .lb-cap { font-size: var(--t-md); }
 .lb-notes { color: var(--fg-2); font-size: var(--t-base); white-space: pre-wrap; max-width: 80ch; }

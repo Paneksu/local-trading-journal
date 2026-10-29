@@ -32,7 +32,9 @@ const allSized = (ids, kontaById) => ids.length > 0 && ids.every((id) => kontaBy
 // wtedy konto, którego rozmiaru nie ma w mianowniku, więc procent byłby zawyżony i go nie pokazujemy (przegląd kodu 26.10.2026).
 // Trade podpięty do kilku kont (kopiowanie): P&L w Notion to suma ze wszystkich kont, więc dzielimy przez sumę ich rozmiarów
 // (słowa użytkownika 26.10.2026: «Suma ze wszystkich kont»).
-export function pctOf(trades, kontaById) {
+// Przegląd HIJ, pkt 8 (29.10.2026): jedna funkcja na licznik i mianownik (pctOf karty i equityCurve krzywej), żeby reguła pieniężna nie rozjechała się w dwóch miejscach.
+// pctBase: { pnl, size } albo null (brak trade'a z P&L albo konto bez rozmiaru).
+export function pctBase(trades, kontaById) {
   const withPnl = trades.filter((t) => t.pnl != null);
   if (!withPnl.length) return null;
   const ids = new Set();
@@ -44,7 +46,11 @@ export function pctOf(trades, kontaById) {
   }
   let size = 0;
   for (const id of ids) size += kontaById.get(id).size;
-  return size ? (pnl / size) * 100 : null;
+  return { pnl, size };
+}
+export function pctOf(trades, kontaById) {
+  const b = pctBase(trades, kontaById);
+  return b && b.size ? (b.pnl / b.size) * 100 : null;
 }
 
 // Wynik zestawu trade'ów w trzech jednostkach. R i $ z byDay/calc (te same sumy co w statystykach).
@@ -58,9 +64,31 @@ const inRange = (trades, from, to) => trades.filter((t) => t.date >= from && t.d
 const pick = (v, metric) => v[metric] ?? null;
 
 // Wspólne liczby recapu: trade'y, win rate (bez BE), wynik.
+// Etap 16 (pakiet I): okres z trade'ami dostaje krzywą kapitału (curve); pusty okres bez niej (karta jak dotąd).
 function base(trades, kontaById) {
   const c = calc(trades);
-  return { n: c.n, wins: c.wins, losses: c.losses, be: c.be, winRate: c.winRate, v: valuesOf(trades, kontaById) };
+  const out = { n: c.n, wins: c.wins, losses: c.losses, be: c.be, winRate: c.winRate, v: valuesOf(trades, kontaById) };
+  if (c.n) out.curve = equityCurve(trades, kontaById);
+  // Karty v2 (P47, P52): wynik każdego trade'a okresu w trzech jednostkach (najlepszy i najgorszy trade, średni R, profit factor w wierszach do wyboru)
+  out.tv = sortChrono(trades).map((t) => ({ instrument: t.instrument, dir: t.dir, date: t.date, time: t.time, v: valuesOf([t], kontaById) }));
+  return out;
+}
+
+// Etap 16: krzywa kapitału karty okresu. Trade'y (już tylko Live okresu) w kolejności czasu (sortChrono), wynik narastająco w trzech jednostkach,
+// z punktem startowym 0 (jak equityPoints w stats.js: trade bez R albo P&L dodaje 0). Jednostka bez wartości w okresie (valuesOf → null) ma null w każdym punkcie.
+// % konta: P&L narastająco / suma rozmiarów kont całego okresu (ten sam mianownik co pctOf okresu), więc ostatni punkt = wynik karty.
+// Punkt: { t (ms wejścia albo null), date, v: { R, $, % } }; punkt startowy ma start: true i datę pierwszego trade'u. R i $ zaokrąglone do 1e-6 (sumy ułamków), % bez zaokrąglenia (ten sam wzór co pctOf).
+const r6 = (x) => Math.round(x * 1e6) / 1e6;
+export function equityCurve(trades, kontaById) {
+  const ts = sortChrono(trades);
+  if (!ts.length) return [];
+  const tot = valuesOf(ts, kontaById);
+  const size = tot['%'] != null ? pctBase(ts, kontaById).size : 0; // ten sam mianownik co pctOf (przegląd HIJ, pkt 8)
+  const pt = (r, pnl) => ({ R: tot.R != null ? r6(r) : null, $: tot.$ != null ? r6(pnl) : null, '%': size > 0 ? (pnl / size) * 100 : null });
+  const out = [{ t: null, date: ts[0].date, start: true, v: pt(0, 0) }];
+  let r = 0, pnl = 0;
+  for (const t of ts) { r += t.r ?? 0; pnl += t.pnl ?? 0; out.push({ t: t.at ?? null, date: t.date, v: pt(r, pnl) }); }
+  return out;
 }
 
 // Dni z trade'ami w okresie, każdy z wynikiem w trzech jednostkach (R i $ z byDay).
@@ -94,6 +122,9 @@ export function tradeCard(t, konta) {
     kind: 'trade', n: 1, tag, outcome: outcome(t),
     instrument: t.instrument, dir: t.dir, date: t.date, time: t.time, exitTime: t.exitTime, dur: t.dur,
     setup: t.setup, session: t.session,
+    // etap 17 (pakiet I): ceny i czas trade'a dla wykresu w karcie i wierszy „Cena wejścia/wyjścia”
+    at: t.at ?? null, exitAt: t.at != null && t.dur != null ? t.at + t.dur * 60000 : null, contract: t.contract || '',
+    entryPrice: t.entryPrice ?? null, exitPrice: t.exitPrice ?? null, sl: t.sl ?? null, tp: t.tp ?? null,
     v: { R: t.r, $: t.typ === 'Live' ? t.pnl : null, '%': pct },
   };
 }

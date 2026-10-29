@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: pozycja trade'a P28 (strona robocza)</title>
+<!-- Strona robocza testu wykresy-13 (testy/przegladarka.mjs, Chrome/Edge headless), podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     P28 (28.10.2026), słowa użytkownika: «dopracuj i zrob te 3 pkt». Na prawdziwych modułach (wykres.js, rysunki.js, paczka rysowania) z atrapą fetch:
+     P28-1 kropka wyjścia odblokowanej pozycji przeciągana na wykresie (zmienia cenę i czas wyjścia, paczka nie przejmuje gestu, wykres się nie przesuwa),
+     P28-2 zapis przelicza R z cen i nadpisuje stare R, P28-3 przesunięcie pozycji w bok zmienia datę i godzinę wejścia i wyjścia (świeca interwału),
+     wyjście przed wejściem blokuje zapis. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<style>
+  :root { --font: sans-serif; --fg: #f3f3f3; --fg-rgb: 243 243 243; --fg-2: #b4b9be; --popover: #26292b; --line: rgb(80 86 90 / .7); --be: oklch(0.72 0.12 260); --danger: #ff6a6a; }
+  body { margin: 0; padding: 16px; background: #0e0f10; color: #f3f3f3; font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  .lb { --profit: oklch(0.72 0.19 150); --loss: rgb(255 106 106); }
+  #c { width: 900px; height: 560px; display: flex; flex-direction: column; }
+  .swc { display: flex; flex-direction: column; gap: 8px; width: 100%; height: 100%; }
+  .swc-plot { flex: 1; min-height: 200px; position: relative; }
+</style>
+</head>
+<body>
+<div class="lb"><div id="c"></div></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+
+const patches = [];
+const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+const T0 = 1793000000 - (1793000000 % 60);
+const candles = [];
+{ let p = 5840; for (let k = 0; k < 200; k++) { const o = p, c = p + Math.sin(k / 5) * 1.5; candles.push([T0 + k * 60, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c, 10]); p = c; } }
+const real = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  url = String(url);
+  if (url.includes('/api/drawings/save')) return json({ ok: true, pending: false, edited: 'S1', previous: 'S0' });
+  if (url.includes('/api/trades/') && opts.method === 'PATCH') { patches.push(JSON.parse(opts.body)); return json({ ok: true, edited: `S${patches.length + 1}` }); }
+  if (url.includes('/api/candles')) return json({ bars: candles, tf: '1m', rolls: [], missing: [], derived: [], availableEnd: null });
+  return real(url, opts);
+};
+
+try {
+  const W = await import('/js/wykres.js');
+  const P = await import('/js/podglad.js');
+  const R = await import('/js/rysunki.js');
+  P.setChartTzDefault('UTC');
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); localStorage.removeItem('thq.chart.toolStyle.v1'); } catch { /* bez localStorage */ }
+  // wejście 20 s po otwarciu świecy (dokładna chwila z Notion), stare R wpisane ręcznie 0,5
+  const at0 = candles[90][0] * 1000 + 20_000;
+  const trade = { at: at0, exitAt: candles[120][0] * 1000, instrument: 'ES', entryPrice: 5840, exitPrice: 5846, sl: 5836, tp: 5848, be: 5842, r: 0.5 };
+  const root = document.getElementById('c');
+  let savedArgs = null;
+  const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { tf: '1m', fromIndex: 60, toIndex: 150.5, candles, rolls: [] }, doc: null, edited: 'S0', onDone: () => {},
+    onTradeSaved: (body, edited, after) => { savedArgs = { body, edited, after }; } });
+  await sleep(300);
+  const M = ed.manager, panel = root.querySelector('.swc-style'), plot = root.querySelector('.swc-plot');
+  const ts = ed.chart.timeScale(), S = ed.chart.panes()[0].getSeries()[0]; // seria świec z API LWC
+  const exitPt = (d) => (ed.exitPoint ? ed.exitPoint(d) : null);
+
+  // ===== P28-1: kropka wyjścia zgodna z LWC (1 px) i na zablokowanej pozycji =====
+  const locked = M.drawings().find((d) => d.locked);
+  const p0 = exitPt(locked);
+  rec('P28-1', p0 && Math.abs(p0.x - ts.timeToCoordinate(candles[120][0])) <= 1 && Math.abs(p0.y - S.priceToCoordinate(5846)) <= 1,
+    `kropka wyjścia zablokowanej pozycji w miejscu wyjścia (${JSON.stringify(p0)} vs x ${ts.timeToCoordinate(candles[120][0])}, y ${S.priceToCoordinate(5846)})`);
+
+  // odblokowanie: pole wyjścia z trade'a, lista zmian pusta
+  root.querySelector('[data-act="lock"]').click(); await sleep(80);
+  const pid = ed.rys.positionId();
+  rec('P28-1', panel.querySelector('[data-tk="exitPrice"]')?.value === '5846', `pole wyjścia z trade'a (${panel.querySelector('[data-tk="exitPrice"]')?.value})`);
+  const diff0 = panel.querySelector('.swc-tdiff')?.textContent || '';
+  rec('P28-1', !/\bR\b/.test(diff0) && !/Wyjście|Czas/.test(diff0) && /Bez zmian/.test(diff0), `P32: przed zmianą lista bez zmian, bez R (R ręczne) (${diff0})`);
+
+  // przeciągnięcie kropki: pointerdown na płótnie (paczka nasłuchuje w fazie capture na swoim elemencie, uchwyt jest przed nią)
+  const pr = plot.getBoundingClientRect();
+  const dot = { x: ts.timeToCoordinate(candles[120][0]), y: S.priceToCoordinate(5846) }; // miejsce wyjścia trade'a na wykresie
+  const cv = root.querySelector('.swc-lwc canvas');
+  const scroll0 = JSON.stringify(ed.chart.options().handleScroll);
+  const o = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1 };
+  const yTo = S.priceToCoordinate(5850), xTo = ts.timeToCoordinate(candles[130][0]);
+  cv.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: pr.left + dot.x, clientY: pr.top + dot.y }));
+  const heldScroll = JSON.stringify(ed.chart.options().handleScroll);
+  for (let k = 1; k <= 6; k++) cv.dispatchEvent(new PointerEvent('pointermove', { ...o, clientX: pr.left + dot.x + ((xTo - dot.x) * k) / 6, clientY: pr.top + dot.y + ((yTo - dot.y) * k) / 6 }));
+  cv.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0, clientX: pr.left + xTo, clientY: pr.top + yTo }));
+  await sleep(80);
+  const dd = M.get(pid);
+  rec('P28-1', panel.querySelector('[data-tk="exitPrice"]')?.value === '5850', `przeciągnięcie kropki zmienia cenę wyjścia w panelu (${panel.querySelector('[data-tk="exitPrice"]')?.value}), tick 0,25`);
+  rec('P28-1', dd.points[1].time === candles[130][0], `i czas wyjścia na świecę pod kursorem (${dd.points[1].time - T0} s od T0, oczekiwano ${candles[130][0] - T0})`);
+  rec('P28-1', R.positionPrices(dd).entryPrice === 5840 && dd.points[0].time === candles[90][0] + 20, 'paczka nie przejęła gestu: wejście i jego czas bez zmian');
+  rec('P28-1', heldScroll !== scroll0 && JSON.stringify(ed.chart.options().handleScroll) === scroll0, `wykres wstrzymany w trakcie przeciągania i przywrócony po nim (${scroll0} → ${heldScroll})`);
+  const p1 = exitPt(dd);
+  // skala ceny z Auto mogła się przeliczyć (nowe wyjście w zakresie), więc oczekiwane współrzędne czytamy z LWC teraz
+  const xNow = ts.timeToCoordinate(candles[130][0]), yNow = S.priceToCoordinate(5850);
+  rec('P28-1', p1 && Math.abs(p1.x - xNow) <= 1 && Math.abs(p1.y - yNow) <= 1, `kropka po przeciągnięciu na nowym wyjściu, zgodnie z LWC (±1 px): ${JSON.stringify(p1)} vs ${xNow}, ${yNow}`);
+
+  // ===== P28-3: przesunięcie pozycji w bok (o 5 świec) zmienia czas wejścia i wyjścia =====
+  M.update({ ...dd, points: [{ ...dd.points[0], time: candles[95][0] + 20 }, { ...dd.points[1], time: candles[135][0] }] }); await sleep(80);
+  const diff = panel.querySelector('.swc-tdiff')?.textContent || '';
+  rec('P28-3', /Czas wejścia/.test(diff) && /Czas wyjścia/.test(diff) && /Wyjście/.test(diff) && diff.includes('→'), `panel pokazuje, co się zmieni: «${diff}»`);
+  rec('P32-8', !/\bR\b/.test(diff), `panel: R nie jest w liście zmian (R ręczne): «${diff}»`);
+
+  // ===== zapis =====
+  panel.querySelector('[data-act="tsave"]')?.click(); await sleep(300);
+  const pb = patches[0] || {};
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // oczekiwana data i godzina w strefie przeglądarki (Intl, niezależnie od kodu edytora)
+  const wall = (ms) => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map((x) => [x.type, x.value])); return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` }; };
+  const wIn = wall(candles[95][0] * 1000), wOut = wall(candles[135][0] * 1000);
+  rec('P32-8', patches.length === 1 && !('r' in pb) && pb.exitPrice === 5850 && pb.entryPrice === 5840 && pb.sl === 5836, `PATCH bez R (R ręczne), ceny z rysunku: ${JSON.stringify(pb)}`);
+  rec('P28-2', !('pnl' in pb), 'P&L nie jest wysyłany (trade nie ma liczby kontraktów): pole zostaje');
+  rec('P28-3', pb.date === wIn.date && pb.time === wIn.time && pb.exitDate === wOut.date && pb.exitTime === wOut.time && pb.tz === tz,
+    `PATCH: daty przyciągnięte do świecy, w strefie przeglądarki (${tz}): ${pb.date} ${pb.time} → ${pb.exitDate} ${pb.exitTime}`);
+  rec('P28-3', pb.edited === 'S0', `zapis nadal z kontrolą 409 (edited ${pb.edited})`);
+  const tr = ed.trade();
+  rec('P28-3', tr.at === candles[95][0] * 1000 && tr.exitAt === candles[135][0] * 1000 && tr.r === 0.5 && tr.exitPrice === 5850, `edytor ma nowy trade, R bez zmian (P32) (at ${tr.at - T0 * 1000}, exitAt ${tr.exitAt - T0 * 1000}, R ${tr.r})`);
+  rec('P28-3', savedArgs?.after?.at === tr.at && savedArgs?.after?.exitAt === tr.exitAt && !('r' in (savedArgs?.body || {})), `aplikacja dostaje nowe czasy, bez R (P32) (onTradeSaved ${JSON.stringify(savedArgs && savedArgs.after)})`);
+  const pid2 = ed.rys.positionId(), L2 = M.get(pid2);
+  rec('P28-3', !ed.rys.unlocked() && L2?.locked === true && L2.points[0].time === candles[95][0] && Math.abs(L2.style.exitLevel - 10) < 1e-9, 'po zapisie pozycja wraca do blokady z nowym czasem i wyjściem');
+
+  // ===== P28-3: wyjście przed wejściem blokuje zapis =====
+  root.querySelector('[data-act="lock"]').click(); await sleep(80);
+  const d3 = M.get(ed.rys.positionId());
+  M.update({ ...d3, points: [d3.points[0], { ...d3.points[1], time: candles[80][0] }] }); await sleep(80);
+  panel.querySelector('[data-act="tsave"]')?.click(); await sleep(200);
+  const msg = panel.querySelector('.swc-tmsg')?.textContent || '';
+  rec('P28-3', patches.length === 1 && /przed wejściem/.test(msg) && /przed wejściem/.test(panel.querySelector('.swc-tdiff')?.textContent || ''), `wyjście przed wejściem: bez zapisu, komunikat «${msg}»`);
+  root.querySelector('[data-act="tcancel"]')?.click(); await sleep(60);
+  rec('P28-3', !ed.rys.unlocked() && M.get(ed.rys.positionId())?.points[1].time === candles[135][0], 'Anuluj wraca do pozycji z pól trade\'a');
+
+  await ed.destroy();
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

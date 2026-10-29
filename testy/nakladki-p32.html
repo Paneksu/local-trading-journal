@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: wykresy P32 (strona robocza)</title>
+<!-- Strona robocza testu wykresy-17 (testy/przegladarka.mjs, Chrome/Edge headless), podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     P32 (28.10.2026), słowa użytkownika:
+     1) «tryb auto nawet jak jest wylaczony po wejsciu na wykres to jest on wlaczony i trzeba go przeklikac dwa razy i dopiero wtedy dziala»;
+     2) «tlo sesji zweyryfikuj poprawnosc tego oraz zmien na to ze tworzysz boxa w rangu sesji oraz z high/low wychodza linie z opisem. kiedy te high/low jest
+        sweepniete powinno sie konczyc, tak samo pdh/pdl powinno sie konczyc po sweepie. dopracuj te dwie rzeczy i dodaj do nich ustawienia»;
+     3) panel przypięty z X, który działa na ostatnim rysunku i znika do kliknięcia zębatki; 4) «utc powinno byc w poprawnej kolejnosci»;
+     5) i 6) tekst wpisywany w miejscu, wyglądający jak po wpisaniu, dwuklik w miejscu tekstu rysunku; 7) «rysunek kwadrata powinna miec grubosc scian 0».
+     Prawdziwe moduły z prawdziwym styles.css i atrapą fetch. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; }
+  #c, #p, #l { width: 900px; height: 520px; display: flex; flex-direction: column; }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<button id="gear" type="button">ustawienia</button>
+<div class="lb" style="position: static; inset: auto;"><div id="p"></div><div id="c"></div></div>
+<div id="l"></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const near = (tag, a, b, msg, tol = 1) => rec(tag, Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+// headless --dump-dom nie odpala requestAnimationFrame po wirtualnym czasie: podgląd i edytor rysują przez setTimeout
+window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+window.cancelAnimationFrame = (id) => clearTimeout(id);
+
+// 1m od 27.10.2026 00:00 UTC przez dobę (czas letni w NY: Azja 26.10 20:00 ET = 00:00 UTC, Londyn 06:00-09:00 UTC, NY 13:30-20:00 UTC)
+const T0 = Date.UTC(2026, 9, 27, 0, 0) / 1000;
+const candles = [];
+{ let p = 5840; for (let k = 0; k < 1440; k++) { const o = p, c = 5840 + 8 * Math.sin(k / 37) + 3 * Math.sin(k / 7); candles.push([T0 + k * 60, o, Math.max(o, c) + 0.5, Math.min(o, c) - 0.5, c, 10]); p = c; } }
+const daily = [[Date.UTC(2026, 9, 25, 22) / 1000, 5840, 5846, 5834, 5840, 1], [Date.UTC(2026, 9, 26, 22) / 1000, 5840, 5851, 5829, 5840, 1]];
+const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+const real = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  url = String(url);
+  if (url.includes('/api/drawings/save')) return json({ ok: true, pending: false, edited: 'S1', previous: 'S0' });
+  if (url.includes('/api/candles')) {
+    const tf = new URL(url, location.href).searchParams.get('tf');
+    return json(tf === '1D' ? { bars: daily, missing: [], derived: [], availableEnd: null } : { bars: candles, layer: '1m', rolls: [], missing: [], derived: [], availableEnd: null });
+  }
+  return real(url, opts);
+};
+const o = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1 };
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+
+try {
+  const W = await import('/js/wykres.js');
+  const P = await import('/js/podglad.js');
+  const SW = await import('/js/swiece.js');
+  const U = await import('/js/ustawienia.js');
+  const LWC = await import('/vendor/lightweight-charts/lightweight-charts.standalone.production.mjs');
+  P.setChartTzDefault('UTC');
+  const setLS = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* bez localStorage */ } };
+  setLS('thq.chart.toolStyle.v1', null); setLS('thq.chart.stylePop.v1', null);
+  const trade = { at: candles[800][0] * 1000, exitAt: candles[830][0] * 1000, instrument: 'ES', entryPrice: 5840, exitPrice: 5846, sl: 5836, tp: 5848, be: null, r: 1.5 };
+
+  // ===== P32-1: „Auto” wyłączone przy starcie = skala ręczna od pierwszej klatki (podgląd) =====
+  await section('P32-1', async () => {
+    setLS(P.AUTO_KEY, '0');
+    setLS(P.OVERLAY_KEY, JSON.stringify({ sessions: false, pdhl: false }));
+    const root = document.getElementById('p');
+    const pv = P.createPodglad(root, { trade, tf: '1m', frame: { from: candles[760][0], to: candles[880][0] } });
+    await pv.ready; await sleep(200);
+    const svg = () => root.querySelector('.swc-plot svg');
+    const pAuto = root.querySelector('[data-swc="auto"]');
+    rec('P32-1', pAuto.getAttribute('aria-pressed') === 'false', `przycisk Auto wyłączony jak zapis (${pAuto.getAttribute('aria-pressed')})`);
+    const st = pv.state();
+    rec('P32-1', st.yr && st.yr.max > st.yr.min, `zakres ręczny ustawiony od startu (${JSON.stringify(st.yr)})`);
+    const entY = () => Number(svg().querySelector('.lvl.sl')?.getAttribute('y1'));
+    const plotEl = root.querySelector('.swc-plot'), pr = plotEl.getBoundingClientRect();
+    const y0 = entY();
+    const po = { pointerId: 7, pointerType: 'mouse', bubbles: true, button: 0, buttons: 1 };
+    plotEl.dispatchEvent(new PointerEvent('pointerdown', { ...po, clientX: pr.left + 200, clientY: pr.top + 100 }));
+    for (let k = 1; k <= 5; k++) plotEl.dispatchEvent(new PointerEvent('pointermove', { ...po, clientX: pr.left + 200, clientY: pr.top + 100 + 8 * k }));
+    plotEl.dispatchEvent(new PointerEvent('pointerup', { ...po, clientX: pr.left + 200, clientY: pr.top + 140 }));
+    await sleep(80);
+    near('P32-1', entY(), y0 + 40, 'pierwsze przeciągnięcie w pionie przesuwa wykres (bez przeklikiwania Auto)', 1.5);
+    pAuto.click(); await sleep(60);
+    rec('P32-1', pAuto.getAttribute('aria-pressed') === 'true' && localStorage.getItem(P.AUTO_KEY) === '1', 'jedno kliknięcie włącza Auto');
+    pv.destroy();
+    // edytor z wyłączonym Auto: autoScale LWC wyłączone, zakres z podglądu (frame.yr)
+    setLS(P.AUTO_KEY, '0');
+    const host = document.getElementById('c');
+    const yr = { min: 5820, max: 5860 };
+    const ed = await W.createEditor(host, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { tf: '1m', fromIndex: 760, toIndex: 880, candles, rolls: [], yr }, doc: null, edited: 'S0', onDone: () => {} });
+    await sleep(250);
+    const eAuto = host.querySelector('[data-swc="auto"]');
+    rec('P32-1', eAuto.getAttribute('aria-pressed') === 'false' && ed.series.priceScale().options().autoScale === false, 'edytor: Auto wyłączone w przycisku i w skali LWC');
+    const st2 = ed.state();
+    near('P32-1', st2.yr?.max, yr.max, 'edytor: góra pola = zakres z podglądu', 0.6);
+    near('P32-1', st2.yr?.min, yr.min, 'edytor: dół pola = zakres z podglądu', 0.6);
+    await ed.destroy();
+    setLS(P.AUTO_KEY, '1');
+  });
+
+  // ===== P32-2: box sesji, linie high/low i PDH/PDL do sweepu: geometria wspólna z LWC (±1 px), podgląd SVG, popover ustawień =====
+  // stary kod (dowód czerwieni) nie ma tych funkcji: sekcje P32-2 zgłoszą błąd, a reszta strony biegnie dalej
+  let prefs = null, model = { boxes: [], lines: [] };
+  const times = candles.map((c) => c[0]);
+  try { prefs = P.normOverlays({ sessions: true, pdhl: true }); model = SW.overlayLevels(candles, { windows: SW.sessionWindows(times[0], times[times.length - 1] + 1, P.sessionDefs(prefs)), pd: SW.pdhlSpans(times, daily), sweep: true }); } catch (e) { rec('P32-2', false, `brak modelu nakładek: ${e.message}`); }
+  await section('P32-2', async () => {
+    rec('P32-2', model.boxes.map((b) => b.id).join(',') === 'asia,london,ny', `boxy: ${model.boxes.map((b) => b.id).join(',')}`);
+    rec('P32-2', model.lines.filter((l) => l.kind === 'pd').length >= 2 && model.lines.filter((l) => l.kind === 'pd').length % 2 === 0 && model.lines.some((l) => l.swept), `linie: ${model.lines.length}, ze sweepem ${model.lines.filter((l) => l.swept).length}`);
+    // LWC: osobny wykres o tych samych świecach; geometria z overlayScales (jak prymityw) kontra współrzędne LWC
+    const el = document.getElementById('l');
+    const chart = LWC.createChart(el, { width: 900, height: 500, timeScale: { timeVisible: true } });
+    const series = chart.addSeries(LWC.CandlestickSeries, {});
+    series.setData(candles.map(([time, open, high, low, close]) => ({ time, open, high, low, close })));
+    chart.timeScale().fitContent();
+    await sleep(300);
+    const ts = chart.timeScale(), n = candles.length;
+    const sc = W.overlayScales(chart, series, candles);
+    const g = P.overlayGeometry(model, sc, prefs, { left: 0, right: ts.width() });
+    const half = (ts.logicalToCoordinate(n - 1) - ts.logicalToCoordinate(n - 2)) / 2;
+    g.rects.forEach((r, k) => {
+      const b = model.boxes[k];
+      near('P32-2', r.x, ts.logicalToCoordinate(b.a) - half, `box ${b.id}: lewa krawędź`);
+      near('P32-2', r.x + r.w, ts.logicalToCoordinate(b.b) + half, `box ${b.id}: prawa krawędź`);
+      near('P32-2', r.y, series.priceToCoordinate(b.hi), `box ${b.id}: high`);
+      near('P32-2', r.y + r.h, series.priceToCoordinate(b.lo), `box ${b.id}: low`);
+    });
+    for (const l of g.lines) {
+      const m = model.lines.find((x) => x.kind === l.kind && x.id === l.id && x.side === l.side && Math.abs(sc.y(x.price) - l.y) < 1e-6);
+      near('P32-2', l.y, series.priceToCoordinate(m.price), `${l.kind} ${l.id} ${l.side}: cena`);
+      const end = m.swept ? ts.logicalToCoordinate(m.sweep) : l.kind === 'pd' ? null : ts.logicalToCoordinate(n - 1) + half;
+      if (end != null) near('P32-2', l.x2, end, `${l.kind} ${l.id} ${l.side}: koniec (${m.swept ? 'sweep' : 'krawędź danych'})`);
+      if (m.swept) { const c = candles[m.sweep]; rec('P32-2', l.side === 'hi' ? c[2] > m.price : c[3] < m.price, `${l.id} ${l.side}: świeca końca wychodzi poza poziom`); }
+    }
+    // prymityw rysuje bez błędów z tą samą geometrią
+    const prim = W.overlayPrimitive({ chart, series, getModel: () => model, getPrefs: () => prefs, getCandles: () => candles, getColors: () => W.readColors(el) });
+    series.attachPrimitive(prim); await sleep(100);
+    rec('P32-2', JSON.stringify(prim.geometry()) === JSON.stringify(g), 'prymityw LWC liczy tę samą geometrię co overlayGeometry');
+    chart.remove();
+    // podgląd SVG z włączonymi nakładkami: boxy, linie, opisy, tokeny
+    setLS(P.OVERLAY_KEY, JSON.stringify({ sessions: true, pdhl: true }));
+    const root = document.getElementById('p');
+    const pv = P.createPodglad(root, { trade, tf: '1m', frame: { from: candles[0][0], to: candles[1439][0] } });
+    await pv.ready; await sleep(400);
+    const svg = root.querySelector('.swc-plot svg');
+    const rects = [...svg.querySelectorAll('rect.sess')], ls = [...svg.querySelectorAll('line.ovl')], labels = [...svg.querySelectorAll('text.ovl-l')].map((x) => x.textContent);
+    rec('P32-2', rects.length === 3 && rects.every((r) => /fill:var\(--n-(blue|orange|purple)\)/.test(r.getAttribute('style')) && /stroke-width:1/.test(r.getAttribute('style'))), `podgląd: 3 boxy w kolorach tokenów (${rects.map((r) => r.getAttribute('style')).join(' | ')})`);
+    rec('P32-2', ls.length === model.lines.length && labels.includes('PDH') && labels.some((x) => /^Londyn [HL]$/.test(x)), `podgląd: ${ls.length} linii, opisy ${labels.join(', ')}`);
+    // popover ustawień: godziny, ramka 0, bez opisów; zapis w localStorage, wykres przerysowany
+    root.querySelector('.swc-ovbtn').click(); await sleep(30);
+    const pop = root.querySelector('.swc-ovpop');
+    rec('P32-2', !pop.hidden && pop.querySelectorAll('input[type="time"]').length === 6 && pop.querySelectorAll('input[type="color"]').length === 4, 'popover: godziny 3 sesji, kolory 3 boxów i PDH/PDL');
+    const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
+    const bw = pop.querySelector('[data-ovk="boxWidth"]'); bw.value = '0'; fire(bw, 'change');
+    const lb = pop.querySelector('[data-ovk="labels"]'); lb.checked = false; fire(lb, 'change');
+    const lf = pop.querySelector('[data-ovk="sess.london.from"]'); lf.value = '03:00'; fire(lf, 'change');
+    await sleep(120);
+    const saved = JSON.parse(localStorage.getItem(P.OVERLAY_KEY));
+    rec('P32-2', saved.boxWidth === 0 && saved.labels === false && saved.sess.london.from === '03:00', `ustawienia zapisane (${JSON.stringify({ b: saved.boxWidth, l: saved.labels, f: saved.sess.london.from })})`);
+    const svg2 = root.querySelector('.swc-plot svg');
+    rec('P32-2', [...svg2.querySelectorAll('rect.sess')].every((r) => /stroke-width:0/.test(r.getAttribute('style'))) && !svg2.querySelector('text.ovl-l'), 'podgląd po zmianie: box bez ramki, linie bez opisów');
+    pop.querySelector('[data-ovreset]').click(); await sleep(60);
+    rec('P32-2', JSON.parse(localStorage.getItem(P.OVERLAY_KEY)).sess.london.from === '02:00' && JSON.parse(localStorage.getItem(P.OVERLAY_KEY)).sessions === true, 'Przywróć domyślne: godziny wracają, przełączniki zostają');
+    pv.destroy();
+    setLS(P.OVERLAY_KEY, JSON.stringify({ sessions: false, pdhl: false }));
+  });
+
+  // ===== edytor do P32-3, P32-5, P32-6, P32-7 =====
+  setLS('thq.chart.styleDock.v1', 'pin');
+  const host = document.getElementById('c');
+  const ed = await W.createEditor(host, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { tf: '1m', fromIndex: 760, toIndex: 880, candles, rolls: [] }, doc: null, edited: 'S0', onDone: () => {} });
+  await sleep(300);
+  const M = ed.manager, panel = host.querySelector('.swc-style'), plot = host.querySelector('.swc-plot'), gear = host.querySelector('.swc-gear');
+  const ts = ed.chart.timeScale(), S = ed.series;
+  const cv = () => host.querySelector('.swc-lwc canvas');
+  const at = (x, y) => { const r = plot.getBoundingClientRect(); return { clientX: r.left + x, clientY: r.top + y }; };
+  const X = (i) => ts.logicalToCoordinate(i), Y = (p) => S.priceToCoordinate(p);
+  const rid = M.add({ kind: 'rectangle', points: [{ time: candles[790][0], price: 5846 }, { time: candles[820][0], price: 5836 }], style: { color: '#cccccc', width: 1, fillBackground: true, backgroundColor: '#cccccc', transparency: 90, fontSize: 12, text: 'OB', horzLabelsAlign: 'center', vertLabelsAlign: 'middle' }, text: 'OB' });
+  await sleep(60);
+
+  // ===== P32-3: panel przypięty: zębatka otwiera, X zamyka, po odznaczeniu zostaje z ostatnim rysunkiem =====
+  await section('P32-3', async () => {
+    rec('P32-3', panel.hidden, 'panel przypięty nie stoi od startu (otwiera go zębatka)');
+    M.select([rid]); await sleep(60);
+    rec('P32-3', panel.hidden && !gear.hidden, 'samo zaznaczenie nie otwiera panelu, zębatka widoczna');
+    gear.click(); await sleep(60);
+    rec('P32-3', !panel.hidden && panel.dataset.dock === 'pin' && !!panel.querySelector('[data-act="pclose"]'), 'zębatka otwiera panel przypięty z X');
+    M.select([]); await sleep(60);
+    rec('P32-3', !panel.hidden && /ostatnio wybrany/.test(panel.querySelector('.swc-ph').textContent) && /„OB”/.test(panel.querySelector('.swc-ph').textContent), `po odznaczeniu panel zostaje i pokazuje, którego rysunku dotyczy (${panel.querySelector('.swc-ph').textContent})`);
+    const ws = panel.querySelector('[data-k="width"]'); ws.value = '2'; ws.dispatchEvent(new Event('change', { bubbles: true }));
+    rec('P32-3', M.get(rid).style.width === 2, 'zmiana w panelu po odznaczeniu dalej dotyczy ostatniego rysunku');
+    panel.querySelector('[data-act="pclose"]').click(); await sleep(60);
+    rec('P32-3', panel.hidden, 'X chowa panel całkowicie');
+    M.select([rid]); await sleep(60);
+    plot.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 })); await sleep(30);
+    rec('P32-3', panel.hidden, 'po X ponowne zaznaczenie nie przywraca panelu');
+    gear.click(); await sleep(60);
+    rec('P32-3', !panel.hidden && panel.dataset.mode === 'style', 'zębatka przywraca panel');
+    // usunięcie rysunku zamyka panel
+    const tmp = M.add({ kind: 'horizontal-line', points: [{ time: candles[800][0], price: 5850 }], style: { color: '#cccccc', width: 1 } });
+    M.select([tmp]); await sleep(60);
+    rec('P32-3', /Linia pozioma/.test(panel.querySelector('.swc-ptitle')?.textContent || ''), 'zaznaczenie innego rysunku przełącza panel na ten rysunek');
+    host.querySelector('[data-act="del"]').click(); await sleep(60);
+    rec('P32-3', panel.hidden, 'usunięcie rysunku z panelu zamyka panel');
+  });
+
+  // ===== P32-7: prostokąt z grubością 0: bez ramki, zaznaczenie działa =====
+  await section('P32-7', async () => {
+    M.select([rid]); await sleep(40); gear.click(); await sleep(60);
+    const ws = panel.querySelector('[data-k="width"]');
+    rec('P32-7', ws && [...ws.options].map((x) => x.value).join(',') === '0,1,2,3,4', `prostokąt: grubość 0-4 (${ws && [...ws.options].map((x) => x.value)})`);
+    ws.value = '0'; ws.dispatchEvent(new Event('change', { bubbles: true }));
+    rec('P32-7', M.get(rid).style.width === 0, 'grubość 0 zapisana w rysunku');
+    M.select([]); await sleep(40);
+    const cx = (X(790) + X(820)) / 2, cy = (Y(5846) + Y(5836)) / 2 + 12;
+    cv().dispatchEvent(new PointerEvent('pointerdown', { ...o, ...at(cx, cy) }));
+    cv().dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0, ...at(cx, cy) }));
+    await sleep(80);
+    rec('P32-7', [].concat(M.selection()).includes(rid), 'prostokąt bez ramki dalej zaznacza się kliknięciem w środek');
+    const ln = M.add({ kind: 'trend-line', points: [{ time: candles[780][0], price: 5830 }, { time: candles[800][0], price: 5835 }], style: { color: '#cccccc', width: 1 } });
+    M.select([ln]); await sleep(60);
+    rec('P32-7', [...(panel.querySelector('[data-k="width"]')?.options || [])].map((x) => x.value).join(',') === '1,2,3,4', 'linia: grubość bez 0 (linia zniknęłaby całkiem)');
+    M.remove(ln); panel.querySelector('[data-act="pclose"]')?.click(); await sleep(40);
+  });
+
+  // ===== P32-5 i P32-6: tekst w miejscu, dwuklik w miejscu tekstu =====
+  await section('P32-5', async () => {
+    const slot = ed.textSlot(M.get(rid));
+    rec('P32-6', slot && !slot.empty && slot.anchor === 'middle', `pole tekstu prostokąta (${JSON.stringify(slot)})`);
+    // dwuklik obok pola tekstu: brak edycji
+    plot.querySelector('canvas').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(slot.x + 200, slot.y + 120) }));
+    await sleep(40);
+    rec('P32-6', !host.querySelector('.swc-text'), 'dwuklik poza polem tekstu nie zaczyna edycji');
+    cv().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(slot.x + 3, slot.y + 6) }));
+    await sleep(60);
+    const inp = host.querySelector('.swc-text');
+    rec('P32-6', !!inp && inp.value === 'OB', `dwuklik w miejscu tekstu prostokąta zaczyna edycję (${inp && inp.value})`);
+    if (!inp) return;
+    const cs = getComputedStyle(inp), r = inp.getBoundingClientRect(), pr = plot.getBoundingClientRect();
+    rec('P32-5', cs.backgroundColor === 'rgba(0, 0, 0, 0)' && cs.borderTopWidth === '0px' && cs.color === 'rgba(0, 0, 0, 0)' && cs.boxShadow === 'none', `pole bez tła, ramki i własnego koloru tekstu (${cs.backgroundColor}, ${cs.borderTopWidth}, ${cs.color})`);
+    rec('P32-5', cs.fontSize === '12px' && cs.textAlign === 'center' && W.readColors(plot).font.split(',')[0].trim().replace(/["']/g, '') === cs.fontFamily.split(',')[0].trim().replace(/["']/g, ''), `ten sam krój i rozmiar co tekst (${cs.fontSize} ${cs.fontFamily}, ${cs.textAlign})`);
+    near('P32-5', r.left - pr.left + r.width / 2, slot.x, 'środek pola = środek tekstu');
+    rec('P32-5', r.top - pr.top <= slot.y && r.bottom - pr.top >= slot.y + slot.size, `pole obejmuje wiersz tekstu (${r.top - pr.top}..${r.bottom - pr.top} vs ${slot.y}..${slot.y + slot.size})`);
+    inp.value = 'OB 15m'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+    rec('P32-5', M.get(rid).text === 'OB 15m' && M.get(rid).style.text === 'OB 15m', 'w trakcie pisania tekst rysuje wykres (rysunek ma bieżący tekst)');
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(40);
+    rec('P32-6', !host.querySelector('.swc-text') && M.get(rid).text === 'OB 15m', 'Enter zatwierdza');
+    cv().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(slot.x, slot.y + 6) }));
+    await sleep(60);
+    const i2 = host.querySelector('.swc-text');
+    i2.value = 'zzz'; i2.dispatchEvent(new Event('input', { bubbles: true }));
+    i2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(40);
+    rec('P32-6', !host.querySelector('.swc-text') && M.get(rid).text === 'OB 15m' && M.get(rid).style.text === 'OB 15m', `Esc anuluje (${M.get(rid).text})`);
+    // linia pozioma bez tekstu: pole w miejscu, gdzie tekst by się pojawił
+    const hid = M.add({ kind: 'horizontal-line', points: [{ time: candles[800][0], price: 5832 }], style: { color: '#cccccc', width: 1, fontSize: 14 } });
+    await sleep(40);
+    const hs = ed.textSlot(M.get(hid));
+    rec('P32-6', hs && hs.empty && Math.abs(hs.x - ts.width() / 2) <= 1, `pusta linia: pole na środku linii (${JSON.stringify(hs)})`);
+    cv().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(hs.x, hs.y + 7) }));
+    await sleep(60);
+    const i3 = host.querySelector('.swc-text');
+    rec('P32-6', !!i3 && i3.value === '', 'dwuklik w pustym miejscu tekstu linii zaczyna edycję');
+    if (i3) { i3.value = 'POI'; i3.dispatchEvent(new Event('input', { bubbles: true })); i3.dispatchEvent(new FocusEvent('blur')); }
+    await sleep(40);
+    rec('P32-6', M.get(hid).style.text === 'POI', `klik obok (utrata fokusu) zatwierdza (${M.get(hid).style.text})`);
+    // narzędzie „Tekst”: dwuklik (paczka) otwiera to samo pole w miejscu tekstu
+    const tid = M.add({ kind: 'text', points: [{ time: candles[840][0], price: 5850 }], text: 'BOS', style: { color: '#cccccc', textColor: '#cccccc', fontSize: 14 } });
+    await sleep(60);
+    const tsl = ed.textSlot(M.get(tid));
+    cv().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(tsl.x + 6, tsl.y + 7) }));
+    await sleep(60);
+    const i4 = host.querySelector('.swc-text');
+    rec('P32-6', !!i4 && i4.value === 'BOS', 'dwuklik w tekst (narzędzie Tekst) zaczyna edycję w miejscu');
+    if (i4) { const r4 = i4.getBoundingClientRect(); near('P32-5', r4.left - pr.left, tsl.x, 'Tekst: pole zaczyna się tam, gdzie tekst'); rec('P32-5', getComputedStyle(i4).fontSize === '14px', 'Tekst: rozmiar jak tekst'); i4.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }
+    await sleep(40);
+    rec('P32-6', M.get(tid)?.text === 'BOS', 'Esc w istniejącym tekście nie usuwa go');
+  });
+  await ed.destroy();
+
+  // ===== P32-4: strefy rosnąco po przesunięciu UTC (Ustawienia i wykres) =====
+  await section('P32-4', async () => {
+    const st = { chartTz: '', palette: 'color', custom: { onyx: {}, platinum: {} }, beR: 0.1, beUsd: 0, share: { nick: '' } };
+    const Sx = U.createSettings({ settings: st, save: () => {}, getTheme: () => 'onyx', applyAll: () => {}, onBe: () => {} });
+    Sx.toggle('wykresy'); await sleep(30); // P41 (pakiet H): strefa czasowa w zakładce Wykresy
+    const now = Date.now() / 1000;
+    const off = (z) => (z === 'UTC' ? 0 : P.etcHours(z) != null ? P.etcHours(z) * 3600 : P.tzOffset(z, now));
+    const vals = [...document.querySelectorAll('#sp-tz option')].map((x) => x.value).filter(Boolean);
+    const offs = vals.map(off);
+    rec('P32-4', vals.length >= 30 && offs.every((v, k) => k === 0 || v >= offs[k - 1]), `Ustawienia: ${vals.length} stref rosnąco (${vals.slice(0, 4).join(', ')} … ${vals.slice(-2).join(', ')})`);
+    const w = vals.indexOf('Europe/Warsaw'), e = vals.indexOf(off('Europe/Warsaw') === 3600 ? 'Etc/GMT-1' : 'Etc/GMT-2');
+    rec('P32-4', w === e + 1 || (w > e && offs[w] === offs[e]), `popularne wplecione: Warszawa zaraz po pełnej godzinie o tym przesunięciu (${vals[e]}, ${vals[w]})`);
+    rec('P32-4', !document.querySelector('#sp-tz optgroup'), 'jedna lista, bez grup');
+    Sx.toggle();
+    const chartSel = new DOMParser().parseFromString(P.tzSelectHtml(now), 'text/html').querySelector('select');
+    const cv2 = [...chartSel.options].map((x) => x.value).filter(Boolean);
+    rec('P32-4', JSON.stringify(cv2) === JSON.stringify(vals), 'wykres: ta sama kolejność co Ustawienia');
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

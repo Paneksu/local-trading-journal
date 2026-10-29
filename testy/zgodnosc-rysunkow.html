@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: zgodność geometrii rysunków z LWC (strona robocza)</title>
+<!-- Strona robocza testu wykresy-06 (testy/przegladarka.mjs, Chrome/Edge headless). Podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Wykres LWC na syntetycznych świecach (luka nocna, brakujące minuty). Dla 7 narzędzi porównuje kształty z public/js/geometria.js ze sceną paczki
+     rysowania (sceneOf + makeCoords: timeToCoordinate/logicalToCoordinate/priceToCoordinate). Skale geometrii dostają parametry odczytane z LWC
+     (odstęp świec, x ostatniej świecy, dwa punkty skali ceny): test sprawdza geometrię, nie kadr. Tolerancja 1 px. -->
+<style>
+  body { margin: 0; padding: 16px; font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  #c { width: 900px; height: 500px; }
+</style>
+</head>
+<body>
+<div id="c"></div>
+<div id="c2" style="width:900px;height:500px"></div>
+<pre id="wynik">…</pre>
+<script type="module">
+import { createChart, CandlestickSeries, LineSeries } from '/vendor/lightweight-charts/lightweight-charts.standalone.production.mjs';
+import { makeCoords, sceneOf, defaultStyleFor } from '/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js';
+import * as G from '/js/geometria.js';
+import * as PG from '/js/podglad.js';
+import { closePoints } from '/js/styl-wykresu.js';
+
+const out = document.getElementById('wynik');
+const errors = [];
+let checks = 0;
+const near = (a, b, what) => { checks++; if (!(Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 1)) errors.push(`${what}: geometria ${a} vs LWC ${b}`); };
+
+try {
+  // 1m: 60 świec, luka nocna 3 h, potem 60 świec z co piątą minutą bez transakcji (brak świecy)
+  const T0 = 1793000000 - (1793000000 % 60);
+  const candles = [];
+  let p = 5800;
+  for (let k = 0; k < 60; k++) { const o = p, c = p + Math.sin(k / 3) * 2; candles.push([T0 + k * 60, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c, 10]); p = c; }
+  const T1 = T0 + 60 * 60 + 3 * 3600;
+  for (let k = 0; k < 75; k++) { if (k % 5 === 4) continue; const o = p, c = p + Math.cos(k / 4) * 2.5; candles.push([T1 + k * 60, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c, 10]); p = c; }
+  const el = document.getElementById('c');
+  const chart = createChart(el, { width: 900, height: 500, timeScale: { timeVisible: true, rightOffset: 12 } });
+  const series = chart.addSeries(CandlestickSeries, {});
+  const bars = candles.map(([time, open, high, low, close]) => ({ time, open, high, low, close }));
+  series.setData(bars);
+  chart.timeScale().fitContent();
+  await new Promise((r) => setTimeout(r, 300));
+
+  const ts = chart.timeScale();
+  const coords = makeCoords(chart, series, () => bars);
+  const W = ts.width(), H = 500 - ts.height();
+  const last = candles.length - 1;
+  const right = ts.logicalToCoordinate(last), spacing = right - ts.logicalToCoordinate(last - 1);
+  const xs = G.indexScale({ lastIndex: last, right, spacing });
+  const pA = 5790, pB = 5810;
+  const ys = G.priceScaleFrom(pA, series.priceToCoordinate(pA), pB, series.priceToCoordinate(pB));
+  const s = G.chartScales({ candles, xs, ys, box: { left: 0, right: W, top: 0, bottom: H }, pip: 0.25 });
+
+  // punkty: dokładne czasy świec, wnętrze świecy, luka nocna, brakująca minuta, przyszłość, przeszłość
+  const tAt = (i) => candles[i][0];
+  const probes = [tAt(0), tAt(10), tAt(10) + 37, tAt(59) + 1800, tAt(64) + 30, tAt(last), tAt(last) + 60 * 7, tAt(last) + 45, tAt(0) - 600];
+  for (const t of probes) near(s.x(s.idx(t)), coords.timeToX(t), `x(${t - T0})`);
+  for (const i of [0, 30, 60, last]) { near(s.x(i), ts.timeToCoordinate(candles[i][0]), `timeToCoordinate[${i}]`); near(s.x(i), ts.logicalToCoordinate(i), `logicalToCoordinate[${i}]`); }
+  for (const pr of [5780, 5800.25, 5833.5]) near(s.y(pr), series.priceToCoordinate(pr), `y(${pr})`);
+
+  // 7 narzędzi: każda linia i prostokąt z geometrii musi mieć odpowiednik w scenie paczki (±1 px)
+  const P = (t, price) => ({ time: t, price });
+  const st = (kind, extra = {}) => ({ ...defaultStyleFor(kind), ...extra });
+  const P7 = [0, 0.5, 0.618, 0.705, 0.79, 1].map((coeff) => ({ coeff, color: '#808080', visible: true }));
+  const drawings = [
+    { id: 'h', kind: 'horizontal-line', points: [P(tAt(20), 5801.5)], style: st('horizontal-line') },
+    { id: 't', kind: 'trend-line', points: [P(tAt(12) + 20, 5795), P(tAt(70), 5812)], style: st('trend-line') },
+    { id: 'tx', kind: 'trend-line', points: [P(tAt(30), 5799), P(tAt(90), 5806)], style: st('trend-line', { extendRight: true }) },
+    { id: 'r', kind: 'rectangle', points: [P(tAt(40), 5808), P(tAt(59) + 900, 5797)], style: st('rectangle', { rectMiddleLine: { visible: true, color: '#808080', width: 1, style: 'dashed' } }) },
+    { id: 'f', kind: 'fib-retracement', points: [P(tAt(5), 5792), P(tAt(50), 5811)], style: st('fib-retracement', { levels: P7 }) },
+    { id: 'x', kind: 'text', points: [P(tAt(66) + 10, 5803)], text: 'BOS', style: st('text') },
+    { id: 'l', kind: 'long-position', points: [P(tAt(80), 5800), P(tAt(last) + 600, 5800)], style: st('long-position', { stopLevel: 4, profitLevel: 9.5 }) },
+    { id: 's', kind: 'short-position', points: [P(tAt(70), 5806), P(tAt(100), 5806)], style: st('short-position', { stopLevel: 3, profitLevel: 6.25 }) },
+    // P27 (28.10.2026): Gann box (poziomy ceny i czasu z wypełnieniem), Fibonacci z własnymi poziomami i wypełnieniem, prostokąt z tekstem i grubością,
+    // linia trendu z tekstem, pozycja z poziomem BE (BE rysuje wykres.js, paczka nie: sprawdzane osobno niżej)
+    { id: 'g', kind: 'gann-box', points: [P(tAt(20), 5792), P(tAt(56), 5810)], style: st('gann-box') },
+    { id: 'gr', kind: 'gann-box', points: [P(tAt(64), 5812), P(tAt(90), 5798)], style: st('gann-box', { reverse: true, fillVertBackground: false }) },
+    { id: 'f2', kind: 'fib-retracement', points: [P(tAt(8), 5790), P(tAt(44), 5809)], style: st('fib-retracement', { fillBackground: true, transparency: 85, levels: [0, 0.25, 0.5, 0.886, 1, 1.272].map((coeff) => ({ coeff, color: '#808080', visible: true })) }) },
+    { id: 'rt', kind: 'rectangle', points: [P(tAt(30), 5805), P(tAt(50), 5795)], style: st('rectangle', { width: 3, text: 'OB', horzLabelsAlign: 'left', vertLabelsAlign: 'bottom', transparency: 60 }) },
+    { id: 'tt', kind: 'trend-line', points: [P(tAt(15), 5794), P(tAt(45), 5808)], style: st('trend-line', { text: 'BOS', lineStyle: 'dashed', width: 2 }) },
+    { id: 'lb', kind: 'long-position', points: [P(tAt(85), 5801), P(tAt(110), 5801)], style: st('long-position', { stopLevel: 2.5, profitLevel: 7.5, beLevel: 1, exitLevel: 4.25 }) }, // P28: z wyjściem
+  ];
+  const pxOf = (d) => d.points.map((q) => ({ x: coords.timeToX(q.time), y: coords.priceToY(q.price) }));
+  const flat = (sc) => sc.flatMap((x) => (x.t === 'group' && Array.isArray(x.children) ? flat(x.children) : [x]));
+  for (const d of drawings) {
+    const mine = G.shapes(d, s);
+    if (!mine) { errors.push(`${d.id}: geometria zwróciła null`); continue; }
+    const px = pxOf(d);
+    const scene = flat(sceneOf(d, px, { w: W, h: H, coords, selected: false }) || []);
+    const lines = scene.filter((x) => x.t === 'line' && x.a && x.b), rects = scene.filter((x) => x.t === 'rect');
+    for (const part of mine.parts) {
+      if (part.role === 'be' || part.role === 'be-label' || part.role === 'rr' || part.role === 'exit' || part.role === 'exit-path') continue; // P27: rysuje je wykres.js (extrasPrimitive), sprawdzone niżej
+      checks++;
+      if (part.t === 'line') {
+        // przedłużona linia: paczka rysuje odcinek daleko poza płótno, geometria przycina go do krawędzi pola, więc oba końce mają leżeć na odcinku sceny
+        const ext = !!(d.style.extendLeft || d.style.extendRight);
+        const onSeg = (l, q) => { const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, k = Math.max(0, Math.min(1, ((q.x - l.a.x) * dx + (q.y - l.a.y) * dy) / (dx * dx + dy * dy))); return Math.hypot(l.a.x + k * dx - q.x, l.a.y + k * dy - q.y) <= 1; };
+        const ok = lines.some((l) => {
+          const [a, b] = l.a.x <= l.b.x ? [l.a, l.b] : [l.b, l.a];
+          if (ext) return onSeg(l, { x: part.x1, y: part.y1 }) && onSeg(l, { x: part.x2, y: part.y2 });
+          return Math.abs(a.x - part.x1) <= 1 && Math.abs(b.x - part.x2) <= 1 && Math.abs(a.y - part.y1) <= 1 && Math.abs(b.y - part.y2) <= 1;
+        });
+        if (!ok) errors.push(`${d.id}: linia ${[part.x1, part.y1, part.x2, part.y2].map((v) => v.toFixed(1))} bez odpowiednika; scena: ${JSON.stringify(lines.map((l) => [l.a.x, l.a.y, l.b.x, l.b.y].map((v) => +v.toFixed(1))))}`);
+      } else if (part.t === 'rect') {
+        const ok = rects.some((r) => Math.abs(r.x - part.x) <= 1 && Math.abs(r.y - part.y) <= 1 && Math.abs(r.w - part.w) <= 1 && Math.abs(r.h - part.h) <= 1);
+        if (!ok) errors.push(`${d.id}: prostokąt ${[part.x, part.y, part.w, part.h].map((v) => v.toFixed(1))} bez odpowiednika; scena: ${JSON.stringify(rects.map((r) => [r.x, r.y, r.w, r.h].map((v) => +v.toFixed(1))))}`);
+      } else if (part.t === 'text' && d.kind === 'text') {
+        // P32: tekst stoi tam, gdzie rysuje go paczka (scena: x początku wiersza, y środka wiersza = góra + fontSize/2 + 5% fontSize)
+        const deep = (sc) => sc.flatMap((x) => (x.t === 'group' ? deep(x.items || x.children || []) : [x])); const sx = deep(sceneOf(d, px, { w: W, h: H, coords, selected: false }) || []).find((x) => x.t === 'text' && String(x.text).includes(part.text));
+        if (!sx) errors.push(`${d.id}: brak tekstu w scenie`); else { near(part.x, sx.x, `${d.id}: tekst x`); near(part.y + part.size / 2 + 0.05 * part.size, sx.y, `${d.id}: tekst y`); }
+      }
+    }
+  }
+  // P32 (28.10.2026): pole tekstu do edycji w miejscu i dwukliku (G.textSlot) stoi tam, gdzie paczka rysuje tekst linii i prostokąta, także gdy tekstu nie ma
+  // (porównanie z tekstem „M” w tym samym rysunku); prostokąt z grubością 0 nie ma ramki w paczce (strokeWidth 0) ani w podglądzie (width 0)
+  const deepAll = (sc) => sc.flatMap((x) => (x.t === 'group' ? deepAll(x.items || x.children || []) : [x]));
+  const sceneText = (d) => deepAll(sceneOf(d, pxOf(d), { w: W, h: H, coords, selected: false }) || []).find((x) => x.t === 'text');
+  for (const id of ['rt', 'tt', 'h']) {
+    const d0 = drawings.find((d) => d.id === id);
+    for (const txt of ['OB', '']) {
+      const d = { ...d0, text: txt, style: { ...d0.style, text: txt } };
+      const slot = G.textSlot(d, s), ref = sceneText({ ...d0, text: txt || 'M', style: { ...d0.style, text: txt || 'M' } });
+      if (!slot || !ref) { errors.push(`${id}: brak pola tekstu (${txt || 'puste'})`); continue; }
+      near(slot.x, ref.x, `${id} pole tekstu x (${txt || 'puste'})`); near(ref.baseline === 'central' ? slot.y + slot.size * 0.55 : slot.y, ref.y, `${id} pole tekstu y (${txt || 'puste'})`);
+      checks++; if (slot.empty !== !txt) errors.push(`${id}: empty=${slot.empty}`);
+    }
+  }
+  const r0 = { id: 'r0', kind: 'rectangle', points: [P(tAt(30), 5805), P(tAt(50), 5795)], style: st('rectangle', { width: 0 }) };
+  const r0rect = deepAll(sceneOf(r0, pxOf(r0), { w: W, h: H, coords, selected: false }) || []).find((x) => x.t === 'rect' && x.stroke);
+  checks++; if (r0rect && r0rect.strokeWidth !== 0) errors.push(`r0: paczka rysuje ramkę ${r0rect.strokeWidth} px przy grubości 0`);
+  checks++; if (G.shapes(r0, s).parts.find((p) => p.t === 'rect').width !== 0) errors.push('r0: podgląd ma ramkę przy grubości 0');
+  // P27: części, których paczka nie rysuje (BE, R:R): BE na cenie wejście + beLevel, na szerokości pozycji; R:R = zysk / ryzyko
+  const lb = G.shapes(drawings.find((d) => d.id === 'lb'), s), lbPx = pxOf(drawings.find((d) => d.id === 'lb'));
+  const beP = lb.parts.find((p) => p.role === 'be'), rrP = lb.parts.find((p) => p.role === 'rr');
+  if (!beP || !rrP) errors.push('lb: brak BE albo R:R');
+  else {
+    near(beP.y1, series.priceToCoordinate(5802), 'lb: BE y');
+    near(beP.x1, Math.min(lbPx[0].x, lbPx[1].x), 'lb: BE x1'); near(beP.x2, Math.max(lbPx[0].x, lbPx[1].x), 'lb: BE x2');
+    checks++; if (rrP.rr !== 3) errors.push(`lb: R:R ${rrP.rr} zamiast 3`);
+  }
+  // P28 (28.10.2026): kropka wyjścia (uchwyt w edytorze) na prawej krawędzi pozycji w cenie wyjścia, tam gdzie LWC, i tam gdzie kropka wyjścia
+  // podglądu z pól trade'a (levelsSvg: wyjście w świecy czasu wyjścia), ±1 px; ścieżka od wejścia do kropki
+  const exP = lb.parts.find((p) => p.role === 'exit'), exL = lb.parts.find((p) => p.role === 'exit-path');
+  const lbD = drawings.find((d) => d.id === 'lb');
+  if (!exP || !exL) errors.push('lb: brak kropki albo ścieżki wyjścia');
+  else {
+    near(exP.x, Math.max(lbPx[0].x, lbPx[1].x), 'lb: wyjście x (prawa krawędź)'); near(exP.y, series.priceToCoordinate(5805.25), 'lb: wyjście y (LWC)');
+    near(exL.x1, lbPx[0].x, 'lb: ścieżka x1'); near(exL.y1, series.priceToCoordinate(5801), 'lb: ścieżka y1'); near(exL.x2, exP.x, 'lb: ścieżka x2'); near(exL.y2, exP.y, 'lb: ścieżka y2');
+    const svg = PG.levelsSvg({ entryPrice: 5801, exitPrice: 5805.25, sl: 5798.5, tp: 5808.5 }, s, s.idx(lbD.points[0].time), s.idx(lbD.points[1].time), W, W);
+    const m = /<circle class="lvl-d exit" cx="([\d.-]+)" cy="([\d.-]+)"/.exec(svg.front);
+    if (!m) errors.push('podgląd: brak kropki wyjścia w levelsSvg'); else { near(+m[1], exP.x, 'podgląd ↔ edytor: kropka x'); near(+m[2], exP.y, 'podgląd ↔ edytor: kropka y'); }
+  }
+  // Gann box: tyle linii poziomych i pionowych, ile poziomów (7 + 7), i strefy wypełnienia (6 + 6); odwrócony bez pionowych stref
+  const gb = G.shapes(drawings.find((d) => d.id === 'g'), s), gr = G.shapes(drawings.find((d) => d.id === 'gr'), s);
+  checks++; if (gb.parts.filter((p) => p.t === 'line').length !== 14 || gb.parts.filter((p) => p.cls === 'drw-zone').length !== 12) errors.push('g: liczba linii/stref Gann boxa');
+  checks++; if (gr.parts.filter((p) => p.cls === 'drw-zone').length !== 6) errors.push('gr: odwrócony Gann box bez pionowych stref');
+  // Etap 15 (pakiet H): styl „Linia zamknięć”. Ta sama tablica świec jako LineSeries (LWC 5.2.1): lineShapes ma leżeć na punktach serii (±1 px, X i Y)
+  // i na tym samym X co świece (candleShapes), luka nocna i brakujące minuty bez sztucznych punktów.
+  const chartL = createChart(document.getElementById('c2'), { width: 900, height: 500, timeScale: { timeVisible: true, rightOffset: 12 } });
+  const seriesL = chartL.addSeries(LineSeries, {});
+  seriesL.setData(candles.map((k) => ({ time: k[0], value: k[4] })));
+  chartL.timeScale().fitContent();
+  await new Promise((r) => setTimeout(r, 300));
+  const tsL = chartL.timeScale(), lastL = candles.length - 1;
+  const rightL = tsL.logicalToCoordinate(lastL), spacingL = rightL - tsL.logicalToCoordinate(lastL - 1);
+  const xsL = G.indexScale({ lastIndex: lastL, right: rightL, spacing: spacingL });
+  const ysL = G.priceScaleFrom(pA, seriesL.priceToCoordinate(pA), pB, seriesL.priceToCoordinate(pB));
+  const sL = G.chartScales({ candles, xs: xsL, ys: ysL, box: { left: 0, right: tsL.width(), top: 0, bottom: 500 - tsL.height() }, pip: 0.25 });
+  const pts = G.lineShapes(closePoints(candles), sL), cs = G.candleShapes(candles, sL);
+  checks++; if (pts.length !== candles.length) errors.push('linia: liczba punktów ' + pts.length + ' zamiast ' + candles.length);
+  for (const i of [0, 1, 30, 59, 60, 61, 100, lastL]) {
+    near(pts[i].x, tsL.logicalToCoordinate(i), 'linia x[' + i + '] vs LWC'); near(pts[i].y, seriesL.priceToCoordinate(candles[i][4]), 'linia y[' + i + '] vs LWC');
+    near(pts[i].x, cs[i].x, 'linia x[' + i + '] vs świeca');
+  }
+  const svgL = PG.seriesSvg(candles, sL, 0, { style: 'line' });
+  checks++; if (!/class="close-line"/.test(svgL) || /class="candle/.test(svgL)) errors.push('seriesSvg(line) bez ścieżki .close-line albo ze świecami');
+  out.textContent = errors.length ? `FAIL ${errors.length}/${checks}\n${errors.join('\n')}` : `PASS ${checks} sprawdzeń`;
+} catch (e) {
+  out.textContent = `FAIL wyjątek: ${e && e.stack || e}`;
+}
+</script>
+</body>
+</html>

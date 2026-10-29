@@ -128,6 +128,27 @@ try {
   add('foto-platinum-day-1x1', { kind: 'day', format: '1:1', metric: 'R', data: dayCard(trades, konta, dayKey, 'R'), nick: NICK, photo }, tk);
   add('neutral-platinum-week-4x5', { kind: 'week', format: '4:5', metric: '%', numberColor: 'neutral', data: wkD('%'), nick: NICK }, tk);
   add('neutral-platinum-trade-1x1', { kind: 'trade', format: '1:1', metric: 'R', numberColor: 'neutral', data: tradeCard(tr, konta), nick: NICK }, tk);
+  // pakiet I (etapy 16 i 17), dopisane na końcu (karty wyżej bez zmian: ich piksele = 1.2.2): krzywa kapitału 4 formaty × 2 motywy
+  // oraz wykres trade'a z lokalnych świec (to samo żądanie co okno Udostępnij: cardChartRequest, B-ADJ wg ustawienia, bez pobierania)
+  const { cardChartRequest } = await import('/js/udostepnij.js');
+  const { chartDefaults } = await import('/js/styl-wykresu.js');
+  const esTr = live.filter((t) => /^M?ES$/.test(t.instrument || '') && t.entryPrice != null && t.dur != null).sort((a, b) => b.date.localeCompare(a.date))[0] || tr;
+  const esCard = tradeCard(esTr, konta);
+  const url = cardChartRequest(esCard, { cfg: chartDefaults(), badj: true });
+  const resp = url ? await (await fetch(url)).json().catch(() => null) : null;
+  const chart = resp?.bars?.length ? { bars: resp.bars, tf: resp.tf, style: 'candles', sl: false, tp: false, grid: true, tz: 'Europe/Warsaw' } : null;
+  for (const theme of ['onyx', 'platinum']) {
+    const tokens = setTheme(theme);
+    for (const f of Object.keys(FORMATS)) {
+      add(`krzywa-${theme}-month-${f.replace(':', 'x')}`, { kind: 'month', format: f, metric: 'R', data: monthCard(trades, konta, Number(wk.slice(0, 4)), Number(wk.slice(5, 7)), 'R'), nick: NICK, equity: true }, tokens);
+      if (chart) add(`wykres-${theme}-trade-${f.replace(':', 'x')}`, { kind: 'trade', format: f, metric: '$', data: esCard, nick: NICK, chart }, tokens);
+    }
+    if (chart) {
+      add(`wykres-${theme}-trade-linia-sltp-16x9`, { kind: 'trade', format: '16:9', metric: 'R', data: esCard, nick: NICK, chart: { ...chart, style: 'line', sl: true, tp: true } }, tokens);
+      add(`wykres-foto-${theme}-trade-9x16`, { kind: 'trade', format: '9:16', metric: '$', data: esCard, nick: NICK, chart, photo }, tokens);
+    }
+    add(`krzywa-foto-${theme}-week-16x9`, { kind: 'week', format: '16:9', metric: '%', data: wkD('%'), nick: NICK, photo, equity: true }, tokens);
+  }
   setTheme('onyx');
   status.textContent = `Gotowe: ${window.__cards.length} kart (trade ${tr?.date}, dzień ${dayKey}, tydzień ${wk}, miesiąc ${pm.y}-${pm.m}, rok ${ly}).`;
   window.__ready = true;

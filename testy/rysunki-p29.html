@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: rysunki P29 (strona robocza)</title>
+<!-- Strona robocza testu wykresy-14 (testy/przegladarka.mjs, Chrome/Edge headless), podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     P29 (28.10.2026), słowa użytkownika (BE): «nie da sie przesunac myszka poziomu be a powinno sie dac i to tak samo automatycznie zapisuje jego miejsce»;
+     (ustawienia rysunku): «ustawienienia rysunkow maja wyskoczyc dopiero jesli sie kliknie w znak ustawien przy danym rysunku [...] przesuwalny popup [...] opcja
+     przeniesienienia go do lewej strony wykresu co nie spowoduje przesuniecia i efektu zmienienia wysokosci czy szerokosci wykresu [...] przelacznik ogolny»;
+     (połowa): «ustawienia boxa, nie ma przelacznika widocznosci polowy boxa, powinno byc»; (strefy): «najpopularniejsze ale kazde utc».
+     Prawdziwe moduły (wykres.js, rysunki.js, paczka rysowania, ustawienia.js) z prawdziwym styles.css i atrapą fetch. Wynik: pre#wynik z JSON-em. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; }
+  #c { width: 900px; height: 560px; display: flex; flex-direction: column; }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<button id="gear" type="button">ustawienia</button>
+<div class="lb" style="position: static; inset: auto;"><div id="c"></div></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+
+const patches = [], saves = [];
+const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+const T0 = 1793000000 - (1793000000 % 60);
+const candles = [];
+{ let p = 5840; for (let k = 0; k < 200; k++) { const o = p, c = p + Math.sin(k / 5) * 1.5; candles.push([T0 + k * 60, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c, 10]); p = c; } }
+const real = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  url = String(url);
+  if (url.includes('/api/drawings/save')) { saves.push(JSON.parse(opts.body)); return json({ ok: true, pending: false, edited: 'S1', previous: 'S0' }); }
+  if (url.includes('/api/trades/') && opts.method === 'PATCH') { patches.push(JSON.parse(opts.body)); return json({ ok: true, edited: `S${patches.length + 1}` }); }
+  if (url.includes('/api/candles')) return json({ bars: candles, tf: '1m', rolls: [], missing: [], derived: [], availableEnd: null });
+  return real(url, opts);
+};
+const o = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1 };
+
+try {
+  const W = await import('/js/wykres.js');
+  const P = await import('/js/podglad.js');
+  const R = await import('/js/rysunki.js');
+  const U = await import('/js/ustawienia.js');
+  P.setChartTzDefault('UTC');
+  try {
+    localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false }));
+    localStorage.removeItem('thq.chart.toolStyle.v1'); localStorage.removeItem('thq.chart.stylePop.v1');
+    localStorage.setItem('thq.chart.styleDock.v1', 'pop');
+  } catch { /* bez localStorage */ }
+  const trade = { at: candles[90][0] * 1000, exitAt: candles[120][0] * 1000, instrument: 'ES', entryPrice: 5840, exitPrice: 5846, sl: 5836, tp: 5848, be: 5842, r: 1.5 };
+  const root = document.getElementById('c');
+  const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { tf: '1m', fromIndex: 60, toIndex: 150.5, candles, rolls: [] }, doc: null, edited: 'S0', onDone: () => {} });
+  await sleep(300);
+  const M = ed.manager, panel = root.querySelector('.swc-style'), plot = root.querySelector('.swc-plot'), gear = root.querySelector('.swc-gear') || Object.assign(document.createElement('button'), { hidden: true }); // stary kod: bez zębatki
+  const DOCK = 'thq.chart.styleDock.v1';
+  const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e.message}`); } };
+  const ts = ed.chart.timeScale(), S = ed.series;
+  const cv = () => root.querySelector('.swc-lwc canvas');
+  const at = (x, y) => { const r = plot.getBoundingClientRect(); return { clientX: r.left + x, clientY: r.top + y }; };
+  const drag = async (from, to, steps = 6) => {
+    cv().dispatchEvent(new PointerEvent('pointerdown', { ...o, ...at(from.x, from.y) }));
+    for (let k = 1; k <= steps; k++) cv().dispatchEvent(new PointerEvent('pointermove', { ...o, ...at(from.x + ((to.x - from.x) * k) / steps, from.y + ((to.y - from.y) * k) / steps) }));
+    cv().dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0, ...at(to.x, to.y) }));
+    await sleep(80);
+  };
+  const hover = (x, y) => cv().dispatchEvent(new PointerEvent('pointermove', { ...o, buttons: 0, ...at(x, y) }));
+  const size = () => ({ w: ts.width(), h: plot.clientHeight, pw: plot.clientWidth });
+  const size0 = size();
+
+  // ===== P29-4: zębatka i okienko =====
+  let rid = null, x0 = 0, yWant = 0;
+  await section('P29-4', async () => {
+  rec('P29-4', panel.dataset.dock === 'pop' && panel.hidden, `tryb okienka z localStorage, bez zaznaczenia nic nie wisi nad wykresem (dock ${panel.dataset.dock}, hidden ${panel.hidden})`);
+  rid = M.add({ kind: 'rectangle', points: [{ time: candles[100][0], price: 5838 }, { time: candles[110][0], price: 5844 }], style: { ...R.styleForTool('rectangle', { fg: '#ffffff', be: '#7aa7ff', fg2: '#b4b9be' }) } });
+  M.select([rid]); await sleep(60);
+  rec('P29-4', panel.hidden && !gear.hidden, `zaznaczenie pokazuje tylko zębatkę, nie okienko (panel hidden ${panel.hidden}, gear hidden ${gear.hidden})`);
+  M.select([]); await sleep(40);
+  // najechanie kursorem na rysunek (paczka liczy trafienie): zębatka przy prawym górnym rogu
+  const rx = (ts.timeToCoordinate(candles[100][0]) + ts.timeToCoordinate(candles[110][0])) / 2, ry = (S.priceToCoordinate(5838) + S.priceToCoordinate(5844)) / 2;
+  hover(rx, ry); await sleep(40);
+  const gx = gear.offsetLeft, gy = gear.offsetTop, cornerX = ts.timeToCoordinate(candles[110][0]), cornerY = S.priceToCoordinate(5844);
+  rec('P29-4', !gear.hidden && Math.abs(gx - (cornerX + 6)) <= 2 && Math.abs(gy - (cornerY - 32)) <= 2, `najechanie na rysunek pokazuje zębatkę przy rogu (${gx},${gy} vs ${cornerX + 6},${cornerY - 32})`);
+  gear.click(); await sleep(60);
+  rec('P29-4', !panel.hidden && panel.dataset.dock === 'pop' && panel.dataset.mode === 'style' && [...M.selection()].includes(rid), 'klik w zębatkę otwiera okienko ustawień tego rysunku');
+  const heads = [...panel.querySelectorAll('.swc-grp > .lbl')].map((h) => h.textContent);
+  rec('P29-4', heads.join('|') === 'Obramowanie|Wypełnienie|Tekst' && panel.querySelector('.swc-ph [data-act="pdock"]') && panel.querySelector('.swc-ph [data-act="pclose"]'), `okienko: grupy ${heads.join(', ')}, nagłówek z „Przypnij” i „Zamknij”`);
+  rec('P29-4', getComputedStyle(panel).position === 'absolute' && JSON.stringify(size()) === JSON.stringify(size0), `okienko leży na wykresie, rozmiar wykresu bez zmian (${JSON.stringify(size0)} → ${JSON.stringify(size())})`);
+  // przeciągnięcie za nagłówek
+  const ph = panel.querySelector('.swc-ph'), y0 = panel.offsetTop, hr = ph.getBoundingClientRect();
+  x0 = panel.offsetLeft;
+  ph.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: hr.left + 20, clientY: hr.top + 10 }));
+  ph.dispatchEvent(new PointerEvent('pointermove', { ...o, clientX: hr.left + 20 - 120, clientY: hr.top + 10 + 40 }));
+  ph.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0, clientX: hr.left + 20 - 120, clientY: hr.top + 10 + 40 }));
+  const saved = JSON.parse(localStorage.getItem('thq.chart.stylePop.v1') || 'null');
+  yWant = Math.max(4, Math.min(y0 + 40, panel.parentElement.clientHeight - panel.offsetHeight - 4)); // okienko nie wychodzi poza wykres
+  rec('P29-4', panel.offsetLeft === x0 - 120 && panel.offsetTop === yWant && saved && saved.x === x0 - 120 && saved.y === yWant, `okienko przesuwa się za nagłówek i pamięta miejsce (${x0},${y0} → ${panel.offsetLeft},${panel.offsetTop}, zapis ${JSON.stringify(saved)})`);
+  // zmiana w okienku działa (styl rysunku), Esc w polu nie zamyka całego okna
+  const ws = panel.querySelector('[data-k="width"]'); ws.value = '2'; ws.dispatchEvent(new Event('change', { bubbles: true }));
+  rec('P29-4', M.get(rid).style.width === 2, 'kontrolka okienka zmienia rysunek');
+  // klik obok zamyka okienko
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: 5, clientY: 5 }));
+  await sleep(30);
+  rec('P29-4', panel.hidden, 'klik obok okienka je zamyka');
+  M.select([rid]); await sleep(40); gear.click(); await sleep(60);
+  rec('P29-4', !panel.hidden && panel.offsetLeft === x0 - 120 && panel.offsetTop === yWant, `ponowne otwarcie w zapamiętanym miejscu (${panel.offsetLeft},${panel.offsetTop})`);
+  // przypięcie z lewej: panel nad lewą częścią wykresu, wykres bez zmiany rozmiaru, zostaje po kliknięciu obok
+  panel.querySelector('[data-act="pdock"]').click(); await sleep(60);
+  const pr = panel.getBoundingClientRect(), plr = plot.getBoundingClientRect();
+  rec('P29-4', localStorage.getItem(DOCK) === 'pin' && panel.dataset.dock === 'pin' && Math.abs(pr.left - plr.left - 4) <= 1 && Math.abs(pr.top - plr.top - 4) <= 1,
+    `„Przypnij z lewej”: panel w lewym górnym rogu wykresu (${Math.round(pr.left - plr.left)},${Math.round(pr.top - plr.top)}), tryb zapamiętany`);
+  rec('P29-4', JSON.stringify(size()) === JSON.stringify(size0), `panel przypięty zasłania wykres, nie zmienia jego rozmiaru (${JSON.stringify(size())})`);
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: 5, clientY: 5 })); await sleep(30);
+  M.select([]); await sleep(60);
+  rec('P29-4', !panel.hidden && panel.dataset.mode === 'style' && /ostatnio wybrany/.test(panel.textContent) && !!panel.querySelector('[data-act="pclose"]'), 'P32: panel przypięty po odznaczeniu zostaje z ostatnim rysunkiem (podpis) i ma X');
+  M.select([rid]); await sleep(60);
+  rec('P29-4', panel.dataset.mode === 'style' && panel.querySelector('[data-k="width"]')?.value === '2', 'panel przypięty pokazuje zaznaczony rysunek');
+  panel.querySelector('[data-act="pdock"]').click(); await sleep(60);
+  rec('P29-4', localStorage.getItem(DOCK) === 'pop' && !panel.hidden && panel.dataset.dock === 'pop', '„Odepnij” wraca do okienka z tym samym rysunkiem');
+  });
+
+  // ===== P29-5: linia połowy =====
+  await section('P29-5', async () => {
+  const mid = panel.querySelector('[data-k="midLine"]');
+  rec('P29-5', mid && !mid.checked, 'prostokąt: przełącznik „Linia połowy” (wyłączony)');
+  mid.checked = true; mid.dispatchEvent(new Event('change', { bubbles: true })); await sleep(30);
+  rec('P29-5', M.get(rid).style.rectMiddleLine?.visible === true && R.toolKeyOf(M.get(rid)) === 'rectangle', `linia połowy włączona, rysunek zostaje prostokątem (nie FVG): ${JSON.stringify(M.get(rid).style.rectMiddleLine)}`);
+  const gid = M.add({ kind: 'gann-box', points: [{ time: candles[95][0], price: 5836 }, { time: candles[115][0], price: 5846 }], style: R.styleForTool('gann-box', { fg: '#ffffff', fg2: '#b4b9be' }) });
+  M.select([gid]); await sleep(40); gear.click(); await sleep(60);
+  const gm = panel.querySelector('[data-k="midLine"]');
+  rec('P29-5', gm && gm.checked, 'Gann box: „Linia połowy” włączona (poziom 0,5)');
+  gm.checked = false; gm.dispatchEvent(new Event('change', { bubbles: true })); await sleep(30);
+  const gs = M.get(gid).style;
+  rec('P29-5', gs.levels.find((l) => l.coeff === 0.5)?.visible === false && gs.vLevels.find((l) => l.coeff === 0.5)?.visible === false, 'wyłączenie chowa poziom 0,5 ceny i czasu');
+  const fid = M.add({ kind: 'rectangle', points: [{ time: candles[70][0], price: 5836 }, { time: candles[75][0], price: 5839 }], style: R.styleForTool('rectangle', { fg: '#ffffff', be: '#7aa7ff', fg2: '#b4b9be' }, true) });
+  M.select([fid]); await sleep(40); gear.click(); await sleep(60);
+  rec('P29-5', R.toolKeyOf(M.get(fid)) === 'fvg' && panel.querySelector('[data-k="midLine"]')?.checked === true && /FVG/.test(panel.querySelector('.swc-ptitle').textContent), 'FVG: linia połowy włączona, tytuł FVG');
+  });
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: 5, clientY: 5 })); await sleep(30);
+
+  // ===== P29-3: BE przeciągany na pozycji trade'a i na pozycji rysowanej =====
+  await section('P29-3', async () => {
+  // linia BE z LWC (nie z kodu edytora): szerokość pozycji od wejścia do wyjścia, wysokość ceny BE
+  const beAt = (t0, t1, price) => ({ x1: ts.timeToCoordinate(t0), x2: ts.timeToCoordinate(t1), y: S.priceToCoordinate(price) });
+  root.querySelector('[data-act="lock"]').click(); await sleep(80);
+  const bl = beAt(candles[90][0], candles[120][0], 5842);
+  const bx = (bl.x1 + bl.x2) / 2;
+  hover(bx, bl.y); await sleep(20);
+  rec('P29-3', plot.dataset.exitHover === 'be', `kursor nad linią BE odblokowanej pozycji to uchwyt (${plot.dataset.exitHover})`);
+  await drag({ x: bx, y: bl.y }, { x: bx + 30, y: S.priceToCoordinate(5844.1) });
+  rec('P29-3', panel.querySelector('[data-tk="be"]')?.value === '5844' && R.positionPrices(M.get(ed.rys.positionId())).entryPrice === 5840 && M.get(ed.rys.positionId()).points[0].time === candles[90][0],
+    `przeciągnięcie BE zmienia pole BE (${panel.querySelector('[data-tk="be"]')?.value}), tick 0,25; paczka nie przesunęła pozycji`);
+  rec('P29-3', /BE/.test(panel.querySelector('.swc-tdiff')?.textContent || ''), `lista zmian przed zapisem ma BE: «${panel.querySelector('.swc-tdiff')?.textContent}»`);
+  panel.querySelector('[data-act="tsave"]').click(); await sleep(300);
+  rec('P29-3', patches.length === 1 && patches[0].be === 5844 && patches[0].edited === 'S1', `zapis tą samą ścieżką co SL/TP (PATCH, edited): ${JSON.stringify(patches[0])}`);
+  // zablokowana pozycja: linia BE nie jest uchwytem
+  const bl2 = beAt(candles[90][0], candles[120][0], 5844);
+  hover((bl2.x1 + bl2.x2) / 2, bl2.y); await sleep(20);
+  rec('P29-3', plot.dataset.exitHover === '', 'po zapisie (blokada) BE nie daje się przeciągnąć');
+  // pozycja rysowana z BE
+  const lid = M.add({ kind: 'long-position', points: [{ time: candles[130][0], price: 5838 }, { time: candles[145][0], price: 5838 }], style: { ...R.styleForTool('long-position', { fg: '#ffffff', loss: '#ff0000', profit: '#00ff00' }), stopLevel: 3, profitLevel: 9, beLevel: 1, beOn: true } });
+  await sleep(2600); saves.length = 0;
+  const lb = beAt(candles[130][0], candles[145][0], 5839);
+  await drag({ x: (lb.x1 + lb.x2) / 2, y: lb.y }, { x: (lb.x1 + lb.x2) / 2, y: S.priceToCoordinate(5842) });
+  rec('P29-3', Math.abs(M.get(lid).style.beLevel - 4) < 1e-9 && M.get(lid).points[0].price === 5838, `pozycja rysowana: BE przeciągnięty do 5842 (beLevel ${M.get(lid).style.beLevel}), pozycja na miejscu`);
+  await sleep(2600);
+  const sd = saves[saves.length - 1]?.doc?.d?.find((d) => d.kind === 'long-position');
+  rec('P29-3', saves.length >= 1 && sd && Math.abs(sd.style.beLevel - 4) < 1e-9, `nowe miejsce BE zapisane z rysunkami (${saves.length} zapis, beLevel ${sd && sd.style.beLevel})`);
+  });
+  await ed.destroy();
+
+  // ===== P29-2: strefy w Ustawieniach: krótka lista, zapisana strefa spoza listy zostaje =====
+  const st = { chartTz: 'Asia/Kolkata', palette: 'color', custom: { onyx: {}, platinum: {} }, beR: 0.1, beUsd: 0, share: { nick: '' } };
+  await section('P29-2', async () => {
+  const Sx = U.createSettings({ settings: st, save: () => {}, getTheme: () => 'onyx', applyAll: () => {}, onBe: () => {} });
+  Sx.toggle('wykresy'); await sleep(30); // P41 (pakiet H): strefa czasowa w zakładce Wykresy, przełącznik rysunku zostaje w Ogólne
+  const sel = document.querySelector('#sp-tz');
+  const vals = sel ? [...sel.options].map((x) => x.value) : [];
+  rec('P29-2', sel && sel.value === 'Asia/Kolkata' && vals.length <= 45 && vals.includes('Etc/GMT-14') && vals.includes('Etc/GMT+12') && vals.includes('Asia/Tokyo') && !document.querySelector('#sp-tz-q'),
+    `Ustawienia: ${vals.length} pozycji, zapisana Kolkata widoczna i wybrana, pełne godziny −12…+14, bez pola filtra`);
+  rec('P29-2', [...sel.options].find((x) => x.value === 'Etc/GMT-14')?.textContent === 'UTC+14' && [...sel.options].find((x) => x.value === 'Etc/GMT+5')?.textContent === 'UTC−5', 'opis pełnej godziny ze znakiem jak UTC (nie odwróconym POSIX)');
+  Sx.handle('sp-tab', 'ogolne'); await sleep(30);
+  const dk = [...document.querySelectorAll('[data-act="sp-dock"]')];
+  rec('P29-2', dk.length === 2, 'Ustawienia → Ogólne: przełącznik „Ustawienia rysunku: okienko / panel przypięty”');
+  Sx.handle('sp-dock', 'pin', dk[1]);
+  rec('P29-4', localStorage.getItem(DOCK) === 'pin' && dk[1].getAttribute('aria-pressed') === 'true', 'przełącznik ogólny zapisuje tryb panelu');
+  Sx.toggle();
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

@@ -14,7 +14,7 @@ export function niceTicks(min, max, count = 5) {
   return ticks;
 }
 
-function placeTip(el, tip, x, y) {
+export function placeTip(el, tip, x, y) {
   tip.hidden = false;
   const w = tip.offsetWidth;
   const maxX = el.clientWidth - w - 4;
@@ -22,7 +22,7 @@ function placeTip(el, tip, x, y) {
   tip.style.top = `${Math.max(4, y - tip.offsetHeight - 12)}px`;
 }
 
-function ensureTip(el) {
+export function ensureTip(el) {
   let tip = el.querySelector(':scope > .tip');
   if (!tip) {
     tip = document.createElement('div');

@@ -22,8 +22,8 @@ export function tmp(prefix = 'ltj-test-') { const d = mkdtempSync(path.join(tmpd
 // Środowisko bez prawdziwych kluczy: zmienne Notion z procesu testów nigdy nie trafiają do procesów potomnych.
 export function cleanEnv(extra = {}) {
   const e = { ...process.env };
-  for (const k of ['NOTION_TOKEN', 'NOTION_VERSION', 'DS_TRADES', 'DS_KONTA', 'DS_DZIENNIK', 'DS_FINANSE', 'NOTION_ROOT_URL', 'NOTION_API_BASE', 'THQ_CONFIG_DIR', 'UPDATE_API_BASE', 'UPDATE_DOWNLOAD_BASE', 'PORT']) delete e[k];
-  return { ...e, THQ_NO_OPEN: '1', UPDATE_API_BASE: 'http://127.0.0.1:9', ...extra };
+  for (const k of ['NOTION_TOKEN', 'NOTION_VERSION', 'DS_TRADES', 'DS_KONTA', 'DS_DZIENNIK', 'DS_FINANSE', 'NOTION_ROOT_URL', 'NOTION_API_BASE', 'THQ_CONFIG_DIR', 'UPDATE_API_BASE', 'UPDATE_DOWNLOAD_BASE', 'PORT', 'DATABENTO_API_KEY', 'DATABENTO_API_BASE']) delete e[k];
+  return { ...e, THQ_NO_OPEN: '1', THQ_NO_AUTO_1S: '1', UPDATE_API_BASE: 'http://127.0.0.1:9', DATABENTO_API_BASE: 'http://127.0.0.1:9', ...extra };
 }
 
 export function start(file, args = [], env = {}, { cwd = ROOT } = {}) {
@@ -66,6 +66,13 @@ export async function atrapa(port, env = {}) {
   const get = async (pth) => (await fetch(base + pth, { headers: { Authorization: 'Bearer x' } })).json();
   const post = async (pth, body) => (await fetch(base + pth, { method: 'POST', headers: { Authorization: 'Bearer x', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
   return { p, base, port, get, post, writes: () => get('/__test/writes'), dump: () => get('/__test/dump'), stop: () => p.kill() };
+}
+export async function atrapaDb(port, env = {}) {
+  const p = start(path.join(ROOT, 'testy', 'atrapa-databento.mjs'), [String(port)], cleanEnv(env));
+  await waitHttp(`http://127.0.0.1:${port}/__test/log`);
+  const base = `http://127.0.0.1:${port}`;
+  const j = async (pth, body) => (await fetch(base + pth, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) })).json();
+  return { p, base, port, log: () => j('/__test/log'), config: (c) => j('/__test/config', c), reset: () => j('/__test/reset', {}), stop: () => p.kill() };
 }
 export async function server(port, env, { cwd = ROOT } = {}) {
   const p = start(path.join(cwd, 'server.mjs'), [], cleanEnv({ PORT: String(port), ...env }), { cwd });

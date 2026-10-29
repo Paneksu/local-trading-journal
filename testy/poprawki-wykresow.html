@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: poprawki wykresów po przeglądzie (strona robocza)</title>
+<!-- Strona robocza testu wykresy-12 (testy/przegladarka.mjs, Chrome/Edge headless), podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Sprawdza na prawdziwych modułach (podglad.js, wykres.js, rysunki.js) z atrapą fetch, co poprawiono po przeglądzie 28.10.2026:
+     W1 (listenery na trwałym elemencie po destroy), W3 (zapis rysunków, który się nie udał, nie ginie: potwierdzenie przy „Gotowe”, kolejka zostaje),
+     P27 (własny zapis rysunków nie psuje kontroli 409 przy zapisie cen, cudza zmiana trade'a w Notion dalej daje 409).
+     Wynik: element pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<style>
+  :root { --font: sans-serif; --fg: #f3f3f3; --fg-rgb: 243 243 243; --fg-2: #b4b9be; --popover: #26292b; --line: rgb(80 86 90 / .7); --be: oklch(0.72 0.12 260); }
+  body { margin: 0; padding: 16px; background: #0e0f10; color: #f3f3f3; font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  .lb { --profit: oklch(0.72 0.19 150); --loss: rgb(255 106 106); }
+  #c, #a, #b { width: 900px; height: 520px; display: flex; flex-direction: column; }
+  .swc { display: flex; flex-direction: column; gap: 8px; width: 100%; height: 100%; }
+  .swc-plot { flex: 1; min-height: 200px; position: relative; }
+</style>
+</head>
+<body>
+<div class="lb"><div id="a"></div><div id="b"></div><div id="c"></div></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+
+// ---- szpieg listenerów: które listenery dodane na trwałych elementach żyją nadal (nie zdjęte, signal nie przerwany) ----
+const live = new Set();
+const capOf = (o) => (typeof o === 'boolean' ? o : !!o?.capture);
+const add0 = EventTarget.prototype.addEventListener, rem0 = EventTarget.prototype.removeEventListener;
+EventTarget.prototype.addEventListener = function (type, fn, opts) {
+  const rec1 = { target: this, type, fn, cap: capOf(opts), signal: opts && typeof opts === 'object' ? opts.signal : null };
+  live.add(rec1);
+  return add0.call(this, type, fn, opts);
+};
+EventTarget.prototype.removeEventListener = function (type, fn, opts) {
+  for (const r of [...live]) if (r.target === this && r.type === type && r.fn === fn && r.cap === capOf(opts)) live.delete(r);
+  return rem0.call(this, type, fn, opts);
+};
+const leaked = (targets) => [...live].filter((r) => targets.includes(r.target) && !(r.signal && r.signal.aborted)).map((r) => `${r.type}${r.cap ? '/capture' : ''}`);
+
+// ---- atrapa serwera: zapis rysunków, PATCH trade'a z kontrolą 409, świece ----
+const sim = { page: 'S0', saves: 0, patches: [], patchStatus: [], failSave: false, n: 0 };
+const stamp = () => `2026-10-28T10:${String(++sim.n).padStart(2, '0')}:00.000Z`;
+const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+const T0 = 1793000000 - (1793000000 % 60);
+const candles = [];
+{ let p = 5840; for (let k = 0; k < 200; k++) { const o = p, c = p + Math.sin(k / 5) * 1.5; candles.push([T0 + k * 60, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c, 10]); p = c; } }
+const real = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  url = String(url);
+  if (url.includes('/api/drawings/save')) {
+    if (sim.failSave) return json({ error: 'Notion nie odpowiada' }, 502);
+    const previous = sim.page; sim.page = stamp(); sim.saves++;
+    return json({ ok: true, pending: false, edited: sim.page, previous });
+  }
+  if (url.includes('/api/trades/') && opts.method === 'PATCH') {
+    const b = JSON.parse(opts.body); sim.patches.push(b);
+    if (b.edited && b.edited !== sim.page) { sim.patchStatus.push(409); return json({ error: 'Ten wpis zmieniono w Notion po ostatnim odświeżeniu.', code: 'stale' }, 409); }
+    sim.page = stamp(); sim.patchStatus.push(200);
+    return json({ ok: true, edited: sim.page });
+  }
+  if (url.includes('/api/candles')) return json({ bars: candles, tf: '1m', rolls: [], missing: [], derived: [], availableEnd: null });
+  return real(url, opts);
+};
+
+try {
+  const W = await import('/js/wykres.js');
+  const P = await import('/js/podglad.js');
+  const D = await import('/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js');
+  P.setChartTzDefault('UTC');
+  const trade = { at: candles[90][0] * 1000, exitAt: candles[120][0] * 1000, instrument: 'ES', entryPrice: 5840, exitPrice: 5846, sl: 5836, tp: 5848, be: 5842 };
+  const frame = { tf: '1m', shown: '1m', fromIndex: 60, toIndex: 140.5, candles, rolls: [] };
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); localStorage.removeItem('thq.chart.toolStyle.v1'); } catch { /* bez localStorage */ }
+  const targets = [window, document, document.documentElement, document.body];
+
+  // ===== W1: listenery na trwałym elemencie (w aplikacji .lb-chart żyje przez cały czas) =====
+  const rootA = document.getElementById('a'), rootB = document.getElementById('b');
+  targets.push(rootA, rootB);
+  const base = leaked(targets).length;
+  for (let k = 0; k < 3; k++) {
+    const pv = P.createPodglad(rootA, { trade, drawings: [], onEdit: () => {} });
+    await pv.ready; await sleep(60);
+    pv.destroy();
+  }
+  const afterPv = leaked(targets);
+  rec('W1', afterPv.length === base, `podgląd: po 3× create+destroy zostało ${afterPv.length - base} listenerów na trwałych elementach (${afterPv.join(', ')})`);
+  for (let k = 0; k < 2; k++) {
+    const e1 = await W.createEditor(rootB, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { ...frame }, doc: null, edited: 'S0', onDone: () => {} });
+    await sleep(120);
+    await e1.destroy();
+  }
+  const afterEd = leaked(targets);
+  rec('W1', afterEd.length === base, `edytor: po 2× create+destroy zostało ${afterEd.length - base} listenerów (${afterEd.join(', ')})`);
+
+  // ===== edytor do P27 i W3 =====
+  const root = document.getElementById('c');
+  let doneArg = null;
+  const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { ...frame }, doc: null, edited: 'S0', onDone: (f) => { doneArg = f; } });
+  await sleep(300);
+  sim.page = 'S0';
+  const M = ed.manager, panel = root.querySelector('.swc-style');
+  const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+  const line = (price) => M.add({ kind: 'horizontal-line', points: [{ time: candles[100][0], price }], style: { ...D.defaultStyleFor('horizontal-line') } });
+  const savePosition = async (sl) => {
+    if (!ed.rys.unlocked()) { root.querySelector('[data-act="lock"]').click(); await sleep(60); }
+    const slIn = panel.querySelector('[data-tk="sl"]'); slIn.value = String(sl); fire(slIn, 'change');
+    panel.querySelector('[data-act="tsave"]').click(); await sleep(250);
+    return panel.querySelector('.swc-tmsg')?.textContent || '';
+  };
+
+  // ===== P27: własny zapis rysunków nie psuje kontroli 409, cudza zmiana w Notion ją zachowuje =====
+  line(5835); await ed.rys.flush();
+  rec('P27', sim.saves === 1, `zapis rysunków poszedł (${sim.saves})`);
+  await savePosition(5834);
+  rec('P27', sim.patchStatus[0] === 200, `własny zapis rysunków + zapis cen: bez 409 (statusy ${sim.patchStatus.join(',')})`);
+  // ktoś zmienia trade w Notion przy otwartej edycji; potem zapis rysunków (odświeżyłby znacznik) i zapis cen z odblokowanej pozycji
+  sim.page = stamp();
+  line(5833); await ed.rys.flush();
+  const msg = await savePosition(5832);
+  rec('P27', sim.patchStatus[1] === 409, `po cudzej zmianie w Notion zapis cen ma dać 409 (statusy ${sim.patchStatus.join(',')}; w PATCH edited=${sim.patches[1]?.edited})`);
+  rec('P27', /zmieniono w Notion/.test(msg), `konflikt zgłoszony zrozumiale w panelu: «${msg}»`);
+
+  // ===== W3: zapis rysunków się nie udał =====
+  await sleep(50);
+  sim.failSave = true;
+  const savesBefore = sim.saves;
+  line(5831);
+  root.querySelector('.swc-done').click();
+  await sleep(500);
+  const dlg = document.querySelector('.scrim [data-cd="yes"]');
+  rec('W3', !!dlg && !doneArg, `„Gotowe” przy nieudanym zapisie pyta o potwierdzenie i nie zamyka edycji (okno: ${!!dlg}, zamknięto: ${!!doneArg})`);
+  document.querySelector('.scrim [data-cd="no"]')?.click();
+  await sleep(100);
+  rec('W3', !doneArg && root.classList.contains('swc'), 'po „Anuluj” edycja zostaje otwarta');
+  sim.failSave = false;
+  root.querySelector('.swc-done')?.click();
+  await sleep(500);
+  rec('W3', sim.saves > savesBefore, `rysunek z nieudanego zapisu został w kolejce i poszedł przy następnej próbie (zapisów ${savesBefore} → ${sim.saves})`);
+  rec('W3', !document.querySelector('.scrim [data-cd="yes"]') && !!doneArg, 'po udanym zapisie „Gotowe” zamyka edycję bez pytania');
+  rec('W3', !!doneArg && doneArg.doc.d.some((d) => d.points?.[0]?.price === 5831), 'zamknięty dokument zawiera rysunek z nieudanego zapisu');
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

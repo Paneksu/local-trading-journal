@@ -6,3 +6,5 @@
 *.png binary
 *.webp binary
 *.ico binary
+
+public/vendor/** -text

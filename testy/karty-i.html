@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>JustJournal: test kart pakietu I (krzywa kapitału, wykres trade'a)</title>
+<!-- Strona testowa pakietu I (etapy 16 i 17), uruchamiana przez testy/wykresy-23-i16.mjs (?part=16) i testy/wykresy-24-i17.mjs (?part=17) w przeglądarce headless.
+     Dane syntetyczne, bez sieci (bez fontów z CDN: karty rysują się krojem zastępczym, co nie zmienia porównań piksel do piksela na tej samej stronie). -->
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const fails = [];
+const ok = (cond, msg) => { if (!cond) fails.push(msg); };
+try {
+  const part = new URLSearchParams(location.search).get('part') || '16';
+  const S = await import('/js/stats.js');
+  const U = await import('/js/udostepnij-dane.js');
+  const R = await import('/js/udostepnij-render.js');
+  const root = document.documentElement;
+  const setTheme = (th) => { root.setAttribute('data-theme', th); return R.readTokens(); };
+  // skrót pikseli (FNV-1a po słowach 32-bitowych), porównania tylko w obrębie tej strony
+  const hashOf = (cv, region = null) => {
+    const [x, y, w, h] = region || [0, 0, cv.width, cv.height];
+    const d = new Uint32Array(cv.getContext('2d').getImageData(x, y, w, h).data.buffer);
+    let a = 0x811c9dc5;
+    for (let i = 0; i < d.length; i++) { a ^= d[i]; a = Math.imul(a, 0x01000193) >>> 0; }
+    return a.toString(16) + ':' + d.length;
+  };
+  const draw = (opts) => { const cv = document.createElement('canvas'); const info = R.renderCard(cv, opts); return { cv, info, h: hashOf(cv) }; };
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const konta = S.normalizeKonta([{ _id: A, name: 'A 50k', size: 50000 }]);
+  const photo = (() => { const c = document.createElement('canvas'); c.width = 400; c.height = 300; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 400, 300); g.addColorStop(0, '#203060'); g.addColorStop(1, '#e08050'); x.fillStyle = g; x.fillRect(0, 0, 400, 300); return c; })();
+  const FORMATS = Object.keys(R.FORMATS);
+
+  if (part === '16') {
+    let i = 0;
+    const row = (date, r, pnl) => ({ _id: `t${++i}`, _created: `${date}T12:${String(i).padStart(2, '0')}:00.000Z`, typ: { name: 'Live' }, date, r, pnl, konta: [A], dir: { name: 'Long' }, instrument: { name: 'NQ' } });
+    const trades = S.normalizeTrades([row('2026-10-19', 1, 250), row('2026-10-20', 2.4, 600), row('2026-10-21', -0.5, -125), row('2026-10-21', 3, 750), row('2026-10-22', -1, -250)]);
+    const cards = {
+      day: (m) => U.dayCard(trades, konta, '2026-10-21', m), week: (m) => U.weekCard(trades, konta, '2026-10-21', m),
+      month: (m) => U.monthCard(trades, konta, 2026, 10, m), year: (m) => U.yearCard(trades, konta, 2026, m),
+    };
+    for (const th of ['onyx', 'platinum']) {
+      const tokens = setTheme(th);
+      for (const kind of Object.keys(cards)) for (const format of FORMATS) for (const metric of ['R', '$', '%']) {
+        const data = cards[kind](metric);
+        ok(Array.isArray(data.curve) && data.curve.length > 1, `${kind}: brak curve`);
+        const { curve, ...bare } = data;
+        const base = { kind, format, metric, nick: 'Trader', tokens };
+        const old = draw({ ...base, data: bare });
+        const off = draw({ ...base, data, equity: false });
+        const on = draw({ ...base, data, equity: true });
+        const tag = `${th} ${kind} ${format} ${metric}`;
+        ok(off.h === old.h, `${tag}: krzywa wyłączona różni się od karty bez krzywej`);
+        ok(on.h !== old.h, `${tag}: krzywa włączona nic nie narysowała`);
+        ok(on.info.curve === true && off.info.curve === false, `${tag}: info.curve`);
+        ok(on.info.scale > 0.3, `${tag}: skala ${on.info.scale}`);
+        if (format === '16:9') {
+          const W = on.cv.width, H = on.cv.height, rx = Math.round(W * 0.5); // v2: krzywa od 0,5 W
+          ok(hashOf(on.cv, [0, 0, rx - 40, H]) === hashOf(old.cv, [0, 0, rx - 40, H]), `${tag}: 16:9 lewa kolumna zmieniona przez krzywą`);
+        }
+      }
+      // zdjęcie: krzywa też (photoTokens)
+      const ph = draw({ kind: 'week', format: '9:16', metric: 'R', data: cards.week('R'), equity: true, photo, tokens });
+      ok(ph.info.curve === true && ph.info.scrim != null, `${th}: krzywa na zdjęciu`);
+      // pusty okres: karta jak dziś także przy włączonej krzywej
+      const empty = U.weekCard(trades, konta, '2026-11-11', 'R');
+      ok(draw({ kind: 'week', format: '1:1', metric: 'R', data: empty, equity: true, tokens }).h === draw({ kind: 'week', format: '1:1', metric: 'R', data: empty, tokens }).h, `${th}: pusty okres`);
+    }
+  }
+
+  if (part === '17') {
+    const AT = Date.parse('2026-10-20T15:30:00Z');
+    const [t] = S.normalizeTrades([{ _id: 'tr1', _created: '2026-10-20T15:30:00.000Z', typ: { name: 'Live' }, date: '2026-10-20T15:30:00.000+00:00', exit: '2026-10-20T16:10:00.000+00:00',
+      r: 2, pnl: 600, konta: [A], dir: { name: 'Long' }, instrument: { name: 'ES' }, entryPrice: 5812.25, exitPrice: 5824.25, sl: 5806.25, tp: 5824.25, setup: { name: 'Breakout' }, session: { name: 'Nowy Jork' } }]);
+    const data = U.tradeCard(t, konta);
+    const bars = []; let p = 5810;
+    for (let k = 0; k < 60; k++) { const tt = AT / 1000 - 10 * 60 + k * 60; const o = p, c = p + Math.sin(k / 4) * 1.5 + 0.2; bars.push([tt, o, Math.max(o, c) + 0.75, Math.min(o, c) - 0.75, Math.round(c * 4) / 4, 100]); p = Math.round(c * 4) / 4; }
+    const chart = { bars, tf: '1m', style: 'candles', sl: false, tp: false, tz: 'UTC' };
+    for (const th of ['onyx', 'platinum']) {
+      const tokens = setTheme(th);
+      for (const format of FORMATS) {
+        const base = { kind: 'trade', format, metric: '$', data, nick: 'Trader', tokens };
+        const tag = `${th} ${format}`;
+        const old = draw(base);
+        ok(draw({ ...base, chart: null }).h === old.h, `${tag}: chart null zmienia kartę`);
+        ok(draw({ ...base, chart: { ...chart, bars: [] } }).h === old.h, `${tag}: brak świec zmienia kartę`);
+        const on = draw({ ...base, chart });
+        ok(on.h !== old.h && on.info.chart === true, `${tag}: wykres nie narysowany`);
+        ok(on.info.scale > 0.3, `${tag}: skala ${on.info.scale}`);
+        const line = draw({ ...base, chart: { ...chart, style: 'line' } });
+        ok(line.h !== on.h, `${tag}: linia = świece`);
+        // v2 (P45): tryb „Wejście i wyjście” (pigułki) zamiast stref pozycji z SL/TP
+        const mk = draw({ ...base, chart: { ...chart, draw: 'marks' } });
+        ok(mk.h !== on.h, `${tag}: rysunek pozycji nic nie zmienił`);
+        const ph = draw({ ...base, chart, photo });
+        ok(ph.info.chart === true && ph.h !== on.h, `${tag}: zdjęcie z wykresem`);
+        if (format === '16:9') {
+          // v2: wykres w prawej kolumnie od W·0,5: tam karta się zmienia
+          const W = on.cv.width, H = on.cv.height, x0 = Math.round(W * 0.52);
+          ok(hashOf(on.cv, [x0, 200, W - x0 - 120, H - 400]) !== hashOf(old.cv, [x0, 200, W - x0 - 120, H - 400]), `${tag}: brak wykresu w prawej kolumnie`);
+        }
+      }
+    }
+  }
+  out.textContent = fails.length ? 'FAIL\n' + fails.slice(0, 40).join('\n') : 'PASS';
+} catch (e) {
+  out.textContent = 'FAIL ' + (e?.stack || e);
+}
+</script>
+</body>
+</html>
