@@ -14,6 +14,8 @@ import { parseTf, SESSIONS, sessionWindows, pdhlSpans, overlayLevels } from './s
 import { dateRef } from './kontrakty.js';
 import { confirmDialog, toast } from './modal.js';
 import * as G from './geometria.js';
+import { newsDefaults, normNews, buildNewsModel, newsGeometry, newsSvg, timeToX, candleWindow, feed as newsFeed, NEWS_IMPS, EARN_CLASSES } from './newsy.js';
+import { mountNewsLayer } from './newsy-warstwa.js';
 import { chartSettings, closePoints } from './styl-wykresu.js'; // cykl importów jest bezpieczny: nic z tego modułu nie jest wołane w czasie ładowania
 
 // P27 (28.10.2026): domyślna lista ulubionych interwałów, z tygodniem i miesiącem; użytkownik zmienia ją na wykresie (loadFavTfs).
@@ -304,7 +306,7 @@ export const OV_STYLES = ['solid', 'dashed', 'dotted'];
 export const SESSION_TOKENS = { asia: '--n-blue', london: '--n-orange', ny: '--n-purple', pd: '--fg-2' };
 export function overlayDefaults() {
   return {
-    sessions: false, pdhl: false,
+    sessions: false, pdhl: false, ...newsDefaults(), // 1.4.0: newsy i earningsy (domyślnie wyłączone), filtry wag i klas
     sess: Object.fromEntries(SESSIONS.map((s) => [s.id, { on: true, from: s.from, to: s.to, color: '', opacity: 8 }])),
     boxWidth: 1, lines: true, labels: true, sweep: true, lineStyle: 'dashed', lineWidth: 1,
     pdColor: '', pdStyle: 'solid', pdWidth: 1,
@@ -319,7 +321,7 @@ export function normOverlays(o) {
   const bool = (v, def) => (typeof v === 'boolean' ? v : def);
   const col = (v) => (isHex6(v) ? v.toLowerCase() : '');
   const out = {
-    sessions: x.sessions === true, pdhl: x.pdhl === true, sess: {},
+    sessions: x.sessions === true, pdhl: x.pdhl === true, ...normNews(x), sess: {},
     boxWidth: one(x.boxWidth, OV_BOX_WIDTHS, d.boxWidth), lines: bool(x.lines, d.lines), labels: bool(x.labels, d.labels), sweep: bool(x.sweep, d.sweep),
     lineStyle: one(x.lineStyle, OV_STYLES, d.lineStyle), lineWidth: one(x.lineWidth, OV_WIDTHS, d.lineWidth),
     pdColor: col(x.pdColor), pdStyle: one(x.pdStyle, OV_STYLES, d.pdStyle), pdWidth: one(x.pdWidth, OV_WIDTHS, d.pdWidth),
@@ -345,6 +347,7 @@ export function saveOverlays(p) { if (ovBackend) { ovBackend.set(normOverlays(p)
 // Definicje okien dla sessionWindows: tylko włączone sesje, godziny z ustawień.
 export const sessionDefs = (p) => SESSION_IDS.filter((id) => p.sess[id].on).map((id) => ({ id, from: p.sess[id].from, to: p.sess[id].to }));
 const SESSION_NAMES = { asia: 'Azja', london: 'Londyn', ny: 'Nowy Jork' };
+export const NEWS_IMP_NAMES = { high: 'Czerwone', medium: 'Pomarańczowe', low: 'Żółte', holiday: 'Szare (Bank Holiday)', opex: 'OPEX' };
 const SESSION_SHORT = { asia: 'Azja', london: 'Londyn', ny: 'NY' };
 // Opis linii: „Azja H”, „Londyn L”, „NY H”, „PDH”, „PDL”.
 export const levelLabel = (l) => (l.kind === 'pd' ? (l.side === 'hi' ? 'PDH' : 'PDL') : `${l.id === 'ny' ? 'NY' : t(SESSION_SHORT[l.id])} ${l.side === 'hi' ? 'H' : 'L'}`);
@@ -353,6 +356,8 @@ export function overlayToggles() {
   return `<div class="swc-ov" role="group" aria-label="${esc(t('Nakładki wykresu'))}">` +
     `<label class="check"><input type="checkbox" data-swc-ov="sessions"><span>${esc(t('Sesje'))}</span></label>` +
     `<label class="check"><input type="checkbox" data-swc-ov="pdhl"><span>${esc(t('PDH/PDL'))}</span></label>` +
+    `<label class="check swc-nw"><input type="checkbox" data-swc-ov="news"><span>${esc(t('Newsy'))}</span></label>` +
+    `<label class="check swc-nw"><input type="checkbox" data-swc-ov="earnings"><span>${esc(t('Earningsy'))}</span></label>` +
     `<span class="swc-ovwrap"><button type="button" class="icon-btn swc-ovbtn" data-swc="ovset" aria-expanded="false" aria-label="${esc(t('Ustawienia nakładek'))}" title="${esc(t('Ustawienia nakładek'))}">${GEAR_SM}</button>` +
     `<div class="swc-ovpop popover" role="group" aria-label="${esc(t('Ustawienia nakładek'))}" hidden></div></span></div>`;
 }
@@ -393,19 +398,25 @@ export function mountOverlayPop(root, ov, { refSec = () => Date.now() / 1000 } =
         `<input class="sp-in" type="time" data-ovk="sess.${id}.to" value="${s.to}" aria-label="${esc(t('{s}: koniec', { s: name }))}"></span>` +
         `<span class="swc-ovc">${colorIn(`sess.${id}.color`, s.color, SESSION_TOKENS[id], t('{s}: kolor boxa', { s: name }))}${sel(`sess.${id}.opacity`, s.opacity, OV_OPACITIES, t('{s}: krycie boxa', { s: name }), (v) => `${v}%`)}</span></div>`;
     }).join('');
-    pop.innerHTML = `<p class="lbl">${esc(t('Sesje'))}</p>${rows}<p class="note swc-ovhint">${esc(sessionHint(refSec(), p))}</p>` +
+    // telefon: przełączniki Newsy i Earningsy są tu, a nie w pasku (pasek wraca do jednego rzędu); na szerokim ekranie ukryte (.swc-ovnw)
+    pop.innerHTML = `<div class="swc-ovnw">${chk('news', p.news, t('Newsy'))}${chk('earnings', p.earnings, t('Earningsy'))}</div><p class="lbl">${esc(t('Sesje'))}</p>${rows}<p class="note swc-ovhint">${esc(sessionHint(refSec(), p))}</p>` +
       `<p class="lbl">${esc(t('Linie high/low'))}</p>` +
       `<div class="swc-ovchk">${chk('lines', p.lines, t('Pokaż linie'))}${chk('labels', p.labels, t('Opisy'))}${chk('sweep', p.sweep, t('Kończ na sweepie'))}</div>` +
       `<div class="swc-ovr"><span class="note">${esc(t('Linia'))}</span>${seg('lineStyle', p.lineStyle)}${sel('lineWidth', p.lineWidth, OV_WIDTHS, t('Grubość linii'), (v) => `${v} px`)}</div>` +
       `<div class="swc-ovr"><span class="note">${esc(t('Ramka boxa'))}</span>${sel('boxWidth', p.boxWidth, OV_BOX_WIDTHS, t('Grubość ramki boxa'), (v) => (v ? `${v} px` : t('brak')))}</div>` +
       `<p class="lbl">PDH/PDL</p>` +
       `<div class="swc-ovr"><span class="note">${esc(t('Linia'))}</span>${colorIn('pdColor', p.pdColor, SESSION_TOKENS.pd, t('Kolor PDH/PDL'))}${seg('pdStyle', p.pdStyle)}${sel('pdWidth', p.pdWidth, OV_WIDTHS, t('Grubość PDH/PDL'), (v) => `${v} px`)}</div>` +
+      `<p class="lbl">${esc(t('Newsy'))}</p>` +
+      `<div class="swc-ovchk">${NEWS_IMPS.map((k) => chk(`newsImp.${k}`, p.newsImp[k], t(NEWS_IMP_NAMES[k]))).join('')}</div>` +
+      `<p class="lbl">${esc(t('Earningsy'))}</p>` +
+      `<div class="swc-ovchk">${EARN_CLASSES.map((k) => chk(`earnCls.${k}`, p.earnCls[k], t('Klasa {n}', { n: k }))).join('')}</div>` +
       `<button type="button" class="btn ghost sm" data-ovreset="1">${esc(t('Przywróć domyślne'))}</button>`;
   }
   // „sess.asia.from” → patch zagnieżdżony
   const setPath = (key, val) => {
     const p = ov.prefs(), path = key.split('.');
     if (path[0] === 'sess') p.sess = { ...p.sess, [path[1]]: { ...p.sess[path[1]], [path[2]]: val } };
+    else if (path[0] === 'newsImp' || path[0] === 'earnCls') p[path[0]] = { ...p[path[0]], [path[1]]: val };
     else p[key] = val;
     ov.setAll(p);
   };
@@ -427,7 +438,7 @@ export function mountOverlayPop(root, ov, { refSec = () => Date.now() / 1000 } =
   pop.addEventListener('click', (ev) => {
     const b = ev.target.closest('button');
     if (!b) return;
-    if (b.dataset.ovreset) { const p = ov.prefs(); ov.setAll({ ...overlayDefaults(), sessions: p.sessions, pdhl: p.pdhl }); paint(); return; }
+    if (b.dataset.ovreset) { const p = ov.prefs(); ov.setAll({ ...overlayDefaults(), sessions: p.sessions, pdhl: p.pdhl, news: p.news, earnings: p.earnings }); paint(); return; }
     if (b.dataset.ovk && b.dataset.v) { setPath(b.dataset.ovk, b.dataset.v); b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); }
   });
   pop.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Escape') { open(false); btn.focus(); } });
@@ -477,16 +488,28 @@ export function markOverlays(root, prefs, refSec) {
   if (s) s.title = `${t('Box zakresu sesji i linie jej high/low do pierwszego sweepu.')} ${sessionHint(refSec, prefs)}`;
   const p = root.querySelector('[data-swc-ov="pdhl"]')?.closest('label');
   if (p) p.title = t('Najwyższa i najniższa cena poprzedniej sesji CME, z lokalnych świec, do pierwszego sweepu. Po dniu bez sesji (święto) bierze ostatnią sesję, która się odbyła. Bez linii, gdy poprzednia sesja nie jest w całości pobrana.');
+  const nw = root.querySelector('[data-swc-ov="news"]')?.closest('label');
+  if (nw) nw.title = t('Newsy makro USD: linia i znacznik w godzinie publikacji, w kolorze najważniejszej wagi. Zdarzenia całodzienne (Bank Holiday, OPEX) jako etykieta u góry. Godziny w strefie wykresu.');
+  const er = root.querySelector('[data-swc-ov="earnings"]')?.closest('label');
+  if (er) er.title = t('Wyniki spółek z S&P 100: romb w chwili ogłoszenia (przed otwarciem, po zamknięciu); bez pory jako etykieta dnia.');
 }
 // Model nakładek jednego wykresu: przełączniki, dzienne świece do PDH/PDL (GET /api/candles?tf=1D, tylko lokalne) i zakresy indeksów do narysowania.
 // onChange() woła się po wczytaniu danych dziennych (renderer przerysowuje). Wynik spans() jest pamiętany dla tej samej tablicy świec.
 // extra(): parametry kontraktu i back-adjust (P35) tego samego wykresu, więc PDH/PDL liczą się z kontraktu i cen, które widać (prevIn z serwera).
 export function createOverlays(instrument, onChange = () => {}, extra = () => ({})) {
-  let prefs = loadOverlays(), daily = null, busy = false, alive = true, cache = null, ver = 0;
-  const reload = () => { if (!alive) return; prefs = loadOverlays(); cache = null; onChange(); }; // P42: zmiana w Ustawieniach albo z innego urządzenia
+  let prefs = loadOverlays(), daily = null, busy = false, alive = true, cache = null, ver = 0, nm = null;
+  const reload = () => { if (!alive) return; prefs = loadOverlays(); cache = null; nm = null; onChange(); }; // P42: zmiana w Ustawieniach albo z innego urządzenia
   ovListeners.add(reload);
   const ok = /^[A-Za-z0-9]{1,12}$/.test(instrument);
+  // 1.4.0: newsy i earningsy z lokalnego serwera (GET /api/news, /api/earnings), tylko gdy warstwa jest włączona; po wczytaniu wykres przerysowuje się sam
+  async function ensureNews(candles) {
+    const w = candleWindow(candles);
+    if (!alive || !w || !(prefs.news || prefs.earnings)) return;
+    const [a, b] = await Promise.all([prefs.news ? newsFeed.ensure('news', w.from, w.to) : false, prefs.earnings ? newsFeed.ensure('earn', w.from, w.to) : false]);
+    if (alive && (a || b)) { nm = null; onChange(); }
+  }
   async function ensure(candles) {
+    ensureNews(candles);
     if (!alive || !ok || !prefs.pdhl || !candles?.length || busy) return;
     const t0 = candles[0][0], t1 = candles[candles.length - 1][0] + 1;
     const from = Math.max(Math.floor(t0 - 8 * 86400), t1 - 390 * 86400), to = Math.ceil(t1 + 86400);
@@ -503,9 +526,9 @@ export function createOverlays(instrument, onChange = () => {}, extra = () => ({
   }
   return {
     prefs: () => JSON.parse(JSON.stringify(prefs)),
-    set(key, on) { prefs = normOverlays({ ...prefs, [key]: !!on }); saveOverlays(prefs); cache = null; onChange(); },
+    set(key, on) { prefs = normOverlays({ ...prefs, [key]: !!on }); saveOverlays(prefs); cache = null; nm = null; onChange(); },
     // P32: zapis wszystkich ustawień nakładek naraz (popover)
-    setAll(p) { prefs = normOverlays(p); saveOverlays(prefs); cache = null; onChange(); },
+    setAll(p) { prefs = normOverlays(p); saveOverlays(prefs); cache = null; nm = null; onChange(); },
     ensure,
     // P35: zmiana kontraktu albo back-adjust: dane dzienne wczytują się od nowa
     reset() { daily = null; cache = null; ver++; },
@@ -520,6 +543,15 @@ export function createOverlays(instrument, onChange = () => {}, extra = () => ({
       cache = { c: candles, n: candles.length, v: ver, r };
       return r;
     },
+    // 1.4.0: model newsów i earningsów dla tych świec (pamięć podręczna do zmiany danych, ustawień albo świec); { groups, eGroups, labels, on }
+    news(candles) {
+      const v = newsFeed.version();
+      if (nm && nm.c === candles && nm.n === candles?.length && nm.v === v) return nm.r;
+      const r = buildNewsModel({ news: newsFeed.events('news'), earn: newsFeed.events('earn'), prefs });
+      nm = { c: candles, n: candles?.length, v, r };
+      return r;
+    },
+    newsFailed: () => (prefs.news && newsFeed.failed('news')) || (prefs.earnings && newsFeed.failed('earn')),
     // PDH/PDL włączone, dane dzienne wczytane, a żadna sesja wśród świec nie ma linii: poprzednia sesja nie jest w całości pobrana
     pdhlGap: (candles) => prefs.pdhl && !!daily && !!candles?.length && !(cache?.r.pdN),
     destroy() { alive = false; ovListeners.delete(reload); },
@@ -674,6 +706,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
   const ownIn = root.querySelector('.swc-own input');
   const tip = ensureTip(plot);
   const ov = createOverlays(instrument, () => { markTf(); schedule(); }, extra);
+  const nwl = mountNewsLayer(plot, { fmt: () => F() }); // 1.4.0: przyciski i dymek nad znacznikami newsów i earningsów
   const tfBar = mountTfBar(root, { current: () => S.tf });
   const ovPop = mountOverlayPop(root, ov, { refSec: () => entry }); // P32: ustawienia sesji i PDH/PDL
   // P32 (28.10.2026): ręczny zakres ceny przekazany z trybu edycji (ten sam widok po „Gotowe”), tylko przy wyłączonym „Auto”
@@ -961,7 +994,11 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
       return `<line class="ovl ${l.kind === 'pd' ? 'pdhl' : 'sessl'} ${l.side}" x1="${f1(l.x1)}" x2="${f1(l.x2)}" y1="${f1(l.y)}" y2="${f1(l.y)}" style="stroke:${c};stroke-width:${l.width}"${da}/>` +
         (l.label ? `<text class="ovl-l" x="${f1(l.lx)}" y="${f1(l.ly)}" style="fill:${c}">${esc(l.label)}</text>` : '');
     }).join('');
-    root.querySelector('.swc-ov-note').textContent = ov.pdhlGap(S.candles) ? t('PDH/PDL: do linii potrzebne są pobrane świece całej poprzedniej sesji.') : '';
+    // newsy i earningsy (1.4.0): linie pod świecami, znaczniki i etykiety dni nad nimi; ta sama logika (newsy.js) co w edycji
+    const nmod = ov.news(S.candles);
+    const ng = nmod.on ? newsGeometry(nmod, timeToX(S.candles, step, s), { left: ml, right: ml + pw, top: mt, bottom: mt + ph }) : null;
+    const nsvg = ng ? newsSvg(ng) : { under: '', over: '' };
+    root.querySelector('.swc-ov-note').textContent = [ov.pdhlGap(S.candles) ? t('PDH/PDL: do linii potrzebne są pobrane świece całej poprzedniej sesji.') : '', ov.newsFailed() ? t('Newsy: nie udało się wczytać danych.') : ''].filter(Boolean).join(' ');
 
     // oś czasu w strefie wykresu (z Ustawień albo wybranej na wykresie, P26)
     const xl = timeLabels(s, vr, W, ml, pw, H);
@@ -995,11 +1032,12 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     plot.insertAdjacentHTML('afterbegin', `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">
       <defs><clipPath id="${cid}"><rect x="${ml}" y="${mt}" width="${pw}" height="${ph}"/></clipPath></defs>
       ${grid}${xl}
-      <g clip-path="url(#${cid})">${sessSvg}${lv.back || ''}${rolls}${candlesSvg}${pdSvg}<g class="drw">${drw}</g>${lv.front || ''}</g>
+      <g clip-path="url(#${cid})">${sessSvg}${nsvg.under}${lv.back || ''}${rolls}${candlesSvg}${pdSvg}${nsvg.over}<g class="drw">${drw}</g>${lv.front || ''}</g>
       ${lv.labels || ''}
       <g class="cross" hidden><line class="cross-v" y1="${mt}" y2="${mt + ph}"/></g>
     </svg>`);
     S.geo = { s, ys, ml, mr, mt, mb, pw, ph, W, H };
+    nwl.update(ng, nmod, `${chartTz()}|${newsFeed.version()}|${nmod.groups.length}|${nmod.eGroups.length}|${nmod.labels.length}`);
     if (S.fromIndex < 30) extend('left');
     if (S.toIndex > n - 30) extend('right');
     ov.ensure(S.candles);
@@ -1247,7 +1285,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     status: () => S.status,
     settle,
     redraw: () => { markTf(); schedule(); },
-    destroy() { alive = false; ac.abort(); ov.destroy(); tfBar.destroy(); ovPop.destroy(); if (raf) cancelAnimationFrame(raf); ro?.disconnect(); root.innerHTML = ''; root.classList.remove('swc'); },
+    destroy() { alive = false; ac.abort(); ov.destroy(); nwl.destroy(); tfBar.destroy(); ovPop.destroy(); if (raf) cancelAnimationFrame(raf); ro?.disconnect(); root.innerHTML = ''; root.classList.remove('swc'); },
   };
 }
 

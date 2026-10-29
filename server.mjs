@@ -13,6 +13,10 @@ import { createData } from './lib/data.mjs';
 import { createWriter, ValidationError, PAGE_ID_RE } from './lib/writes.mjs';
 import { createCandles } from './lib/candles.mjs';
 import { DatabentoError } from './lib/databento.mjs';
+import { createNews } from './lib/news-service.mjs';
+import { NewsError } from './lib/news.mjs';
+import { normSymbol } from './lib/earnings.mjs';
+import { createEarnings } from './lib/earnings-service.mjs';
 import { createShots, SHOT_BODY_LIMIT } from './lib/shots.mjs';
 import { createDrawings, BODY_LIMIT as DRAWINGS_BODY_LIMIT } from './lib/drawings.mjs';
 import { setLang, tr as t } from './lib/i18n.mjs';
@@ -55,6 +59,15 @@ const candles = createCandles({
   // testy (pomocnicze.cleanEnv): serwer testowy z pustym magazynem nadrabiałby okna od 2020 na atrapie.
   autoOpenWindows: process.env.THQ_NO_AUTO_1S !== '1',
 });
+// Newsy makro USD (pakiet A, 1.4.0): klucz FRED tylko z .env (jak Databento), magazyn w CONFIG_DIR/chart-data/news, profil świąt z config.local.json (newsHolidayProfile).
+// Odświeżanie w tle (feed FF najwyżej raz na godzinę, FRED raz dziennie i tylko z kluczem, RSS Fed raz dziennie) startuje niżej; THQ_NO_NEWS=1 ustawiają tylko testy.
+const news = createNews({
+  baseDir: path.join(CONFIG_DIR, 'chart-data'), getKey: () => loadEnv().FRED_API_KEY, getProfile: () => config.newsHolidayProfile,
+  userAgent: `JustJournal/${APP_VERSION} (+https://github.com/${REPO})`,
+});
+// Earningsy spółek S&P 100 (pakiet A2, 1.4.0): klucz Finnhub tylko z .env, magazyn w CONFIG_DIR/chart-data/earnings, ręczne wyjątki klas w config.local.json
+// (earningsClassOverrides: { TICKER: 1-4 }, earningsExtra: [tickery]). Aplikacja nie łączy się z SEC; Finnhub tylko z kluczem.
+const earnings = createEarnings({ baseDir: path.join(CONFIG_DIR, 'chart-data'), getKey: () => loadEnv().FINNHUB_API_KEY, getConfig: () => config });
 function reconfigure() {
   S = envSettings(loadEnv());
   for (const k of Object.keys(SOURCES)) delete SOURCES[k];
@@ -288,7 +301,7 @@ function sendError(res, e) {
     return sendJson(res, e.tooLarge ? 413 : 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
   }
   console.error('[write]', e.message);
-  const s = e instanceof NotionError || e instanceof DatabentoError ? e.status : 500;
+  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
   const status = s === 401 || s < 400 || s > 599 ? 502 : s;
   return sendJson(res, status, { error: e.message, code: e.code, ...(e.left !== undefined ? { left: e.left } : {}) });
@@ -297,7 +310,7 @@ function sendError(res, e) {
 function meta() {
   return {
     ...versionState(), lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
-    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
+    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
 
@@ -403,6 +416,43 @@ Object.assign(ACTIONS, {
   // P25: import historii 1m (dryRun = sama wycena; pobranie wymaga confirmedCostUsd, ewentualnie limitsOverrideUsd)
   '/api/candles/import': (body) => candles.importHistory(body ?? {}),
   '/api/candles/import-1s': (body) => candles.importOpen(body ?? {}), // P49: okna 1s NQ 9:30–11:00 NY, budżet 36 USD (narzedzia/import-okien-1s.mjs)
+});
+// Newsy i earningsy (1.4.0): klucze FRED i Finnhub tylko do .env (jak Databento, nigdy do Notion ani do ustawień), ręczne wyjątki klas earningów w config.local.json.
+// Po zapisie klucza odświeżenie rusza w tle (zapytań do FRED jest kilkadziesiąt), wynik widać w statusie (GET /api/news/status, /api/earnings/status).
+const FRED_KEY_RE = /^[A-Za-z0-9]{32}$/, FINNHUB_KEY_RE = /^[A-Za-z0-9]{10,60}$/;
+// THQ_NO_NEWS=1 (tylko testy i dashboard testowy): zapis klucza nie uruchamia zapytań do FRED ani Finnhub
+const background = (label, fn) => { if (process.env.THQ_NO_NEWS === '1') return; Promise.resolve().then(fn).catch((e) => console.error(`[${label}]`, e.message)); };
+Object.assign(ACTIONS, {
+  '/api/news/key': async (body) => {
+    const key = String(body?.key ?? '').trim();
+    if (!FRED_KEY_RE.test(key)) throw new NewsError(t('To nie wygląda na klucz FRED (32 znaki: litery i cyfry).'), 400, 'bad-key');
+    saveEnv({ FRED_API_KEY: key });
+    background('news', () => news.refreshFred());
+    return { ok: true };
+  },
+  '/api/earnings/key': async (body) => {
+    const key = String(body?.key ?? '').trim();
+    if (!FINNHUB_KEY_RE.test(key)) throw new NewsError(t('To nie wygląda na klucz Finnhub (10 do 60 znaków: litery i cyfry).'), 400, 'bad-key');
+    saveEnv({ FINNHUB_API_KEY: key });
+    background('earnings', async () => { await earnings.refreshCalendar(); await earnings.refreshCaps(); });
+    return { ok: true };
+  },
+  // { symbol, cls: 1-4 } przenosi spółkę do klasy (nieznany ticker zostaje dopisany do listy własnych); { symbol, remove: true } cofa wyjątek
+  '/api/earnings/classes': async (body) => {
+    const symbol = normSymbol(body?.symbol);
+    if (!/^[A-Z0-9.]{1,10}$/.test(symbol)) throw new NewsError(t('Ticker to 1 do 10 znaków: litery, cyfry i kropka.'), 400, 'bad-symbol');
+    const overrides = { ...(config.earningsClassOverrides || {}) }, extra = new Set(Array.isArray(config.earningsExtra) ? config.earningsExtra : []);
+    if (body?.remove === true) { delete overrides[symbol]; extra.delete(symbol); }
+    else {
+      const cls = Number(body?.cls);
+      if (![1, 2, 3, 4].includes(cls)) throw new NewsError(t('Klasa to liczba od 1 do 4.'), 400, 'bad-class');
+      if (!earnings.classes().map.has(symbol)) extra.add(symbol);
+      overrides[symbol] = cls;
+    }
+    config.earningsClassOverrides = overrides; config.earningsExtra = [...extra];
+    persistConfig();
+    return { ok: true, overrides, extra: [...extra] };
+  },
 });
 Object.assign(ACTIONS, {
   '/api/setup/token': async (body) => {
@@ -600,6 +650,25 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 502, { error: msg, status });
       }
     }
+    if (url.pathname === '/api/news' || url.pathname === '/api/news/today' || url.pathname === '/api/news/status' || url.pathname === '/api/news/search') {
+      try {
+        if (url.pathname === '/api/news/search') return sendJson(res, 200, news.search(Object.fromEntries(['q', 'kinds', 'imps', 'limit', 'before', 'from', 'year'].map((k) => [k, url.searchParams.get(k) ?? undefined]))));
+        if (url.pathname === '/api/news/status') return sendJson(res, 200, news.status());
+        if (url.pathname === '/api/news/today') return sendJson(res, 200, news.today({ tz: url.searchParams.get('tz') ?? undefined }));
+        const num = (k) => (/^\d{1,12}$/.test(url.searchParams.get(k) ?? '') ? Number(url.searchParams.get(k)) : NaN);
+        return sendJson(res, 200, news.range(num('from'), num('to')));
+      } catch (e) { return sendError(res, e); }
+    }
+    if (url.pathname === '/api/earnings' || url.pathname === '/api/earnings/today' || url.pathname === '/api/earnings/status' || url.pathname === '/api/earnings/search') {
+      try {
+        if (url.pathname === '/api/earnings/search') return sendJson(res, 200, earnings.search(Object.fromEntries(['q', 'classes', 'limit', 'before', 'from', 'year'].map((k) => [k, url.searchParams.get(k) ?? undefined]))));
+        if (url.pathname === '/api/earnings/status') return sendJson(res, 200, { ...earnings.status(), overrides: config.earningsClassOverrides || {}, extra: config.earningsExtra || [] });
+        if (url.pathname === '/api/earnings/today') return sendJson(res, 200, earnings.today({ tz: url.searchParams.get('tz') ?? undefined }));
+        const num = (k) => (/^\d{1,12}$/.test(url.searchParams.get(k) ?? '') ? Number(url.searchParams.get(k)) : NaN);
+        const mc = url.searchParams.get('maxClass');
+        return sendJson(res, 200, earnings.range(num('from'), num('to'), mc === null ? {} : { maxClass: /^\d$/.test(mc) ? Number(mc) : NaN }));
+      } catch (e) { return sendError(res, e); }
+    }
     if (url.pathname === '/api/candles/status') return sendJson(res, 200, candles.status());
     if (url.pathname === '/api/candles/size') return sendJson(res, 200, { bytes: await candles.dataBytes() }); // Ustawienia → Wykresy → Dane (P39: tylko rozmiar); przegląd HIJ, pkt 1: asynchronicznie, wynik z pamięci 60 s
     if (url.pathname === '/api/candles') {
@@ -652,4 +721,11 @@ server.on('error', (e) => {
 server.listen(PORT, HOST, () => console.log(`JustJournal ${APP_VERSION}: http://${HOST}:${PORT}`));
 // P25: kolejka okien 1s przechodzi co 5 minut (puste = zero sieci). Start dopiero tu, nie przy imporcie modułu candles.
 setInterval(() => { candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)); }, 5 * 60_000).unref();
+// Newsy: pierwszy przebieg po 5 s od startu, potem co 10 minut (tick sam pilnuje godzinnego odstępu feedu i dobowego FRED; brak sieci nic nie psuje).
+if (process.env.THQ_NO_NEWS !== '1') {
+  setTimeout(() => news.tick().catch((e) => console.error('[news]', e.message)), 5000).unref();
+  setInterval(() => { news.tick().catch((e) => console.error('[news]', e.message)); }, 10 * 60_000).unref();
+  setTimeout(() => earnings.tick().catch((e) => console.error('[earnings]', e.message)), 8000).unref();
+  setInterval(() => { earnings.tick().catch((e) => console.error('[earnings]', e.message)); }, 10 * 60_000).unref();
+}
 void DBS;

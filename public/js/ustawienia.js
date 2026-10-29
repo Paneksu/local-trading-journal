@@ -9,6 +9,7 @@ import { sanitizeShare } from './udostepnij.js';
 import { sanitizeChart, resetChartGroup, chartContrast, fixChartColor, previewSvg, FILM_FORMATS, FILM_SECONDS, FILM_DIMS } from './styl-wykresu.js';
 import { filterSupported } from './film.js';
 import { SESSION_IDS } from './podglad.js';
+import { newsSettingsHtml, earnSettingsHtml } from './newsy-karty.js';
 import { BROWSER_TZ, validTz, tzLabel, tzOptionLabel, allZones, tzGroupsHtml, loadStyleDock, saveStyleDock } from './podglad.js';
 
 const { esc } = F;
@@ -27,7 +28,7 @@ const svgI = (body, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 
 // onChart(chart): etap 14, zmiana settings.chart (app.js: stan bieżący, kolory świec, przerysowanie podglądu i miniatur)
 // onDatabentoKey(key): zapis klucza Databento do .env po bezpłatnym sprawdzeniu (POST /api/candles/key); loadDataSize(): rozmiar chart-data/ w bajtach (GET /api/candles/size)
 // onChartBadj(on): P38, „B-ADJ domyślnie włączony” (wartość początkowa przycisku B-ADJ na wykresie; przycisk przełącza chwilowo)
-export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {}, onChartTz = () => {}, onChartBadj = () => {}, onChart = () => {}, onDatabentoKey = async () => ({}), loadDataSize = async () => null }) {
+export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {}, onChartTz = () => {}, onChartBadj = () => {}, onChart = () => {}, onDatabentoKey = async () => ({}), loadDataSize = async () => null, loadNewsStatus = async () => null, onNewsKey = async () => ({}), onEarnClass = async () => ({}) }) {
   let pop = null, scrim = null;
   let tab = 'dane';
   let editTheme = getTheme();
@@ -149,6 +150,8 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   // Grupa „Karty i filmy”: kontrolki kart od pakietu I (karty()), opcje filmów bez kontrolek do pakietu J (decyzja sesji głównej, 28.10.2026: kontrolka razem z funkcją).
   let dataBytes = null; // rozmiar chart-data/ (bajty), wczytywany po wejściu w zakładkę
   let keyMsg = null;    // { text, error } po próbie zapisu klucza
+  let newsSt = null;    // 1.4.0: statusy serwera { news, earnings } do sekcji Newsy i Earningsy (wczytywane po wejściu w zakładkę)
+  let newsMsg = {};     // 1.4.0: komunikaty po zapisie kluczy FRED i Finnhub oraz ręcznych wyjątków klas
   const chart = () => (settings.chart = sanitizeChart(settings.chart));
   const fmtBytes = (n) => (n == null ? '-' : n < 1024 ? `${F.num(n, 0)} B` : n < 1024 ** 2 ? `${F.num(n / 1024, 1)} KB` : n < 1024 ** 3 ? `${F.num(n / 1024 ** 2, 1)} MB` : `${F.num(n / 1024 ** 3, 2)} GB`);
   const usdTxt = (x) => `${F.num(x, 2)} USD`;
@@ -266,11 +269,30 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   }
   function wykresyHtml() {
     return `<div class="pv pvc" role="img" aria-label="${L('Podgląd wykresu na żywo')}">${previewSvg(chart())}</div>
-      ${wyglad()}<div class="rule-x"></div>${nakladki()}<div class="rule-x"></div>${karty()}<div class="rule-x"></div>${czas()}<div class="rule-x"></div>${daneDatabento()}<div class="rule-x"></div>${licencje()}`;
+      ${wyglad()}<div class="rule-x"></div>${nakladki()}<div class="rule-x"></div>${newsSettingsHtml({ c: chart(), st: newsSt, meta: getMeta() || {}, msg: newsMsg, chk })}<div class="rule-x"></div>${earnSettingsHtml({ c: chart(), st: newsSt, meta: getMeta() || {}, msg: newsMsg, chk })}<div class="rule-x"></div>${karty()}<div class="rule-x"></div>${czas()}<div class="rule-x"></div>${daneDatabento()}<div class="rule-x"></div>${licencje()}`;
   }
   async function loadSize() {
     try { dataBytes = await loadDataSize(); } catch { dataBytes = null; }
     if (pop && tab === 'wykresy') { const fk = document.activeElement?.dataset?.fk; rerender({ keep: false }); if (fk) pop.querySelector(`[data-fk="${fk}"]`)?.focus(); }
+  }
+  async function loadNews() {
+    try { newsSt = await loadNewsStatus(); } catch { newsSt = null; }
+    if (pop && tab === 'wykresy') { const fk = document.activeElement?.dataset?.fk; rerender({ keep: false }); if (fk) pop.querySelector(`[data-fk="${fk}"]`)?.focus(); }
+  }
+  async function saveNewsKey(kind) {
+    const id = kind === 'fred' ? '#sp-fredkey' : '#sp-fhkey', slot = kind === 'fred' ? 'fred' : 'finnhub';
+    const key = pop?.querySelector(id)?.value.trim();
+    if (!key) { newsMsg[slot] = { text: t(kind === 'fred' ? 'Wklej klucz FRED.' : 'Wklej klucz Finnhub.'), error: true }; rerender(); return; }
+    newsMsg[slot] = { text: t('Zapisuję…'), error: false }; rerender();
+    try { const r = await onNewsKey(kind, key); newsMsg[slot] = r?.ok ? { text: t('Klucz zapisany. Dane pobierają się w tle, stan zobaczysz niżej.'), error: false } : { text: r?.error || t('Nie udało się zapisać klucza.'), error: true }; }
+    catch { newsMsg[slot] = { text: t('Nie udało się zapisać klucza.'), error: true }; }
+    if (!newsMsg[slot].error) { const k = pop?.querySelector(id); if (k) k.value = ''; setTimeout(loadNews, 4000); setTimeout(loadNews, 12000); }
+    rerender();
+  }
+  async function earnClass(body) {
+    try { const r = await onEarnClass(body); newsMsg.classes = r?.ok ? { text: t('Zapisano.'), error: false } : { text: r?.error || t('Nie udało się zapisać.'), error: true }; }
+    catch { newsMsg.classes = { text: t('Nie udało się zapisać.'), error: true }; }
+    await loadNews();
   }
   async function saveKey() {
     const inp = pop?.querySelector('#sp-dbkey');
@@ -323,9 +345,9 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     const fk = keep ? document.activeElement?.dataset?.fk : null;
     // przegląd HIJ, pkt 7 (29.10.2026): wklejony, jeszcze niezapisany klucz Databento przeżywa przerysowanie (np. po wczytaniu rozmiaru chart-data);
     // wartość zostaje tylko w polu na stronie, nigdzie nie jest zapisywana
-    const dbkey = pop.querySelector('#sp-dbkey')?.value || '';
+    const typed = ['#sp-dbkey', '#sp-fredkey', '#sp-fhkey', '#sp-earn-sym'].map((id) => [id, pop.querySelector(id)?.value || '']);
     pop.innerHTML = html();
-    if (dbkey) { const k = pop.querySelector('#sp-dbkey'); if (k) k.value = dbkey; }
+    for (const [id, v] of typed) if (v) { const k = pop.querySelector(id); if (k) k.value = v; }
     if (fk) pop.querySelector(`[data-fk="${fk}"]`)?.focus();
   }
 
@@ -346,7 +368,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     document.body.append(scrim, pop);
     gear().setAttribute('aria-expanded', 'true');
     pop.querySelector(`[data-fk="tab-${tab}"]`).focus();
-    if (tab === 'wykresy') loadSize();
+    if (tab === 'wykresy') { loadSize(); loadNews(); }
   }
   function close({ restore = true } = {}) {
     if (!pop) return;
@@ -386,7 +408,7 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function handle(act, v, el) {
     switch (act) {
       case 'settings': toggle(); return true;
-      case 'sp-tab': tab = v; picker = null; rerender(); if (v === 'urzadzenia') onTab(v); if (v === 'wykresy') loadSize(); return true;
+      case 'sp-tab': tab = v; picker = null; rerender(); if (v === 'urzadzenia') onTab(v); if (v === 'wykresy') { loadSize(); loadNews(); } return true;
       case 'ch-style': setChart({ style: v }, { render: true }); return true;
       case 'ch-colors': setChart({ colorMode: v }, { render: true }); return true;
       case 'ch-share-style': setChart({ shareStyle: v }, { render: true }); return true;
@@ -397,6 +419,10 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
       case 'ch-edit-theme': editTheme = v; rerender(); return true;
       case 'ch-fix': { const k = el.dataset.ck; setCustomColor(k, fixChartColor(chart().custom[editTheme][k], editTheme)); rerender(); return true; }
       case 'ch-key-save': saveKey(); return true;
+      case 'news-key-save': saveNewsKey('fred'); return true;
+      case 'earn-key-save': saveNewsKey('finnhub'); return true;
+      case 'earn-class-add': { const sym = pop.querySelector('#sp-earn-sym')?.value.trim(), cls = Number(pop.querySelector('#sp-earn-cls')?.value); if (!sym) { newsMsg.classes = { text: t('Wpisz ticker.'), error: true }; rerender(); return true; } earnClass({ symbol: sym, cls }).then(() => { const i = pop?.querySelector('#sp-earn-sym'); if (i) i.value = ''; }); return true; }
+      case 'earn-class-del': earnClass({ symbol: v, remove: true }); return true;
       case 'ch-reset': {
         if (v === 'time') { settings.chartTz = ''; settings.chartBadj = true; save(); onChartTz(''); onChartBadj(true); rerender(); return true; }
         settings.chart = resetChartGroup(chart(), v === 'look' || v === 'cards' ? v : 'overlays');
@@ -490,7 +516,9 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     if (ev.target.matches('[data-act="ch-nq1s"]')) { onConfig({ chartNq1sDaily: ev.target.checked }); return true; }
     if (ev.target.matches('[data-chk]')) {
       const k = ev.target.dataset.chk, on = ev.target.checked;
-      if (k === 'sessions' || k === 'pdhl') setOverlays((o) => { o[k] = on; });
+      if (k === 'sessions' || k === 'pdhl' || k === 'news' || k === 'earnings') setOverlays((o) => { o[k] = on; });
+      else if (k.startsWith('newsImp-')) setOverlays((o) => { o.newsImp[k.slice(8)] = on; });
+      else if (k.startsWith('earnCls-')) setOverlays((o) => { o.earnCls[k.slice(8)] = on; });
       else if (k.startsWith('sess-')) setOverlays((o) => { o.sess[k.slice(5)].on = on; });
       else setChart({ [k]: on }, { render: k === 'shareChart' }); // pakiet I: wyłączony wykres w kartach wyszarza wybór stylu karty
       return true;

@@ -1,11 +1,24 @@
 // Strona w przeglądarce bez zależności: zainstalowany Chrome albo Edge w trybie headless zwraca DOM po wykonaniu skryptów.
 // Strona robocza zapisuje wynik w <pre id="wynik">PASS …</pre> albo FAIL …. Brak Chrome i Edge: findBrowser() zwraca null (test „pominięty”).
 // Flagi sprawdzone 27.10.2026 na Chrome i Edge (Windows): --headless=new --virtual-time-budget=10000 --dump-dom.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+// Profile tymczasowe przeglądarki (~480 MB każdy) sprzątamy zawsze: po zakończeniu (z ponowieniami, bo Edge trzyma pliki chwilę po zamknięciu),
+// a gdy proces testów kończy się przed sprzątaniem, w obsłudze wyjścia. Wcześniej zostawały w %TEMP% i zapełniały dysk C.
+const profiles = new Set();
+function newProfile() { const d = mkdtempSync(path.join(tmpdir(), 'thq-chrome-')); profiles.add(d); return d; }
+function dropProfile(d) {
+  try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); profiles.delete(d); } catch { /* Windows: plik zajęty, spróbuje obsługa wyjścia */ }
+}
+// Zabija całe drzewo procesów przeglądarki (na Windows procesy potomne trzymają profil po p.kill()).
+function killTree(p) {
+  if (p.exitCode != null) return;
+  try { if (process.platform === 'win32' && p.pid) spawnSync('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true }); else p.kill(); } catch { /* już nie żyje */ }
+}
+process.on('exit', () => { for (const d of [...profiles]) { try { rmSync(d, { recursive: true, force: true }); } catch { /* zajęty */ } } });
 export function findBrowser() {
   const env = process.env;
   const c = [
@@ -27,7 +40,7 @@ export function findBrowser() {
 export function dumpDom(url, { timeoutMs = 60_000, width = 1200, height = 800 } = {}) {
   const exe = findBrowser();
   if (!exe) return Promise.reject(new Error('Brak Chrome/Edge'));
-  const prof = mkdtempSync(path.join(tmpdir(), 'thq-chrome-'));
+  const prof = newProfile();
   const args = ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', `--user-data-dir=${prof}`,
     `--window-size=${width},${height}`, '--virtual-time-budget=10000', '--dump-dom', url];
   return new Promise((resolve, reject) => {
@@ -35,11 +48,11 @@ export function dumpDom(url, { timeoutMs = 60_000, width = 1200, height = 800 } 
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err += d; });
-    const timer = setTimeout(() => p.kill(), timeoutMs);
+    const timer = setTimeout(() => killTree(p), timeoutMs);
     p.on('error', (e) => { clearTimeout(timer); reject(e); });
     p.on('close', () => {
       clearTimeout(timer);
-      try { rmSync(prof, { recursive: true, force: true }); } catch { /* Windows: plik zajęty */ }
+      dropProfile(prof);
       if (!out) reject(new Error('Pusta odpowiedź przeglądarki: ' + err.slice(0, 300))); else resolve(out);
     });
   });
@@ -52,7 +65,7 @@ export function dumpDom(url, { timeoutMs = 60_000, width = 1200, height = 800 } 
 export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent" } = {}) {
   const exe = findBrowser();
   if (!exe) throw new Error('Brak Chrome/Edge');
-  const prof = mkdtempSync(path.join(tmpdir(), 'thq-chrome-'));
+  const prof = newProfile();
   const p = spawn(exe, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', `--user-data-dir=${prof}`,
     `--window-size=${width},${height}`, '--remote-debugging-port=0', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { windowsHide: true });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -81,8 +94,8 @@ export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 
     throw new Error('DevTools: przekroczony czas strony: ' + String(await ev(extract)).slice(0, 300));
   } finally {
     try { ws?.close(); } catch { /* zamknięty */ }
-    p.kill();
+    killTree(p);
     await new Promise((r) => { if (p.exitCode != null) r(); else { p.once('close', r); setTimeout(r, 3000); } });
-    try { rmSync(prof, { recursive: true, force: true }); } catch { /* Windows: plik zajęty */ }
+    dropProfile(prof);
   }
 }

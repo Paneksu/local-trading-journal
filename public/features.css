@@ -124,6 +124,7 @@ td.res { white-space: nowrap; font-weight: 600; }
 .lb { --primary: var(--lb-primary); --primary-fg: var(--lb-primary-fg); --well: var(--lb-well); --edge: var(--lb-edge); }
 /* podgląd wykresu w lightboxie: lightbox jest zawsze ciemny, więc linia wykresu, wciśnięty segment i pole wpisu też (w Platinum tokeny motywu są ciemne); wartości w tokenach --lb-* w styles.css */
 .lb { --n-blue: var(--lb-n-blue); --n-orange: var(--lb-n-orange); --n-purple: var(--lb-n-purple); /* pasy sesji na zawsze ciemnym tle */
+  --n-red: var(--lb-n-red); --n-yellow: var(--lb-n-yellow); /* 1.4.0: znaczniki newsów i earningsów (czerwone, żółte) na zawsze ciemnym wykresie, kontrast AA także w Platinum */
   --chart-line: var(--fg); --seg-on: var(--lb-seg-on); --input: var(--lb-input); --well-shadow: var(--lb-well-shadow); }
 .lb-chart { position: absolute; inset: 0; display: flex; padding: 4px 4px 0; }
 .lb-chart[hidden] { display: none; }
@@ -133,6 +134,9 @@ td.res { white-space: nowrap; font-weight: 600; }
   .lb-top { gap: 4px; padding: 6px 8px; }
   .lb-tl { gap: 6px; }
   .lb-stage:has(.lb-frame.is-chart) { padding: 0 4px; }
+  /* 1.4.0: przełączniki Newsy i Earningsy spychają „Edytuj wykres” do nowego rzędu; przy 44vh pasek, wykres (min. 200 px) i stopka licencji wychodziły
+     o 35 px poza ramkę i nachodziły na tytuł trade'a (375x812, przegląd 29.10.2026). Szczegóły i tak się przewijają. */
+  .lb .lb-info { max-height: 38vh; } /* .lb: reguła 44vh niżej stoi później w arkuszu */
 }
 .lb .btn.primary { background: var(--primary); color: var(--primary-fg); }
 .lb-info { max-height: 44vh; }
@@ -899,4 +903,125 @@ button.cell .cv, button.cell .cn { width: 100%; }
 @media (max-width: 1023px) {
   .sp-keyrow .sp-key, .sp-sess .sp-in, .cc-h { font-size: 16px; height: 40px; }
   .sp-sess .sp-in { width: 108px; }
+}
+
+/* newsy makro USD i earningsy (1.4.0): nakładki na wykresie, karty „Dzisiaj” i „Wyniki spółek”, sekcje Ustawień. Kolory tylko z tokenów (--n-red, --n-orange, --n-yellow, --n-blue, --fg-2). */
+.swc-plot { position: relative; }
+svg .nwl { fill: none; stroke-width: 1; stroke-opacity: .8; }
+svg .nwm { stroke-width: 1.4; stroke-linejoin: round; }
+svg .nwc, svg .nwd { font-size: 10.5px; font-family: var(--font); font-variant-numeric: tabular-nums; }
+svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float)); stroke-width: 3px; stroke-linejoin: round; }
+.swc-ovnw { display: none; flex-wrap: wrap; gap: 2px 14px; }
+@media (max-width: 640px) {
+  /* telefon: Newsy i Earningsy przenoszą się do okna ustawień nakładek, pasek lightboxa zostaje w jednym rzędzie */
+  .swc-ov .check.swc-nw { display: none; }
+  .swc-ovnw { display: flex; }
+  .swc-bar .sp-in.sp-sel.swc-tz { max-width: min(100%, 280px); text-overflow: ellipsis; }
+}
+.nws-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.nws-hit { position: absolute; margin: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; pointer-events: auto; cursor: pointer; }
+.nws-hit:focus-visible { outline: 2px solid var(--fg); outline-offset: 0; }
+.nws-tip { min-width: 170px; max-width: min(340px, calc(100% - 8px)); z-index: 6; font-size: var(--t-sm); }
+.nws-tip .nws-row { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+.nws-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; transform: translateY(-1px); }
+.nws-slot { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.nws-list { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.nws-list li { display: grid; grid-template-columns: 48px 8px minmax(0, 1fr); align-items: baseline; column-gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+.nws-list li:first-child { border-top: 0; }
+.nws-list .nws-t { font-variant-numeric: tabular-nums; font-size: var(--t-sm); color: var(--fg-2); }
+.nws-list .nws-n { min-width: 0; font-size: var(--t-base); overflow-wrap: anywhere; }
+.nws-list .nws-n small { font-size: var(--t-sm); }
+/* minione: nazwa w --fg-2 i przygaszona kropka zamiast opacity całego wiersza (opacity .5 dawało tekst 2,4-4,3:1, poniżej AA; przegląd 29.10.2026) */
+.nws-list li.past .nws-n { color: var(--fg-2); }
+.nws-list li.past .nws-dot { opacity: .45; }
+.nws-list li.next .nws-n, .nws-list li.next .nws-t { color: var(--fg); font-weight: 600; }
+.nws-ban { margin: 0; font-size: var(--t-base); font-weight: 600; }
+.nws-ban.opex { color: var(--n-blue); }
+.nws-ban.holiday { color: var(--fg); }
+.nws-next { margin-top: -4px; }
+.nws-gh { font-size: var(--t-xs); margin-top: 4px; }
+.nws-gh:first-child { margin-top: 0; }
+.nws-man { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 0 0 6px; padding: 0; align-self: stretch; }
+.nws-man li { display: flex; align-items: center; gap: 8px; }
+.nws-man .btn { margin-left: auto; }
+.sp-more { align-self: stretch; font-size: var(--t-sm); color: var(--fg-2); }
+.sp-more summary { cursor: pointer; }
+.nws-main { display: none; }
+@media (max-width: 1023px) {
+  .nws-main { display: flex; }
+  .nws-desk { display: none; }
+  .nws-list li { grid-template-columns: 52px 8px minmax(0, 1fr); }
+  .nws-hit { min-width: 24px; min-height: 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .nws-tip { transition: none; } }
+
+/* lewy panel (od 1024 px): karty newsów w wersji kompaktowej, żeby panel mieścił się bez przewijania (1.4.0) */
+.nws-desk .nws-slot { gap: 4px; }
+.nws-desk .sec-body { gap: 4px; padding-top: 6px; }
+.nws-desk .nws-list.compact li { grid-template-columns: 42px 8px minmax(0, 1fr); column-gap: 6px; padding: 2px 0; }
+.nws-desk .nws-list.compact .nws-n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--t-sm); }
+.nws-desk .nws-list.compact .nws-t { font-size: var(--t-xs); }
+.nws-desk .nws-ban { font-size: var(--t-sm); }
+.nws-desk .nws-gh { margin-top: 2px; }
+.nws-more { align-self: flex-start; margin: 0; padding: 2px 0; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: var(--t-sm); text-decoration: underline; cursor: pointer; }
+@media (hover: hover) { .nws-more:hover { color: var(--fg); } }
+/* Kalendarz newsów i earningów (zakładka, 1.4.0): karty, tabela jak „Trade'y”, tokeny motywu */
+.ncal { gap: 12px; }
+.cal-card { padding: 14px 18px; }
+.cal-bar { display: flex; flex-direction: column; gap: 12px; }
+.ncal-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.cal-step { display: inline-flex; align-items: center; gap: 4px; }
+.cal-step .icon-btn { font-size: 18px; line-height: 1; }
+.cal-range { margin-right: auto; min-width: 0; font-size: var(--t-md); font-weight: 700; }
+.cal-date { width: auto; height: 32px; }
+.cal-q { flex: 1; min-width: 0; height: 36px; }
+.cal-find { display: flex; gap: 8px; }
+.cal-year { width: auto; height: 36px; flex: none; }
+.cal-sh { margin: 14px 0 4px; font-size: var(--t-sm); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-2); }
+.cal-more { margin-top: 12px; }
+.cal-note { display: block; margin: 2px 0 0; }
+.cal-fl { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.cal-fl .lbl { min-width: 104px; }
+.cal-chk { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.cal-chk .check { display: inline-flex; align-items: center; gap: 6px; }
+.cal-filters > summary { cursor: pointer; font-size: var(--t-sm); font-weight: 600; color: var(--fg-2); padding: 2px 0 8px; }
+.cal-filters[open] > summary { padding-bottom: 8px; }
+.cal-filters .cal-fl + .cal-fl { margin-top: 8px; }
+.cal-out[aria-busy="true"] { opacity: .75; }
+.cal-day + .cal-day { margin-top: 20px; }
+.cal-dh { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: var(--t-md); font-weight: 700; }
+.cal-dh em { font-style: normal; font-size: var(--t-sm); font-weight: 600; color: var(--fg-2); }
+.cal-tr { margin-left: auto; padding: 0; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: var(--t-sm); font-weight: 400; text-decoration: underline; cursor: pointer; }
+.cal-tab { width: 100%; border-collapse: collapse; }
+.cal-r td { padding: 6px 10px 6px 0; vertical-align: baseline; border-top: 1px solid var(--line); }
+.cal-tab tbody tr:first-child td { border-top: 0; }
+.cal-t { width: 92px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--fg-2); }
+.cal-i { width: 20px; }
+.cal-n b { font-weight: 700; }
+.cal-tags { margin-left: 8px; font-size: var(--t-sm); color: var(--fg-2); }
+.cal-k { width: 120px; padding-right: 0 !important; text-align: right; font-size: var(--t-sm); color: var(--fg-2); }
+.cal-r.past .cal-n { color: var(--fg-2); }
+.cal-r.past .nws-dot { opacity: .45; }
+.cal-now td { padding: 0 !important; border-top: 1px solid var(--fg) !important; }
+.cal-now span { display: block; padding: 2px 0 4px; font-size: var(--t-xs); font-weight: 600; color: var(--fg); }
+.ncal-sum { margin-bottom: 6px; font-size: var(--t-sm); color: var(--fg-2); }
+.cal-res .cal-d { width: 150px; white-space: nowrap; }
+.cal-res .row-btn { font-size: var(--t-base); }
+.cal-empty { margin: 8px 0 0; }
+@media (max-width: 1023px) {
+  .tabbar { left: 8px; right: 8px; gap: 2px; padding: 4px; }
+  .tb-item { font-size: 10px; gap: 2px; }
+}
+@media (max-width: 640px) {
+  .cal-card { padding: 12px; }
+  .cal-fl .lbl { min-width: 100%; }
+  .cal-tab, .cal-tab tbody { display: block; }
+  .cal-r { display: grid; grid-template-columns: 56px 12px minmax(0, 1fr); column-gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .cal-tab tbody .cal-r:first-child { border-top: 0; }
+  .cal-r td, .cal-tab tbody tr:first-child td { display: block; width: auto; padding: 0; border: 0; text-align: left; }
+  .cal-k { grid-column: 3; padding: 0 !important; }
+  .cal-tags { display: block; margin: 0; }
+  .cal-res .cal-d { grid-column: 1 / -1; width: auto; }
+  .cal-now { display: block; }
+  .cal-now td { display: block; }
 }

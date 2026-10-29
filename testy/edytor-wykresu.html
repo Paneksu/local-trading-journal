@@ -84,7 +84,7 @@ try {
     }
     return n;
   };
-  ok(root.querySelectorAll('.swc-ov input[type="checkbox"]').length === 2, 'dwa przełączniki nakładek w pasku edycji');
+  ok(root.querySelectorAll('.swc-ov input[type="checkbox"]').length === 4, 'cztery przełączniki nakładek w pasku edycji (Sesje, PDH/PDL, Newsy, Earningsy)');
   ok(root.querySelector('[data-swc-ov="sessions"]').checked === true && root.querySelector('[data-swc-ov="pdhl"]').checked === false, 'przełączniki odzwierciedlają zapisany stan');
   const withBands = semi();
   ok(withBands > 2000, `pas sesji narysowany przez prymityw LWC (półprzezroczystych pikseli: ${withBands})`);

@@ -41,15 +41,15 @@ export default ({ test, assert, ROOT }) => {
     }
   });
 
-  test('wykresy-32: CHANGELOG zaczyna się wpisem [1.3.0] · 2026-10-29 z PL i EN, a package.json ma tę samą wersję', () => {
+  // Od 1.4.0 (30.10.2026) wpis 1.3.0 nie jest już pierwszy: sprawdzamy, że został w CHANGELOG, a zgodność package.json z pierwszym wpisem pilnuje newsy-07.
+  test('wykresy-32: CHANGELOG ma wpis [1.3.0] · 2026-10-29 z PL i EN', () => {
     const c = read('CHANGELOG.md');
-    const first = /^## \[([^\]]+)\] · (\S+)$/m.exec(c);
-    assert.deepEqual([first[1], first[2]], ['1.3.0', '2026-10-29']);
-    const body = c.slice(first.index, c.indexOf('\n## [', first.index + 5));
+    const i = c.indexOf('## [1.3.0] · 2026-10-29\n');
+    assert.ok(i >= 0, 'brak wpisu 1.3.0');
+    const body = c.slice(i, c.indexOf('\n## [', i + 5));
     assert.match(body, /\n### PL\n/);
     assert.match(body, /\n### EN\n/);
     assert.match(body, /hist\.databento\.com/);
-    assert.equal(JSON.parse(read('package.json')).version, '1.3.0');
   });
 
   test('wykresy-32: dokumentacja 1.3.0 bez długich pauz (—)', () => {

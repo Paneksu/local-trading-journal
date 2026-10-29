@@ -1059,6 +1059,11 @@ for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^wykresy-\d
   (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
 }
 
+// ---------- newsy makro USD: testy z testy/newsy-NN*.mjs (bez sieci) ----------
+for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^newsy-\d+.*\.mjs$/.test(n)).sort()) {
+  (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
+}
+
 // ---------- uruchomienie ----------
 let pass = 0, fail = 0, skipped = 0; // skipped: odfiltrowane fragmentem nazwy z linii poleceń (D2, przegląd 28.10.2026)
 const t0 = Date.now();

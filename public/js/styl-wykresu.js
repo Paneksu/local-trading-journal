@@ -50,6 +50,7 @@ export const CHART_GROUPS = {
   look: ['style', 'miniStyle', 'colorMode', 'custom', 'grid'],
   levels: ['entry', 'exit', 'sl', 'tp'],
   overlays: ['overlays'],
+  news: ['newsCard', 'earningsCard'], // 1.4.0: karty „Dzisiaj” i „Wyniki spółek” w panelu
   cards: ['shareChart', 'shareStyle', 'shareDraw', 'rowsTrade', 'rowsPeriod', 'equity', 'filmFormat', 'filmSeconds', 'filmBw', 'filmDim'],
 };
 export const CHART_KEYS = Object.values(CHART_GROUPS).flat();
@@ -62,6 +63,8 @@ export function chartDefaults() {
     grid: true,
     entry: true, exit: true, sl: true, tp: true,
     overlays: normOverlays(null),
+    // 1.4.0 (decyzja użytkownika 29.10.2026: «karta Dzisiaj wł.»): karta newsów domyślnie widoczna; karta earningów: null = widoczna, gdy jest klucz Finnhub
+    newsCard: true, earningsCard: null,
     // karty i filmy (P15: wykres w kartach domyślnie WŁĄCZONY; P21: bez dźwięku, więc brak klucza audio)
     // v2 (P45, P46, P52): SL/TP rysuje tryb „Pozycja” (klucze slCard/tpCard z pakietu I odpadają), styl i rysunek wybierane w oknie Udostępnij
     shareChart: true, shareStyle: 'candles', shareDraw: 'position', rowsTrade: [...TRADE_ROWS_DEFAULT], rowsPeriod: [...PERIOD_ROWS_DEFAULT], equity: true,
@@ -86,6 +89,7 @@ export function sanitizeChart(raw) {
     style: one(x.style, CHART_STYLES, d.style), miniStyle: one(x.miniStyle, CHART_STYLES, one(x.style, CHART_STYLES, d.style)), colorMode: one(x.colorMode, COLOR_MODES, d.colorMode), custom, grid: bool(x.grid, d.grid),
     entry: bool(x.entry, d.entry), exit: bool(x.exit, d.exit), sl: bool(x.sl, d.sl), tp: bool(x.tp, d.tp),
     overlays: normOverlays(x.overlays),
+    newsCard: bool(x.newsCard, d.newsCard), earningsCard: typeof x.earningsCard === 'boolean' ? x.earningsCard : null,
     shareChart: bool(x.shareChart, d.shareChart), shareStyle: one(x.shareStyle, SHARE_STYLES, one(x.style, CHART_STYLES, d.shareStyle)), shareDraw: one(x.shareDraw, SHARE_DRAWS, d.shareDraw),
     rowsTrade: normRows(x.rowsTrade, TRADE_ROWS, TRADE_ROWS_DEFAULT), rowsPeriod: normRows(x.rowsPeriod, PERIOD_ROWS, PERIOD_ROWS_DEFAULT),
     equity: bool(x.equity, d.equity), filmFormat: one(x.filmFormat, FILM_FORMATS, d.filmFormat), filmSeconds: one(x.filmSeconds, FILM_SECONDS, d.filmSeconds),

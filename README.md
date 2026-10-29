@@ -24,6 +24,7 @@ Zrzuty pochodzą z atrapy z przykładowymi danymi.
 - [Wiele urządzeń](#wiele-urządzeń)
 - [Kopia i przywracanie](#kopia-i-przywracanie)
 - [Wykresy świecowe](#wykresy-świecowe)
+- [Newsy makro i kalendarz](#newsy-makro-i-kalendarz)
 - [Karty i filmy](#karty-i-filmy)
 - [Licencje i dane rynkowe](#licencje-i-dane-rynkowe)
 - [Zasady liczenia](#zasady-liczenia)
@@ -42,6 +43,7 @@ Zrzuty pochodzą z atrapy z przykładowymi danymi.
   - dodawanie i edycja trade'ów, kont i wpisów finansowych, z zapisem prosto do Notion;
   - dodawanie zrzutów ekranu do trade'a: w podglądzie i w formularzu edycji wybierasz plik (na telefonie z galerii lub aparatu), przeciągasz go albo wklejasz zrzut ze schowka (Ctrl+V po Win+Shift+S). PNG, JPEG, WebP lub GIF do 10 MB (darmowy Notion: 5 MB). Zrzut trafia do Notion jako obraz na końcu strony trade'a (zrzuty z pola „Zrzut” zostają nietknięte), wymaga uprawnienia integracji „Insert content”; usuwanie zrzutów zostaje w Notion. Dashboard pokazuje przy trade'ach także obrazy wklejone ręcznie w treść strony trade'a w Notion (np. z telefonu), więc zrzut dodany na jednym urządzeniu widać na drugim;
   - wykresy świecowe przy trade'ach ES, NQ, MES i MNQ: podgląd w wyglądzie dashboardu, edycja z rysunkami zapisywanymi w Notion, miniatury na liście trade'ów, świece z Databento na Twoim kluczu (patrz [Wykresy świecowe](#wykresy-świecowe));
+  - newsy makro USD i wyniki spółek z S&P 100 jako nakładki na wykresie, karty „Dzisiaj” i „Wyniki spółek” w lewym panelu oraz zakładka Kalendarz z wyszukiwaniem od 2010 (patrz [Newsy makro i kalendarz](#newsy-makro-i-kalendarz));
   - udostępnianie wyników jako obraz albo film (przycisk „Udostępnij”): karta trade'a z wykresem ceny i rysunkiem pozycji albo karta dnia, tygodnia, miesiąca lub roku z krzywą kapitału, w formatach 9:16, 4:5, 1:1 i 16:9 (film: 9:16, 1:1 i 16:9), wynik w R, $ lub %, wybrane wiersze danych, tło z motywu, własne zdjęcie albo film; pobierasz PNG, MP4 (albo WebM), kopiujesz albo udostępniasz z telefonu; podpis „JustJournal × nick” ustawiasz w Ustawieniach;
   - motywy Onyx i Platinum, palety danych (także dla daltonistów), język polski i angielski;
   - moduł aktualizacji i „Pierwsze kroki” (sprawdzenie instalacji i przewodnik).
@@ -456,6 +458,42 @@ Ustawienia → Wykresy pokazują limity, dzisiejsze wydatki, stan kredytu i rozm
 
 Wygląd, nakładki i karty synchronizują się przez Notion jak reszta ustawień. Klucz, limity, kredyt i przełącznik okna 1s zostają tylko na tym komputerze.
 
+## Newsy makro i kalendarz
+
+Od wersji 1.4.0 dziennik pokazuje newsy makro USD i wyniki spółek (earningsy) z S&P 100.
+
+**Gdzie je widać.**
+- Nakładka „Newsy” na wykresie (podgląd i edytor, domyślnie wyłączona): przerywana linia i znacznik w godzinie publikacji, w kolorze najważniejszej wagi (czerwone, pomarańczowe, żółte, szare dla Bank Holiday). Kilka newsów o tej samej minucie to jeden znacznik z liczbą, dymek otwierasz myszą, klawiaturą albo dotykiem. Zdarzenia całodzienne (Bank Holiday, OPEX) są etykietą dnia, bez linii.
+- Nakładka „Earningsy” (osobna, domyślnie wyłączona): romb w chwili ogłoszenia, przed otwarciem (przed 9:30) albo po zamknięciu (po 16:00) czasu Nowego Jorku.
+- Karty „Dzisiaj” i „Wyniki spółek” w lewym panelu: tylko dzisiejszy dzień.
+- Zakładka „Kalendarz”: widok dnia, tygodnia i miesiąca, filtry wag, rodzajów zdarzeń i klas spółek oraz wyszukiwanie newsów i earningów w całej historii od 2010.
+
+Wagi, klasy i karty włączasz w Ustawieniach → Wykresy → „Newsy” i „Earningsy”. Godziny są w strefie wykresu.
+
+**Co jest w historii.** Dane makro (m.in. CPI, NFP, PPI, Retail Sales, GDP, PCE, ISM, JOLTS, Unemployment Claims, UoM), decyzje, konferencje i protokoły FOMC, przemówienia i zeznania przewodniczącego Fed, komunikaty Fed poza posiedzeniami, TIC, dni wolne (Bank Holiday) i dni OPEX (3. piątek miesiąca, w marcu, czerwcu, wrześniu i grudniu kwartalny). Wagi zależą od daty, bo ForexFactory zmieniał je przez lata. Historię sprawdziliśmy z kalendarzem ForexFactory na próbie 28 miesięcy z lat 2010–2026: Bank Holiday 21 z 21 dni, czerwone z rodzajów objętych historią 98,5% z godziną co do minuty, wszystkie czerwone (z przemówieniami) 85,7% ([szczegóły](docs/plany/newsy-zgodnosc.md)).
+
+**Czego historia nie ma.** Przemówień prezydenta, sekretarza skarbu i członków FOMC poza przewodniczącym (godziny przemówień przewodniczącego są niepewne) oraz publikacji bez stałego terminu: Existing i Pending Home Sales, wstępnych PMI S&P Global i raportu walutowego Skarbu. Te pojawiają się tylko z feedu bieżącego tygodnia, więc od dnia instalacji. Publikacje, które wyszły kilka minut przed czasem albo po czasie, mają w historii godzinę planową.
+
+**Earningsy w 4 klasach.** Klasa 1 (czerwona): NVDA, MSFT, AAPL, AMZN, GOOGL, META, TSLA, AVGO. Klasa 2 (pomarańczowa): duże banki i liderzy branż, np. JPM, GS, NFLX, LLY, WMT, V. Klasa 3 (żółta): reszta pierwszej pięćdziesiątki. Klasa 4 (szara): pozostałe spółki S&P 100. W Ustawieniach → Wykresy → „Earningsy” przeniesiesz spółkę do innej klasy albo dopiszesz własną.
+
+**Źródła.**
+- **FRED** (Federal Reserve Bank of St. Louis): daty publikacji danych z lat 2010–2026 są w plikach wydania. Własny klucz jest opcjonalny i raz dziennie odświeża przyszłe terminy.
+- **Fed:** kalendarz FOMC w programie oraz archiwa JSON z `www.federalreserve.gov` (przemówienia, zeznania i komunikaty), odświeżane raz dziennie.
+- **ForexFactory:** tylko publiczny feed eksportu z bieżącego tygodnia (`nfs.faireconomy.media`), pobierany najwyżej raz na godzinę. Daje aktualne godziny i drobne newsy tygodnia. Dane z feedu zostają lokalnie w `chart-data/news/`, służą do własnego użytku i nigdy nie trafiają na karty ani filmy.
+- **SEC EDGAR:** historia wyników od 2010 jest w plikach wydania (generuje ją narzędzie w `narzedzia/`, dashboard nie łączy się z SEC).
+- **Finnhub:** przyszłe terminy wyników, tylko z Twoim kluczem. Bez klucza działa historia, a nowe terminy się nie pojawiają.
+
+**Klucze FRED i Finnhub (opcjonalne).**
+1. FRED: załóż darmowe konto na [fred.stlouisfed.org](https://fred.stlouisfed.org), w „My Account” otwórz „API Keys” i wygeneruj klucz (32 znaki).
+2. Finnhub: załóż darmowe konto na [finnhub.io](https://finnhub.io) i skopiuj klucz API z panelu.
+3. W dashboardzie: Ustawienia → Wykresy → „Newsy” → pole „Klucz FRED” → wklej → „Zapisz”; tak samo „Klucz Finnhub” w grupie „Earningsy”. Odświeżenie rusza w tle, a jego stan widać w tej samej grupie.
+
+Klucze zapisują się wyłącznie w `.env` na tym komputerze (`FRED_API_KEY`, `FINNHUB_API_KEY`). Nie trafiają do przeglądarki, logów, Notion ani synchronizacji ustawień, więc na każdym komputerze wpisujesz je osobno.
+
+**Wiele urządzeń.** Ustawienia newsów i earningów synchronizują się przez Notion jak reszta ustawień wykresów. Urządzenie na 1.3.0 nie zna nowych pól i przy zapisie ustawień przywraca je do domyślnych, więc zaktualizuj wszystkie urządzenia do 1.4.0.
+
+**Licencje.** This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis. JustJournal nie jest powiązany z ForexFactory (Fair Economy), Finnhub ani SEC.
+
 ## Karty i filmy
 
 Okno „Udostępnij” ma duży podgląd i grupy: Plik (obraz albo film, format) → Karta (trade, dzień, tydzień, miesiąc, rok) → Wykres → Duża liczba (R, $ albo %) → Dane → Tło, a rzadsze opcje w „Więcej opcji”.
@@ -522,6 +560,7 @@ Co z tego wynika dla Ciebie:
 - **Zapis chroniony przed CSRF:** każde żądanie zapisu, aktualizacji i zatrzymania musi mieć Host i Origin dashboardu, własny nagłówek `X-THQ` i `Content-Type: application/json`. Obca strona otwarta w przeglądarce nie zapisze niczego po cichu. Serwer waliduje wszystkie dane sam.
 - **Połączenia:** serwer łączy się z Notion API, z publicznym API GitHub raz na dobę (sprawdzenie nowej wersji, bez żadnych Twoich danych; wyłącznik w Ustawieniach) oraz, od 1.3.0, z `hist.databento.com` (patrz niżej). Aktualizacja pobiera archiwum z `codeload.github.com`. Dodatkowo przeglądarka pobiera fonty z Fontshare i Google Fonts (bez internetu działa na fontach systemowych), a podgląd zrzutu z linku TradingView pobiera obraz z serwera TradingView.
 - **Databento (`hist.databento.com`, od 1.3.0):** jedyne nowe połączenie. Działa tylko wtedy, gdy zapiszesz klucz Databento: sprawdzenie klucza, bezpłatne wyceny (`metadata.get_cost`), zakres dostępnych danych (`metadata.get_dataset_range`, pamiętany 15 minut), mapowanie symboli kontraktów i pobieranie świec (`timeseries.get_range`). Wysyłane są tylko symbol (`ES.v.0`, `NQ.v.0` albo kontrakt), schemat i zakres czasu, nigdy dane z Twojego dziennika. Adres usługi jest na sztywno: serwer odmawia innego niż `hist.databento.com`. Klucz idzie wyłącznie w nagłówku uwierzytelnienia tego połączenia; nie trafia do przeglądarki, logów, Notion ani odpowiedzi API. Bez klucza dashboard nie łączy się z Databento wcale.
+- **Newsy i earningsy (od 1.4.0):** nowe połączenia to tylko `api.stlouisfed.org` (FRED, tylko z zapisanym kluczem), `nfs.faireconomy.media` (feed ForexFactory z bieżącego tygodnia, najwyżej raz na godzinę), `www.federalreserve.gov` (archiwa przemówień i komunikatów Fed, raz dziennie) i `finnhub.io` (tylko z zapisanym kluczem). Wysyłane są tylko zakresy dat i symbole spółek, nigdy dane z Twojego dziennika. `home.treasury.gov` i SEC są używane wyłącznie przez narzędzia w `narzedzia/`, które generują pliki wydania; dashboard się z nimi nie łączy. Klucze FRED i Finnhub zostają w `.env`, jak klucz Databento.
 - **Odczyty chronione przed obcymi stronami:** żądania `GET /api/*` z nagłówkiem `Sec-Fetch-Site` innym niż `same-origin` albo `none` są odrzucane, więc obca strona nie odczyta Twoich danych ani świec.
 
 ## Logo firm prop

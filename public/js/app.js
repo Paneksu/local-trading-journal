@@ -19,6 +19,8 @@ import { createShare, sanitizeShare } from './udostepnij.js';
 import { bindShots, buttonHtml as shotButtonHtml, statusHtml as shotStatusHtml } from './shots.js';
 import { createPodglad, setChartTzDefault, setBadjDefault, validTz, observeMinis, miniEligible, useOverlayBackend, notifyOverlays } from './podglad.js';
 import { sanitizeChart, setChartSettings, applyChartVars, migrateLegacyOverlays } from './styl-wykresu.js';
+import { createNewsCards } from './newsy-karty.js';
+import { createCalendar } from './kalendarz.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -32,7 +34,7 @@ const DEFAULTS = {
   preset: '30d', from: '', to: '', typ: 'Live', konta: null, setups: null, unit: 'R', metric: 'sum', allAccounts: false, skipped: false,
   view: 'stats', res: 'all', eqPaper: false, heatYear: '', rStep: 'auto', sortK: 'date', sortD: 'desc',
 };
-const VIEWS = ['stats', 'trades', 'prop', 'gallery'];
+const VIEWS = ['stats', 'trades', 'prop', 'gallery', 'calendar'];
 const STORE_KEY = 'thq.filters.v1';
 const THEME_KEY = 'thq.theme';
 const SETTINGS_KEY = 'thq.settings.v1';
@@ -135,6 +137,7 @@ const ICON = {
   list: (s) => svg('<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>', s),
   wallet: (s) => svg('<path d="M4 7a2 2 0 0 1 2-2h12v4M4 7v10a2 2 0 0 0 2 2h14V9H6a2 2 0 0 1-2-2zM16 14h.01"/>', s),
   filter: (s) => svg('<path d="M3 5h18M6 12h12M10 19h4"/>', s),
+  calendar: (s) => svg('<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>', s),
   panel: (s) => svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/>', s),
   refresh: (s) => svg('<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>', s),
   chev: (s) => svg('<path d="m6 9 6 6 6-6"/>', s, 2),
@@ -784,7 +787,8 @@ function renderTabs() {
     <button type="button" class="nav-tab" role="tab" data-act="view" data-v="stats" aria-selected="${sel('stats')}">${ICON.chart(15)}${L('Statystyki')}</button>
     <button type="button" class="nav-tab" role="tab" data-act="view" data-v="trades" aria-selected="${sel('trades')}">${ICON.list(15)}${L("Trade'y")} ${cnt(nT)}</button>
     <button type="button" class="nav-tab" role="tab" data-act="view" data-v="prop" aria-selected="${sel('prop')}">${ICON.wallet(15)}${L('Prop')}</button>
-    <button type="button" class="nav-tab" role="tab" data-act="view" data-v="gallery" aria-selected="${sel('gallery')}">${ICON.image(15)}${L('Galeria')} ${cnt(nG)}</button>`;
+    <button type="button" class="nav-tab" role="tab" data-act="view" data-v="gallery" aria-selected="${sel('gallery')}">${ICON.image(15)}${L('Galeria')} ${cnt(nG)}</button>
+    <button type="button" class="nav-tab" role="tab" data-act="view" data-v="calendar" aria-selected="${sel('calendar')}">${ICON.calendar(15)}${L('Kalendarz')}</button>`;
   $('#tabs').setAttribute('aria-label', t('Widok'));
   const item = (act, v, ico, label, attr) => `<button type="button" class="tb-item" data-act="${act}" data-v="${v}" ${attr}>${ico(24)}<span class="t">${label}</span></button>`;
   $('#tabbar').innerHTML =
@@ -792,6 +796,7 @@ function renderTabs() {
     item('view', 'trades', ICON.list, L("Trade'y"), `aria-selected="${sel('trades') && !state.ui.sheet}"`) +
     item('view', 'prop', ICON.wallet, L('Prop'), `aria-selected="${sel('prop') && !state.ui.sheet}"`) +
     item('view', 'gallery', ICON.image, L('Galeria'), `aria-selected="${sel('gallery') && !state.ui.sheet}"`) +
+    item('view', 'calendar', ICON.calendar, L('Kalendarz'), `aria-selected="${sel('calendar') && !state.ui.sheet}"`) +
     item('sheet', 'desk', ICON.filter, L('Filtry'), `aria-pressed="${state.ui.sheet === 'desk'}"`) +
     item('sheet', 'side', ICON.panel, L('Panel'), `aria-pressed="${state.ui.sheet === 'side'}"`);
 }
@@ -821,7 +826,7 @@ function renderDesk() {
     ${list('setups', t('Setup'), setupOpts, state.setups, false)}
     <div class="rule-x"></div>
     <div class="field"><span class="lbl" id="l-unit">${L('Jednostka')}</span>${unitSeg()}</div>
-`;
+    ${newsDeskHtml()}`;
   period.mount($('#period-slot'));
 }
 
@@ -930,6 +935,17 @@ async function saveConfig(patch) {
 function renderMain() {
   const view = $('#view');
   chartJobs = [];
+  // Kalendarz działa bez Notion (dane z lokalnego serwera), więc stoi przed sprawdzeniem modelu i błędu. Ciche odświeżenie danych z Notion nie montuje go od nowa
+  // (fokus w polu szukaj i przewinięcie zostają); zmianę strefy i ustawień obsługuje cal.refresh().
+  if (state.view === 'calendar') {
+    const host = view.querySelector('.ncal');
+    if (!cal.isMounted(host)) {
+      view.innerHTML = `${pageHead(t('Kalendarz'), t('Newsy makro USD i wyniki spółek: dzień, tydzień, miesiąc i wyszukiwanie od 2010'))}<section class="sec ncal" aria-label="${L('Kalendarz newsów')}"></section>`;
+      cal.mount(view.querySelector('.ncal'));
+    }
+    renderSide(); renderStatus();
+    return;
+  }
   if (loading && !model) return;
   if (!model) {
     ctx = null;
@@ -964,12 +980,12 @@ function renderMain() {
   const banner = loadError ? `<div class="card empty mini err"><h3>${L('Odświeżenie nie powiodło się')}</h3><p>${esc(loadError)} ${L('Pokazuję ostatnio pobrane dane.')}</p></div>` : '';
   let html = pageHead(t('Statystyki'), `${typLabel(state.typ)} · ${range.label}${searchNote()}${range.prev && c && !S.calc(inRange(base, range.prev)).n ? ' · ' + t('poprzedni okres jest pusty, więc bez porównań') : ''}`) + banner;
   if (!cur.length) {
-    html += `<section class="sec">${emptyState(range)}</section>`;
+    html += `<section class="sec">${emptyState(range)}</section>` + newsMainHtml();
     if (model.trades.length) html += `<section class="sec"><div class="card" id="cal">${renderCalendar()}</div></section>`;
   } else {
     const p = range.prev ? S.calc(inRange(base, range.prev)) : null;
     const bk = sectionBreakdowns(cur, ext);
-    html += sectionKpi(c, p, range, cur);
+    html += sectionKpi(c, p, range, cur) + newsMainHtml(); // 1.4.0: na telefonie karty newsów stoją tuż pod statystykami (w panelu bocznym są tylko od 1024 px)
     html += sectionEquity(cur, range);
     html += `<section class="sec" aria-label="${L('Kalendarz i dyscyplina')}"><div class="gr row-c"><div class="card" id="cal">${renderCalendar()}</div><div class="stack">${bk.side}</div></div></section>`;
     html += `<section class="sec" id="heat-sec" aria-label="${L('Mapa dni')}">${renderHeatmap()}</section>`;
@@ -1528,9 +1544,63 @@ const period = createPeriod({
 const prop_ = createProp({ state, getModel: () => model, reload: (f) => load(f), resolveRange, inRange });
 const prop = prop_;
 
+// ---------- newsy i earningsy (1.4.0): karty „Dzisiaj” i „Wyniki spółek” ----------
+// Decyzja użytkownika (29.10.2026): «Nakładka wył., karta Dzisiaj wł.». Karta earningów: bez wyboru pojawia się po wpisaniu klucza Finnhub (decyzja gustu, bez klucza byłaby pusta).
+// Dane raz z lokalnego serwera, potem przeliczenie co minutę bez sieci (newsy-karty.js); karty w panelu bocznym od 1024 px, poniżej pod statystykami w widoku głównym.
+const newsOn = () => settings.chart.newsCard !== false;
+const earnOn = () => (typeof settings.chart.earningsCard === 'boolean' ? settings.chart.earningsCard : !!meta.hasFinnhubKey);
+const newsCards = createNewsCards({ getTz: () => settings.chartTz || '', getPrefs: () => settings.chart.overlays, onChange: () => paintNewsCards() });
+const newsSlot = (limit = 0) => `<div class="nws-slot" data-nws="news" data-limit="${limit}">${newsCards.news({ limit }).html}</div>`;
+const earnSlot = (limit = 0) => `<div class="nws-slot" data-nws="earn" data-limit="${limit}">${newsCards.earnings(meta, { limit }).html}</div>`;
+// Lewy panel (od 1024 px): wersje kompaktowe, żeby panel mieścił się bez przewijania; reszta pod „+N więcej” w Kalendarzu. Telefon: karty pod statystykami (newsMainHtml).
+const DESK_LIMIT = { news: 4, earn: 3 };
+function newsDeskHtml() {
+  let h = '';
+  if (newsOn()) h += sideSection('news', t('Dzisiaj'), newsSlot(DESK_LIMIT.news));
+  if (earnOn()) h += sideSection('earn', t('Wyniki spółek'), earnSlot(DESK_LIMIT.earn));
+  return h ? `<div class="nws-desk">${h}</div>` : '';
+}
+function newsMainHtml() {
+  const cards = [];
+  if (newsOn()) cards.push(`<div class="card nws-card"><div class="card-h"><h3>${L('Dzisiaj')} <span class="sub">${L('newsy USD')}</span></h3></div>${newsSlot()}</div>`);
+  if (earnOn()) cards.push(`<div class="card nws-card"><div class="card-h"><h3>${L('Wyniki spółek')}</h3></div>${earnSlot()}</div>`);
+  return cards.length ? `<section class="sec nws-main" aria-label="${L('Newsy i wyniki spółek')}"><div class="gr">${cards.join('')}</div></section>` : '';
+}
+function paintNewsCards() {
+  $$('.nws-slot[data-nws="news"]').forEach((el) => { el.innerHTML = newsCards.news({ limit: Number(el.dataset.limit) || 0 }).html; });
+  $$('.nws-slot[data-nws="earn"]').forEach((el) => { el.innerHTML = newsCards.earnings(meta, { limit: Number(el.dataset.limit) || 0 }).html; });
+}
+// Kalendarz newsów (zakładka): strefa z Ustawień, ikonka z liczbą trade'ów dnia przenosi do listy trade'ów tego dnia
+const cal = createCalendar({
+  getTz: () => settings.chartTz || '',
+  getTradeCount: (day) => (model ? baseTrades(state.typ, true).filter((x) => x.date === day).length : 0),
+  onTrades: (day) => { Object.assign(state, { preset: 'custom', from: day, to: day, view: 'trades' }); save(); renderAll(); },
+});
+function openCalendar(mode, earnCls) { cal.goTo(null, mode); if (earnCls) cal.applyEarn(earnCls); state.view = 'calendar'; state.ui.sheet = ''; save(); renderTabs(); applySheetAttr(); const h = $('#view .ncal'); if (h && cal.isMounted(h)) { cal.unmount(); h.remove(); } renderMain(); $('#main').scrollTo({ top: 0 }); }
+// „+N więcej” z karty „Dzisiaj”: dzisiejszy dzień (dzień liczony w strefie z Ustawień); z karty „Wyniki spółek”: tydzień z klasami z karty
+const openCalendarToday = () => openCalendar('day');
+const openCalendarEarnings = () => openCalendar('week', settings.chart.overlays.earnCls);
+async function postJson(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  return r.ok ? { ok: true, ...j } : { ok: false, error: j.error };
+}
+async function refreshMeta() { try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ } }
+
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
 const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c),
-  onDatabentoKey: saveDatabentoKey, loadDataSize: async () => { const r = await fetch('/api/candles/size', { cache: 'no-store' }); return r.ok ? (await r.json()).bytes : null; } });
+  onDatabentoKey: saveDatabentoKey, loadDataSize: async () => { const r = await fetch('/api/candles/size', { cache: 'no-store' }); return r.ok ? (await r.json()).bytes : null; },
+  loadNewsStatus: async () => {
+    const get = async (u) => { try { const r = await fetch(u, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; } };
+    const [news, earnings] = await Promise.all([get('/api/news/status'), get('/api/earnings/status')]);
+    return { news, earnings };
+  },
+  onNewsKey: async (kind, key) => {
+    const r = await postJson(kind === 'fred' ? '/api/news/key' : '/api/earnings/key', { key });
+    if (r.ok) { await refreshMeta(); newsCards.wantEarnings(earnOn()); renderSide(); renderDesk(); if (model) renderMain(); newsCards.load(); }
+    return r;
+  },
+  onEarnClass: async (body) => { const r = await postJson('/api/earnings/classes', body); if (r.ok) newsCards.load(); return r; } });
 // Zmiana settings.chart (Ustawienia albo synchronizacja): stan bieżący, kolory świec, otwarty wykres i listy z miniaturami (cache świec zostaje, miniatury tylko rysują się od nowa)
 let chartTimer = null;
 function onChartChanged(c) {
@@ -1538,6 +1608,9 @@ function onChartChanged(c) {
   applyChartVars(settings.chart, getTheme());
   notifyOverlays();
   lb.pv?.redraw();
+  newsCards.wantEarnings(earnOn());
+  if (state.view === 'calendar') cal.refresh();
+  renderSide(); renderDesk(); paintNewsCards();
   clearTimeout(chartTimer);
   chartTimer = setTimeout(() => { if (model) renderMain(); }, 150);
 }
@@ -1612,7 +1685,9 @@ document.addEventListener('click', (ev) => {
       if (state.ui.sheet) { const f = $(state.ui.sheet === 'desk' ? '#desk .icon-btn' : '#side .icon-btn'); if (f) f.focus(); } else refocus(`.tb-item[data-act="sheet"][data-v="${v || 'desk'}"]`);
       break;
     }
-    case 'sec': state.ui.closed[v] = !isClosed(v); saveUi(); renderSide(); refocus(`[data-act="sec"][data-v="${v}"]`); break;
+    case 'cal-today': openCalendarToday(); break;
+    case 'cal-earn': openCalendarEarnings(); break;
+    case 'sec': state.ui.closed[v] = !isClosed(v); saveUi(); renderSide(); if (v === 'news' || v === 'earn') renderDesk(); refocus(`[data-act="sec"][data-v="${v}"]`); break;
     case 'theme': setTheme(v, t); break;
     case 'res': state.res = v; save(); renderMain(); refocus(`[data-act="res"][data-v="${v}"]`); break;
     case 'lb-open': openLightbox(galleryItems, Number(t.dataset.i), t); break;
@@ -1850,6 +1925,8 @@ applyLook(getTheme());
 renderDesk();
 renderTabs();
 renderSide();
+newsCards.wantEarnings(earnOn());
+newsCards.start(); // 1.4.0: dane kart newsów i earningsów (lokalny serwer, bez Notion), potem przeliczenie co minutę
 // Świeża instalacja (przed kreatorem): bez zapytania o dane, którego serwer i tak nie obsłuży; pod kreatorem pusty stan dashboardu.
 async function start() {
   if (meta.onboarded === false) {

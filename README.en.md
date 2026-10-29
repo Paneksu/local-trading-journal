@@ -24,6 +24,7 @@ Screenshots come from the mock with sample data.
 - [Multiple devices](#multiple-devices)
 - [Backup and restore](#backup-and-restore)
 - [Candlestick charts](#candlestick-charts)
+- [Macro news and calendar](#macro-news-and-calendar)
 - [Cards and videos](#cards-and-videos)
 - [Licenses and market data](#licenses-and-market-data)
 - [How numbers are calculated](#how-numbers-are-calculated)
@@ -42,6 +43,7 @@ Screenshots come from the mock with sample data.
   - add and edit trades, accounts and finance entries, saved straight to Notion;
   - add screenshots to a trade: in the detail view and in the edit form you pick a file (from the gallery or camera on a phone), drag it in, or paste a screenshot from the clipboard (Ctrl+V after Win+Shift+S). PNG, JPEG, WebP or GIF up to 10 MB (free Notion plan: 5 MB). The screenshot goes to Notion as an image at the end of the trade page (screenshots in the "Screenshot" property stay untouched) and needs the integration's "Insert content" capability; removing screenshots stays in Notion. The dashboard also shows images pasted by hand into a trade page body in Notion (e.g. from a phone), so a screenshot added on one device shows up on the other;
   - candlestick charts for ES, NQ, MES and MNQ trades: a preview in the dashboard's look, an editor with drawings saved to Notion, thumbnails in the trade list, candles from Databento on your own key (see [Candlestick charts](#candlestick-charts));
+  - USD macro news and S&P 100 earnings as chart overlays, the "Today" and "Earnings" cards in the left panel and a Calendar tab with search since 2010 (see [Macro news and calendar](#macro-news-and-calendar));
   - share results as an image or a video ("Share" button): a trade card with the price chart and the position drawing, or a day, week, month or year card with the equity curve, in 9:16, 4:5, 1:1 and 16:9 (videos: 9:16, 1:1 and 16:9), result in R, $ or %, chosen data rows, theme background, your own photo or video; download a PNG, an MP4 (or WebM), copy it or share from a phone; set the "JustJournal × nickname" signature in Settings;
   - Onyx and Platinum themes, data palettes (including colour-blind friendly), Polish and English;
   - an update module and "Getting started" (installation check and a guided tour).
@@ -440,6 +442,42 @@ Settings → Charts shows the limits, today's spending, the credit and the size 
 
 Look, overlays and cards sync through Notion like the other settings. The key, limits, credit and the 1s window switch stay on this computer only.
 
+## Macro news and calendar
+
+Since version 1.4.0 the journal shows USD macro news and earnings of S&P 100 companies.
+
+**Where you see them.**
+- The "News" chart overlay (preview and editor, off by default): a dashed line and a marker at the release time, in the colour of the highest impact (red, orange, yellow, grey for Bank Holiday). Several events in the same minute share one marker with a count; the tooltip opens with a mouse, the keyboard or touch. All-day events (Bank Holiday, OPEX) are a day label without a line.
+- The "Earnings" overlay (separate, off by default): a diamond at the announcement, before the open (before 9:30) or after the close (after 16:00) New York time.
+- The "Today" and "Earnings" cards in the left panel: today only.
+- The "Calendar" tab: day, week and month views, filters for impact, event type and company class, and search across news and earnings in the whole history since 2010.
+
+You switch impacts, classes and cards in Settings → Charts → "News" and "Earnings". Times follow the chart time zone.
+
+**What history has.** Macro data (CPI, NFP, PPI, Retail Sales, GDP, PCE, ISM, JOLTS, Unemployment Claims, UoM and more), FOMC decisions, press conferences and minutes, speeches and testimonies of the Fed Chair, Fed announcements outside meetings, TIC, market holidays (Bank Holiday) and OPEX days (3rd Friday of the month, quarterly in March, June, September and December). Impacts depend on the date, because ForexFactory changed them over the years. We checked the history against the ForexFactory calendar on a sample of 28 months from 2010–2026: Bank Holiday 21 of 21 days, red events of the types covered by history 98.5% with the time to the minute, all red events (including speeches) 85.7% ([details, in Polish](docs/plany/newsy-zgodnosc.md)).
+
+**What history does not have.** Speeches by the President, the Treasury Secretary and FOMC members other than the Chair (the Chair's speech times are uncertain), and releases without a fixed schedule: Existing and Pending Home Sales, flash S&P Global PMI and the Treasury currency report. These appear only from the current week's feed, so from the day you install. Releases that came out a few minutes early or late keep the scheduled time in history.
+
+**Earnings in 4 classes.** Class 1 (red): NVDA, MSFT, AAPL, AMZN, GOOGL, META, TSLA, AVGO. Class 2 (orange): big banks and sector leaders, e.g. JPM, GS, NFLX, LLY, WMT, V. Class 3 (yellow): the rest of the top fifty. Class 4 (grey): the remaining S&P 100. In Settings → Charts → "Earnings" you can move a company to another class or add your own.
+
+**Sources.**
+- **FRED** (Federal Reserve Bank of St. Louis): release dates for 2010–2026 ship with the release. Your own key is optional and refreshes future dates once a day.
+- **Fed:** the FOMC calendar in the app plus JSON archives from `www.federalreserve.gov` (speeches, testimonies and announcements), refreshed once a day.
+- **ForexFactory:** only the public export feed for the current week (`nfs.faireconomy.media`), fetched at most once an hour. It brings up-to-date times and the week's minor news. Feed data stays local in `chart-data/news/`, is for your own use and never goes onto cards or videos.
+- **SEC EDGAR:** earnings history since 2010 ships with the release (a tool in `narzedzia/` generates it; the dashboard does not connect to the SEC).
+- **Finnhub:** future earnings dates, only with your key. Without a key history works and new dates do not appear.
+
+**FRED and Finnhub keys (optional).**
+1. FRED: create a free account at [fred.stlouisfed.org](https://fred.stlouisfed.org), open "API Keys" in "My Account" and request a key (32 characters).
+2. Finnhub: create a free account at [finnhub.io](https://finnhub.io) and copy the API key from the dashboard.
+3. In JustJournal: Settings → Charts → "News" → "FRED key" field → paste → "Save"; the same for "Finnhub key" in the "Earnings" group. The refresh starts in the background and its state shows in the same group.
+
+Keys are stored only in `.env` on this computer (`FRED_API_KEY`, `FINNHUB_API_KEY`). They never reach the browser, the logs, Notion or settings sync, so you enter them on each computer separately.
+
+**Multiple devices.** News and earnings settings sync through Notion like the rest of the chart settings. A device on 1.3.0 does not know the new fields and resets them to defaults when it saves settings, so update all devices to 1.4.0.
+
+**Licenses.** This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis. JustJournal is not affiliated with ForexFactory (Fair Economy), Finnhub or the SEC.
+
 ## Cards and videos
 
 The "Share" window has a large preview and groups: File (image or video, format) → Card (trade, day, week, month, year) → Chart → Big number (R, $ or %) → Data → Background, with the rarer options under "More options".
@@ -502,6 +540,7 @@ What this means for you:
 - **Writes are CSRF-protected:** every write, update and stop request needs the dashboard's Host and Origin, a custom `X-THQ` header and `Content-Type: application/json`. A foreign page open in your browser cannot write anything silently. The server validates all data itself.
 - **Connections:** the server talks to the Notion API, to the public GitHub API once a day (new version check, none of your data is sent; switch it off in Settings) and, since 1.3.0, to `hist.databento.com` (see below). An update downloads the archive from `codeload.github.com`. In addition the browser loads fonts from Fontshare and Google Fonts (without internet it falls back to system fonts), and a TradingView link preview loads the image from TradingView.
 - **Databento (`hist.databento.com`, since 1.3.0):** the only new connection. It is used only after you save a Databento key: key check, free quotes (`metadata.get_cost`), the available data range (`metadata.get_dataset_range`, cached for 15 minutes), contract symbol mapping and candle downloads (`timeseries.get_range`). Only the symbol (`ES.v.0`, `NQ.v.0` or a contract), the schema and the time range are sent, never data from your journal. The service address is fixed: the server refuses anything other than `hist.databento.com`. The key goes only in the authentication header of this connection; it never reaches the browser, the logs, Notion or API responses. Without a key the dashboard does not connect to Databento at all.
+- **News and earnings (since 1.4.0):** the only new connections are `api.stlouisfed.org` (FRED, only with a saved key), `nfs.faireconomy.media` (the ForexFactory feed for the current week, at most once an hour), `www.federalreserve.gov` (archives of Fed speeches and announcements, once a day) and `finnhub.io` (only with a saved key). Only date ranges and company symbols are sent, never data from your journal. `home.treasury.gov` and the SEC are used only by the tools in `narzedzia/` that generate the release files; the dashboard does not connect to them. The FRED and Finnhub keys stay in `.env`, like the Databento key.
 - **Reads protected from other sites:** `GET /api/*` requests with a `Sec-Fetch-Site` header other than `same-origin` or `none` are rejected, so a foreign page cannot read your data or candles.
 
 ## Prop firm logos

@@ -10,6 +10,8 @@ import { esc, fmtR } from './format.js';
 import * as G from './geometria.js';
 import { tradeQuery, fetchCandles, padFor, tfSec, MAX_VISIBLE, barToggles, overlayToggles, createOverlays, markToggles, loadAutoScale, saveAutoScale, zoomPrice, chartTz, setChartTzOverride, fmtIn, tfBarHtml, mountTfBar, DECIMAL, overlayGeometry, mountOverlayPop, DASHES, BOX_STROKE_ALPHA, startRange, gapLabel, badjWarning, clampFrameTf, capBars, SUB_MINUTE_MAX_BARS } from './podglad.js';
 import { chartSettings } from './styl-wykresu.js';
+import { newsGeometry, timeToX, markPath, NEWS_DASH, feed as newsFeed } from './newsy.js';
+import { mountNewsLayer } from './newsy-warstwa.js';
 import { createRysunki, NO_STATS, adoptEdited, planTradeSave, tickOf } from './rysunki.js';
 
 // P28: daty trade'a zapisujemy w strefie przeglądarki, jak formularz trade'a (form.js), więc chwila w Notion zgadza się z resztą aplikacji
@@ -197,6 +199,7 @@ export function readColors(el) {
   return {
     profit: probe(v('--profit')), loss: probe(v('--loss')), be: probe(v('--be')), up: probe(v('--chart-up') || v('--profit')), down: probe(v('--chart-down') || v('--loss')), line: probe(v('--chart-line') || v('--fg-2')), fg: probe(v('--fg')), fg2: probe(v('--fg-2')),
     asia: probe(v('--n-blue')), london: probe(v('--n-orange')), ny: probe(v('--n-purple')),
+    nRed: probe(v('--n-red')), nOrange: probe(v('--n-orange')), nYellow: probe(v('--n-yellow')), nBlue: probe(v('--n-blue')), bg: probe(v('--chart-bg') || v('--float')),
     grid: probe(`rgb(${v('--fg-rgb')} / .08)`), popover: probe(v('--popover')), cross: probe(`rgb(${v('--fg-rgb')} / .35)`), font: v('--font') || 'sans-serif',
   };
 }
@@ -261,6 +264,75 @@ export function overlayPrimitive({ chart, series, getModel, getPrefs, getCandles
   const views = [view(bands, 'bottom'), view(lines, 'top')];
   return {
     geometry: geo, // P32: test zgodności z podglądem
+    attached: (p) => { req = p.requestUpdate; },
+    detached: () => { req = null; },
+    paneViews: () => views,
+    updateAllViews() {},
+    requestUpdate: () => req?.(),
+  };
+}
+
+/// ---- nakładka newsów i earningsów (1.4.0): prymityw serii LWC ----
+// Model i geometria z newsy.js (ta sama logika co w podglądzie SVG). Linie pod świecami ('bottom'), znaczniki i etykiety dni nad nimi ('top'); po każdej klatce
+// geometria trafia do warstwy przycisków (newsy-warstwa.js), więc dymek, fokus z klawiatury i dotyk działają jak w podglądzie. Wyłączona nakładka czyści warstwę.
+// Napis z obrysem w kolorze tła wykresu (jak paint-order: stroke w podglądzie SVG): czytelny na świecach, bez podkładki pod tekstem
+function outlined(ctx, text, x, y, color, bg, hr) {
+  ctx.lineJoin = 'round'; ctx.lineWidth = Math.round(3 * hr); ctx.strokeStyle = bg;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color; ctx.fillText(text, x, y);
+}
+const NEWS_COLOR = { high: 'nRed', medium: 'nOrange', low: 'nYellow', holiday: 'fg2', opex: 'nBlue' };
+const EARN_COLOR = { 1: 'nRed', 2: 'nOrange', 3: 'nYellow', 4: 'fg2' };
+export function newsPrimitive({ chart, series, getModel, getCandles, getStep, getColors, onGeometry = () => {} }) {
+  let req = null;
+  const geo = (size) => {
+    const model = getModel();
+    if (!model?.on) return null;
+    const candles = getCandles(), sc = overlayScales(chart, series, candles);
+    if (!sc) return null;
+    return newsGeometry(model, timeToX(candles, getStep(), sc), { left: 0, right: sc.right, top: 0, bottom: size.height });
+  };
+  const colorOf = (o, col) => col[o.kind === 'earn' ? EARN_COLOR[o.cls] : NEWS_COLOR[o.imp]] || col.fg2;
+  const lines = (target) => target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr, mediaSize }) => {
+    const g = geo(mediaSize);
+    if (!g) return;
+    const col = getColors();
+    ctx.save();
+    ctx.lineWidth = Math.max(1, Math.round(hr));
+    ctx.setLineDash(NEWS_DASH.map((v) => Math.round(v * hr)));
+    ctx.globalAlpha = 0.85;
+    for (const l of g.lines) {
+      ctx.strokeStyle = colorOf({ kind: 'news', imp: l.imp }, col);
+      const x = Math.round(l.x * hr) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, Math.round(l.y1 * vr)); ctx.lineTo(x, Math.round(l.y2 * vr)); ctx.stroke();
+    }
+    ctx.restore();
+  });
+  const marks = (target) => target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr, mediaSize }) => {
+    const g = geo(mediaSize);
+    onGeometry(g);
+    if (!g) return;
+    const col = getColors();
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.font = `${Math.round(10.5 * vr)}px ${col.font}`;
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    for (const k of g.marks) {
+      const c = colorOf(k, col);
+      const pts = (markPath(k.kind, k.x, k.y).match(/-?\d+(\.\d+)?/g) || []).map(Number);
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i += 2) { const px = Math.round(pts[i] * hr), py = Math.round(pts[i + 1] * vr); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }
+      ctx.closePath();
+      if (k.hollow) { ctx.strokeStyle = c; ctx.lineWidth = Math.max(1, Math.round(hr)); ctx.stroke(); } else { ctx.fillStyle = c; ctx.fill(); }
+      if (k.count > 1) { outlined(ctx, String(k.count), Math.round((k.x + 8) * hr), Math.round((k.y + 4) * vr), c, col.bg, hr); }
+    }
+    for (const l of g.labels) outlined(ctx, l.text, Math.round(l.x * hr), Math.round(l.y * vr), colorOf(l, col), col.bg, hr);
+    ctx.restore();
+  });
+  const view = (draw, z) => ({ zOrder: () => z, renderer: () => ({ draw }) });
+  const views = [view(lines, 'bottom'), view(marks, 'top')];
+  return {
+    geometry: (size) => geo(size), // testy zgodności z podglądem
     attached: (p) => { req = p.requestUpdate; },
     detached: () => { req = null; },
     paneViews: () => views,
@@ -355,11 +427,16 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
   // nakładki (etap 10): te same przełączniki, stan i funkcje czyste co w podglądzie; rysuje prymityw serii
   const refreshNote = () => {
     ov.model(candles); // wypełnia pamięć podręczną, z której czyta pdhlGap
-    root.querySelector('.swc-ov-note').textContent = ov.pdhlGap(candles) ? t('PDH/PDL: do linii potrzebne są pobrane świece całej poprzedniej sesji.') : '';
+    root.querySelector('.swc-ov-note').textContent = [ov.pdhlGap(candles) ? t('PDH/PDL: do linii potrzebne są pobrane świece całej poprzedniej sesji.') : '', ov.newsFailed() ? t('Newsy: nie udało się wczytać danych.') : ''].filter(Boolean).join(' ');
   };
-  const ov = createOverlays(instrument, () => { markTf(); refreshNote(); prim.requestUpdate(); }, () => query()); // P35: PDH/PDL z kontraktu trade'a (P38: z B-ADJ, gdy włączony)
+  const ov = createOverlays(instrument, () => { markTf(); refreshNote(); prim.requestUpdate(); nprim.requestUpdate(); ov.ensure(candles); }, () => query()); // P35: PDH/PDL z kontraktu trade'a (P38: z B-ADJ, gdy włączony)
   const prim = overlayPrimitive({ chart, series, getModel: () => ov.model(candles), getPrefs: () => ov.prefs(), getCandles: () => candles, getColors: () => c });
   series.attachPrimitive(prim);
+  // newsy i earningsy (1.4.0): rysuje prymityw, interakcję (dymek, klawiatura, dotyk) daje warstwa przycisków nad wykresem
+  const nwl = mountNewsLayer(plot, { fmt: () => fmtIn(chartTz()) });
+  const nprim = newsPrimitive({ chart, series, getModel: () => ov.news(candles), getCandles: () => candles, getStep: () => step, getColors: () => c,
+    onGeometry: (g) => { const m = ov.news(candles); nwl.update(g, m, `${chartTz()}|${newsFeed.version()}|${m.groups.length}|${m.eGroups.length}|${m.labels.length}|${candles.length}`); } });
+  series.attachPrimitive(nprim);
   ov.ensure(candles);
 
   // poziomy i znaczniki
@@ -664,6 +741,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     ac.abort();
     mo.disconnect();
     ov.destroy();
+    nwl.destroy();
     tfBar.destroy();
     ovPop.destroy();
     await rys.destroy();

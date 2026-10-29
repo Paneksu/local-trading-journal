@@ -21,6 +21,7 @@ const env = {
   DS_DZIENNIK: '33333333-3333-4333-8333-333333333333',
   DS_FINANSE: '44444444-4444-4444-8444-444444444444',
   NOTION_ROOT_URL: 'https://www.notion.so/atrapa',
+  THQ_NO_NEWS: '1', // dashboard testowy nie sięga po newsy z internetu
   THQ_CONFIG_DIR: mkdtempSync(path.join(tmpdir(), 'thq-test-')), // konfiguracja testowa nie dotyka prawdziwej
 };
 const run = (file, args, e) => spawn(process.execPath, [path.join(ROOT, file), ...args], { stdio: 'inherit', env: e });

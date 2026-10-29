@@ -22,8 +22,8 @@ export function tmp(prefix = 'ltj-test-') { const d = mkdtempSync(path.join(tmpd
 // Środowisko bez prawdziwych kluczy: zmienne Notion z procesu testów nigdy nie trafiają do procesów potomnych.
 export function cleanEnv(extra = {}) {
   const e = { ...process.env };
-  for (const k of ['NOTION_TOKEN', 'NOTION_VERSION', 'DS_TRADES', 'DS_KONTA', 'DS_DZIENNIK', 'DS_FINANSE', 'NOTION_ROOT_URL', 'NOTION_API_BASE', 'THQ_CONFIG_DIR', 'UPDATE_API_BASE', 'UPDATE_DOWNLOAD_BASE', 'PORT', 'DATABENTO_API_KEY', 'DATABENTO_API_BASE']) delete e[k];
-  return { ...e, THQ_NO_OPEN: '1', THQ_NO_AUTO_1S: '1', UPDATE_API_BASE: 'http://127.0.0.1:9', DATABENTO_API_BASE: 'http://127.0.0.1:9', ...extra };
+  for (const k of ['NOTION_TOKEN', 'NOTION_VERSION', 'DS_TRADES', 'DS_KONTA', 'DS_DZIENNIK', 'DS_FINANSE', 'NOTION_ROOT_URL', 'NOTION_API_BASE', 'THQ_CONFIG_DIR', 'UPDATE_API_BASE', 'UPDATE_DOWNLOAD_BASE', 'PORT', 'DATABENTO_API_KEY', 'DATABENTO_API_BASE', 'FRED_API_KEY', 'FRED_API_BASE', 'FINNHUB_API_KEY', 'FINNHUB_API_BASE', 'EDGAR_DATA_BASE', 'EDGAR_WWW_BASE', 'EDGAR_CONTACT', 'THQ_NEWS_FEED_URL', 'FED_ARCHIVE_BASE']) delete e[k];
+  return { ...e, THQ_NO_OPEN: '1', THQ_NO_AUTO_1S: '1', THQ_NO_NEWS: '1', UPDATE_API_BASE: 'http://127.0.0.1:9', DATABENTO_API_BASE: 'http://127.0.0.1:9', ...extra };
 }
 
 export function start(file, args = [], env = {}, { cwd = ROOT } = {}) {
