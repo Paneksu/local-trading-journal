@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: kilka wykresów w replayu backtestu D1 (strona robocza)</title>
+<!-- Strona robocza testów backtest-D1 (testy/backtest-D1-uklady.mjs: ?part=uklady, ?part=rysunki, D2: ?part=callout i H2: ?part=kolory), Chrome/Edge headless przez CDP, podawana tylko przez dashboard
+     testowy (THQ_TEST_PAGES=1) pod /__testy/. Serwer testowy ma w THQ_CONFIG_DIR wyłącznie świece syntetyczne (NQ z 1s w 9:30-11:00, ES tylko 1m). Prawdziwe moduły:
+     bt-replay.js, bt-wykres.js, bt-rysunki.js, rysunki.js (paczka rysowania), prawdziwy styles.css i features.css. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }.
+     ?part=shot&kind=2h|4 zostawia otwarty ekran (zrzuty), ?theme=platinum zmienia motyw. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'uklady';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(25); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+// zapis rysunków do Notion (trade'y Live) nie może się zdarzyć w replayu: liczymy żądania
+const posts = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = (u, o) => { if (String(u).includes('/api/drawings/save')) posts.push(String(u)); return realFetch(u, o); };
+
+const DAY = '2024-03-12';
+try {
+  for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k);
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, DEFAULT_JUMPS } = await import('/js/bt-czas.js');
+  const { mergeBase, candlesAt } = await import('/js/bt-swieca.js');
+  const { positionPrices } = await import('/js/rysunki.js');
+  const { createDrawingStore } = await import('/js/bt-rysunki.js');
+  const client = createSessionClient();
+  const dayAll = await getJson(`/api/backtest/day?instruments=NQ,ES&day=${DAY}&ctx=2`);
+  const loadDay = async () => dayAll;
+  const streams = { NQ: mergeBase(dayAll.inst.NQ.m1, dayAll.inst.NQ.s1, dayAll.inst.NQ.real1s), ES: mergeBase(dayAll.inst.ES.m1, dayAll.inst.ES.s1, dayAll.inst.ES.real1s) };
+  const c0 = nyAt(DAY, '09:31');
+  const LAY4 = { kind: '4', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }, { instrument: 'NQ', tf: '1m' }, { instrument: 'ES', tf: '5m' }] };
+  const LAY2 = { kind: '2h', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }] };
+  const mk = async (name, { layout = null, cursor = null } = {}) => {
+    const doc = newSessionDoc({
+      id: newSessionId(), name,
+      def: { instruments: ['NQ', 'ES'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
+      pool: [DAY], now: Date.now(),
+    });
+    if (layout) doc.layout = JSON.parse(JSON.stringify(layout));
+    if (cursor) doc.cursor = cursor;
+    await client.create(doc);
+    return doc;
+  };
+  const open = async (doc, opts = {}) => {
+    localStorage.removeItem('thq.bt.layout.v1');
+    const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, ...opts });
+    await R.ready;
+    window.__btCharts = R.charts();
+    return R;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const cells = () => [...scr().querySelectorAll('.bt-cell')];
+  const layoutBtn = (k) => scr().querySelector(`[data-layout="${k}"]`);
+  const activate = (R, i) => { cells()[i].querySelector('.bt-plot').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); window.dispatchEvent(new PointerEvent('pointerup')); window.__btCharts = R.charts(); };
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P(`[name="${name}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  const rect = (el) => el.getBoundingClientRect();
+  const lastT = (ch) => { const b = ch.bars(); return b.length ? b[b.length - 1][0] : null; };
+
+  if (part === 'uklady') {
+    const doc = await mk('Sesja D1 układy', { cursor: c0 });
+    const R = await open(doc);
+
+    await section('uklady', async () => {
+      rec('uklady', cells().length === 1 && scr().querySelector('.bt-grid')?.dataset.kind === '1', `start: jeden wykres (${cells().length})`);
+      rec('uklady', [...scr().querySelectorAll('[data-layout]')].every((b) => !b.disabled), 'wszystkie cztery układy włączone');
+      layoutBtn('2h').click();
+      let r = cells().map(rect);
+      rec('uklady', cells().length === 2 && scr().querySelector('.bt-grid').dataset.kind === '2h' && R.charts().length === 2, `2h: dwa wykresy (${cells().length})`);
+      rec('uklady', r[0].right <= r[1].left + 1 && Math.abs(r[0].top - r[1].top) < 2, `2h obok siebie: ${Math.round(r[0].right)} <= ${Math.round(r[1].left)}`);
+      rec('uklady', layoutBtn('2h').getAttribute('aria-pressed') === 'true' && layoutBtn('1').getAttribute('aria-pressed') === 'false', 'przycisk układu zaznaczony');
+      layoutBtn('2v').click();
+      r = cells().map(rect);
+      rec('uklady', cells().length === 2 && scr().querySelector('.bt-grid').dataset.kind === '2v', '2v: dwa wykresy');
+      rec('uklady', r[0].bottom <= r[1].top + 1 && Math.abs(r[0].left - r[1].left) < 2, `2v jeden pod drugim: ${Math.round(r[0].bottom)} <= ${Math.round(r[1].top)}`);
+      layoutBtn('4').click();
+      r = cells().map(rect);
+      rec('uklady', cells().length === 4 && R.charts().length === 4 && scr().querySelector('.bt-grid').dataset.kind === '4', `4: cztery wykresy (${cells().length})`);
+      rec('uklady', r[1].left >= r[0].right - 1 && r[2].top >= r[0].bottom - 1 && r[3].left >= r[2].right - 1, 'siatka 2×2');
+      rec('uklady', r.every((x) => x.width > 200 && x.height > 120), `każdy wykres ma rozmiar: ${r.map((x) => Math.round(x.width) + '×' + Math.round(x.height)).join(' ')}`);
+      const sc = rect(scr());
+      rec('uklady', document.documentElement.scrollHeight <= window.innerHeight + 2 && scr().scrollHeight <= sc.height + 2, '1920×1080 bez przewijania okna');
+      layoutBtn('2v').click();
+      let want = null;
+      try { want = JSON.parse(localStorage.getItem('thq.bt.layout.v1')); } catch { want = null; }
+      rec('uklady', want?.kind === '2v', `ostatni układ w localStorage: ${JSON.stringify(want)}`);
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); return x.layout?.kind === '2v' ? x : null; }, 4000);
+      rec('uklady', disk && disk.layout.charts.length === 2 && disk.layout.charts.every((c) => c.instrument && c.tf), `układ zapisany w pliku sesji: ${JSON.stringify(disk?.layout)}`);
+      // wybór instrumentu i TF w nagłówku wykresu
+      const c1 = cells()[1];
+      const ci = c1.querySelector('.bt-ci'), ct = c1.querySelector('.bt-ct');
+      rec('uklady', ci && ct && [...ci.options].map((o) => o.value).join() === 'NQ,ES' && ct.options.length === 12, 'nagłówek: instrument z instrumentów sesji, 12 interwałów');
+      ci.value = 'ES'; ci.dispatchEvent(new Event('change', { bubbles: true }));
+      ct.value = '5m'; ct.dispatchEvent(new Event('change', { bubbles: true }));
+      rec('uklady', R.charts()[1].instrument === 'ES' && R.doc().layout.charts[1].tf === '5m' && R.doc().layout.charts[1].instrument === 'ES', 'zmiana instrumentu i TF drugiego wykresu trafia do układu sesji');
+      // nowa sesja dostaje ostatni układ
+      R.close();
+      const doc2 = await mk('Sesja D1 nowa');
+      const R2 = openReplay(document.body, { sessionId: doc2.id, client, loadDay });
+      await R2.ready;
+      rec('uklady', cells().length === 2 && scr().querySelector('.bt-grid').dataset.kind === '2v', `nowa sesja z ostatnim układem: ${cells().length} wykresy, ${scr().querySelector('.bt-grid').dataset.kind}`);
+      R2.close();
+    });
+
+    // kolejne sekcje na świeżej sesji z układem 2h: NQ 15s + ES 1m
+    const doc2h = await mk('Sesja D1 zegar', { layout: LAY2, cursor: c0 });
+    const R2 = await open(doc2h);
+    const bars = () => R2.charts();
+    await section('zegar', async () => {
+      rec('zegar', cells().length === 2 && R2.cursor() === c0, `start 9:31:00 (${R2.cursor() - c0})`);
+      R2.step(1);
+      const c = R2.cursor();
+      rec('zegar', c === c0 + 15, `krok NQ 15s: +${c - c0} s`);
+      const ch = bars();
+      rec('zegar', lastT(ch[0]) === c - 15, `NQ 15s: ostatnia świeca t=${lastT(ch[0]) - c} względem kursora (oczekiwane -15)`);
+      const esWant = Math.floor(c / 60) * 60 - 60;
+      rec('zegar', lastT(ch[1]) === esWant, `ES 1m: ostatnia zamknięta minuta t=${lastT(ch[1]) - c} (oczekiwane ${esWant - c}); ES nie ma danych poniżej minuty, więc świeca w budowie stoi`);
+      rec('zegar', ch.every((x) => lastT(x) + 1 <= c), 'żadna świeca nie sięga poza kursor');
+      R2.step(1); R2.step(1); R2.step(1);
+      const c2 = R2.cursor();
+      rec('zegar', c2 === c0 + 60 && lastT(bars()[1]) === c0 && lastT(bars()[0]) === c2 - 15, `po minucie ES dostaje minutę 9:31 (t=${lastT(bars()[1]) - c0}), NQ idzie co 15 s`);
+      rec('zegar', document.querySelectorAll('.bt-clock').length === 1, 'jeden zegar w pasku');
+    });
+
+    await section('krok', async () => {
+      const base = R2.cursor(); // 9:32:00, wyrównane do minuty
+      rec('krok', R2.activeIndex() === 0 && cells()[0].dataset.active === 'true' && cells()[1].dataset.active === 'false', 'aktywny pierwszy wykres (ramka)');
+      activate(R2, 1);
+      rec('krok', R2.activeIndex() === 1 && cells()[1].dataset.active === 'true' && cells()[0].dataset.active === 'false', 'kliknięcie ES 1m robi go aktywnym');
+      rec('krok', scr().querySelector('.bt-tf').value === '1m', `lista interwałów w pasku pokazuje aktywny: ${scr().querySelector('.bt-tf').value}`);
+      R2.step(1);
+      rec('krok', R2.cursor() === base + 60, `aktywny ES 1m: krok 60 s (${R2.cursor() - base})`);
+      activate(R2, 0);
+      const b2 = R2.cursor();
+      R2.step(1);
+      rec('krok', R2.cursor() === b2 + 15, `aktywny NQ 15s: krok 15 s (${R2.cursor() - b2})`);
+      R2.step(-1);
+      rec('krok', R2.cursor() === b2, `krok wstecz NQ 15s: ${R2.cursor() - b2}`);
+      // 15s poza oknem 1s (po 11:00) → 60 s dla wszystkich
+      const late = await mk('Sesja D1 po oknie', { layout: LAY2, cursor: nyAt(DAY, '11:05') });
+      R2.close();
+      const R3 = await open(late);
+      const l0 = R3.cursor();
+      R3.step(1);
+      rec('krok', R3.cursor() === l0 + 60, `NQ 15s po 11:00 (poza oknem 1s): krok 60 s (${R3.cursor() - l0})`);
+      rec('krok', lastT(R3.charts()[0]) !== null && lastT(R3.charts()[1]) === lastT(R3.charts()[0]), 'oba wykresy na minutach, ta sama ostatnia świeca');
+      R3.close();
+    });
+
+    const doc4 = await mk('Sesja D1 cztery', { layout: LAY4, cursor: c0 });
+    const R4 = await open(doc4);
+    await section('krzyzyk', async () => {
+      const [a, b, c, d] = R4.charts();
+      const cur0 = R4.cursor();
+      const bar = a.bars()[a.bars().length - 3];
+      // LWC zgłasza ruch krzyżyka po setCrosshairPosition (przy następnej klatce); bez prawdziwej myszy nad wykresem własny stan gaśnie przy następnym przerysowaniu,
+      // więc stan pozostałych wykresów czytamy w samym wywołaniu zwrotnym (po wywołaniu zwrotnym wykresu replayu, który subskrybował pierwszy)
+      const seen = [];
+      a.chart.subscribeCrosshairMove((q) => seen.push({ time: q?.time ?? null, others: [b, c, d].map((x) => x.crossT()) }));
+      a.chart.setCrosshairPosition(bar[4], bar[0], a.series);
+      const withTime = await until(() => seen.find((q) => q.time != null), 1000);
+      rec('krzyzyk', withTime && withTime.others.every((v) => v === bar[0]), `wspólna linia czasu na pozostałych wykresach: ${JSON.stringify(withTime)} vs ${bar[0]}`);
+      rec('krzyzyk', a.crossT() == null, 'wykres z myszą nie rysuje własnej linii');
+      rec('krzyzyk', R4.cursor() === cur0, 'kursor replayu bez zmian');
+      a.chart.clearCrosshairPosition();
+      rec('krzyzyk', [b, c, d].every((q) => q.crossT() == null), 'zejście myszy usuwa linię');
+    });
+
+    await section('zlecenie', async () => {
+      activate(R4, 1); // ES 1m
+      setF('sl', '10'); setF('tp', '20');
+      P('[data-o="buy"]').click();
+      const bk = () => R4.book();
+      rec('zlecenie', bk().positions.ES && !bk().positions.NQ && bk().positions.ES.dir === 'Long', `Buy przy aktywnym ES otwiera ES: ${JSON.stringify(Object.keys(bk().positions).filter((k) => bk().positions[k]))}`);
+      const cs = R4.charts();
+      const pp = (ch) => { const p = ch.tradingState().position; return p ? positionPrices(p, 0.25) : null; };
+      rec('zlecenie', pp(cs[1]) && pp(cs[3]) && pp(cs[1]).entryPrice === bk().positions.ES.entryPrice && pp(cs[3]).entryPrice === pp(cs[1]).entryPrice, 'ten sam instrument na dwóch wykresach: ta sama pozycja ES');
+      rec('zlecenie', !pp(cs[0]) && !pp(cs[2]), 'wykresy NQ bez pozycji ES');
+      activate(R4, 0); // NQ 15s
+      rec('zlecenie', scr().querySelector('.bt-ord-pos').hidden, 'panel aktywnego NQ nie pokazuje pozycji ES');
+      setF('sl', '10'); setF('tp', '20');
+      P('[data-o="sell"]').click();
+      rec('zlecenie', bk().positions.ES && bk().positions.NQ && bk().positions.NQ.dir === 'Short', 'NQ i ES mają pozycje naraz');
+      rec('zlecenie', pp(cs[0]) && pp(cs[2]) && pp(cs[0]).entryPrice === bk().positions.NQ.entryPrice && pp(cs[2]).entryPrice === pp(cs[0]).entryPrice, 'ten sam instrument na dwóch wykresach: ta sama pozycja NQ');
+      rec('zlecenie', pp(cs[1]).entryPrice === bk().positions.ES.entryPrice, 'ES nadal ma swoją pozycję po otwarciu NQ');
+      // przeciągnięcie SL na wykresie ES (nieaktywny instrument) zmienia pozycję ES
+      const m1 = cs[1].manager(), d1 = cs[1].tradingState().position;
+      const sl0 = bk().positions.ES.sl;
+      m1.update({ ...d1, style: { ...d1.style, stopLevel: 7 } });
+      await sleep(400);
+      rec('zlecenie', bk().positions.ES.sl === bk().positions.ES.entryPrice - 7 && sl0 !== bk().positions.ES.sl, `SL przeciągnięty na wykresie nieaktywnego instrumentu: ${sl0} -> ${bk().positions.ES.sl}`);
+      activate(R4, 1);
+      P('[data-o="close"]').click();
+      activate(R4, 0);
+      P('[data-o="close"]').click();
+      rec('zlecenie', !bk().positions.ES && !bk().positions.NQ && !cs[0].tradingState().position && !cs[1].tradingState().position, 'obie pozycje zamknięte, rysunki zniknęły');
+    });
+
+    await section('przyszlosc', async () => {
+      const jumps = DEFAULT_JUMPS.filter((j) => j.cel.kind !== 'nextDay').map((j) => j.id);
+      let seed = 12345;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      let bad = [], n = 0;
+      for (let i = 0; i < 200; i++) {
+        const x = rnd();
+        if (x < 0.55) R4.step(1); else if (x < 0.85) R4.step(-1); else await R4.runJump(jumps[Math.floor(rnd() * jumps.length)]);
+        if (rnd() < 0.15) activate(R4, Math.floor(rnd() * 4));
+        const cur = R4.cursor();
+        R4.charts().forEach((ch, k) => {
+          const b = ch.bars(), cfg = R4.doc().layout.charts[k];
+          n++;
+          if (b.some((q) => q[0] > cur)) bad.push(`#${i} wykres ${k}: świeca z przyszłości`);
+          const want = candlesAt(streams[cfg.instrument], cfg.tf, cur);
+          if (want.length !== b.length || (b.length && want[want.length - 1][0] !== b[b.length - 1][0])) bad.push(`#${i} wykres ${k}: ${b.length} świec vs ${want.length} oczekiwanych`);
+        });
+      }
+      rec('przyszlosc', bad.length === 0, `brak przyszłości po 200 krokach i skokach: ${bad.slice(0, 3).join('; ')}`);
+      rec('przyszlosc', n === 800, `sprawdzono ${n} wykresów`);
+      rec('przyszlosc', R4.charts().length === 4, 'cztery wykresy do końca');
+    });
+    R4.close();
+
+    await section('wydajnosc', async () => {
+      const perf = await mk('Sesja D1 wydajność', { layout: LAY2, cursor: nyAt(DAY, '09:31') });
+      R2.close();
+      const Rp = await open(perf);
+      const times = [];
+      for (let i = 0; i < 300; i++) { const t0 = performance.now(); Rp.step(1); times.push(performance.now() - t0); }
+      times.sort((a, b) => a - b);
+      const p95 = times[Math.floor(times.length * 0.95)];
+      rec('wydajnosc', Rp.cursor() === nyAt(DAY, '09:31') + 300 * 15, `300 kroków NQ 15s (kursor +${Rp.cursor() - nyAt(DAY, '09:31')} s)`);
+      rec('wydajnosc', p95 <= 16, `p95 kroku dwóch wykresów: ${p95.toFixed(1)} ms (mediana ${times[150].toFixed(1)}, max ${times[299].toFixed(1)})`);
+      Rp.close();
+    });
+  }
+
+  if (part === 'rysunki') {
+    const lines = (ch) => ch.manager().drawings().filter((d) => d.kind === 'trend-line' || d.kind === 'horizontal-line');
+    const doc = await mk('Sesja D1 rysunki A', { layout: LAY4, cursor: c0 });
+    const RA = await open(doc);
+    const cs = RA.charts(); // NQ 15s, ES 1m, NQ 1m, ES 5m
+    const sid = doc.id;
+    await section('widoczny', async () => {
+      const b = cs[0].bars();
+      const [p0, p1] = [b[b.length - 8], b[b.length - 2]];
+      cs[0].manager().add({ kind: 'trend-line', points: [{ time: p0[0], price: p0[4] }, { time: p1[0], price: p1[4] }], style: { color: '#cccccc', width: 1 } });
+      await cs[0].rysunki().flush();
+      rec('widoczny', lines(cs[0]).length === 1, 'linia na wykresie, na którym ją narysowano');
+      rec('widoczny', lines(cs[2]).length === 1, 'ta sama linia na drugim wykresie NQ (1m)');
+      rec('widoczny', lines(cs[1]).length === 0 && lines(cs[3]).length === 0, 'nie pojawia się na wykresach ES');
+      // zmiana interwału nie gubi rysunków: NQ 1m → 5m, NQ 15s → 1m
+      cells()[2].querySelector('.bt-ct').value = '5m'; cells()[2].querySelector('.bt-ct').dispatchEvent(new Event('change', { bubbles: true }));
+      cells()[0].querySelector('.bt-ct').value = '1m'; cells()[0].querySelector('.bt-ct').dispatchEvent(new Event('change', { bubbles: true }));
+      rec('widoczny', lines(RA.charts()[0]).length === 1 && lines(RA.charts()[2]).length === 1, 'linia widoczna w każdym interwale (5m i 1m)');
+      // ES: pozioma linia z wykresu 5m widoczna na ES 1m, nie na NQ
+      const e = RA.charts()[3].bars(), eb = e[e.length - 1];
+      RA.charts()[3].manager().add({ kind: 'horizontal-line', points: [{ time: eb[0], price: eb[4] }], style: { color: '#cccccc', width: 1 } });
+      await RA.charts()[3].rysunki().flush();
+      rec('widoczny', lines(RA.charts()[1]).length === 1 && lines(RA.charts()[0]).length === 1 && lines(RA.charts()[2]).length === 1, 'linia ES widoczna na ES 1m, NQ zachowuje tylko swoją linię');
+    });
+
+    await section('plik', async () => {
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${sid}`); return x.drawings?.NQ?.[DAY]?.d?.length === 1 && x.drawings?.ES?.[DAY]?.d?.length === 1 ? x : null; }, 5000);
+      rec('plik', disk, `rysunki w pliku sesji: ${JSON.stringify(Object.fromEntries(Object.entries((await getJson(`/api/backtest/session/${sid}`)).drawings || {}).map(([k, v]) => [k, Object.keys(v)])))}`);
+      rec('plik', disk && disk.drawings.NQ[DAY].v === 1 && Array.isArray(disk.drawings.NQ[DAY].d) && disk.drawings.NQ[DAY].d[0].kind === 'trend-line', 'format DrawingDoc { v: 1, at, d }');
+      rec('plik', posts.length === 0, `żadne żądanie POST /api/drawings/save (${posts.length})`);
+    });
+
+    await section('snapshot', async () => {
+      const st = RA.drawings();
+      const s1 = st.snapshot('NQ', DAY);
+      rec('snapshot', s1.v === 1 && typeof s1.at === 'string' && Array.isArray(s1.d) && s1.d.length === 1, `format { v: 1, at, d }: ${JSON.stringify({ v: s1.v, at: typeof s1.at, n: s1.d?.length })}`);
+      const b = RA.charts()[0].bars();
+      RA.charts()[0].manager().add({ kind: 'trend-line', points: [{ time: b[b.length - 6][0], price: b[b.length - 6][4] }, { time: b[b.length - 1][0], price: b[b.length - 1][4] }], style: { color: '#cccccc', width: 1 } });
+      await RA.charts()[0].rysunki().flush();
+      rec('snapshot', s1.d.length === 1, `zmiana po snapshocie nie zmienia zwróconego obiektu (${s1.d.length})`);
+      const s2 = st.snapshot('NQ', DAY);
+      rec('snapshot', s2.d.length === 2 && s2 !== s1, 'nowy snapshot widzi dwie linie');
+      s2.d.push({ kind: 'x' }); s2.d[0].kind = 'zmienione';
+      rec('snapshot', st.docOf('NQ', DAY).d.length === 2 && st.docOf('NQ', DAY).d[0].kind === 'trend-line', 'zmiana snapshotu nie rusza magazynu');
+      const es = st.snapshot('ES', '2024-03-13');
+      rec('snapshot', es.v === 1 && es.d.length === 0, 'dzień bez rysunków: pusty dokument');
+      rec('snapshot', st.snapshot('MNQ', DAY).d.length === 2, 'MNQ to rodzina NQ');
+      const keep = st.snapshot('NQ', DAY);
+      let calls = 0;
+      const off = st.subscribe('NQ', () => { calls++; });
+      st.set('NQ', DAY, st.docOf('NQ', DAY));
+      st.set('NQ', DAY, { v: 1, at: new Date().toISOString(), d: [] });
+      off();
+      st.set('NQ', DAY, keep); // przywrócenie dwóch linii dla kolejnych sprawdzeń
+      rec('snapshot', calls === 1, `subscribe: powiadomienie tylko przy zmianie i do wypisania (${calls})`);
+      RA.close();
+    });
+
+    await section('sesje', async () => {
+      const docB = await mk('Sesja D1 rysunki B', { layout: LAY4, cursor: c0 });
+      const RB = await open(docB);
+      rec('sesje', lines(RB.charts()[0]).length === 0 && lines(RB.charts()[1]).length === 0, 'sesja B z tym samym dniem nie widzi rysunków sesji A');
+      const diskA = await getJson(`/api/backtest/session/${sid}`);
+      const diskB = await getJson(`/api/backtest/session/${docB.id}`);
+      rec('sesje', Object.keys(diskB.drawings || {}).length === 0, `plik sesji B bez rysunków: ${JSON.stringify(diskB.drawings)}`);
+      rec('sesje', (diskA.drawings?.NQ?.[DAY]?.d || []).length >= 1, 'plik sesji A zachował swoje rysunki');
+      RB.close();
+      const RA2 = await open(doc);
+      rec('sesje', lines(RA2.charts()[0]).length >= 1 && lines(RA2.charts()[2]).length >= 1, 'po ponownym otwarciu sesji A rysunki wracają');
+      RA2.close();
+    });
+  }
+
+  if (part === 'callout') {
+    // D2: narzędzie callout w edytorze replayu (ten sam edytor co Live): przycisk, dwa kliknięcia, edycja tekstu w miejscu, przeciąganie grota, panel stylu
+    const doc = await mk('Sesja D2 callout', { cursor: nyAt(DAY, '09:40') });
+    const R = await open(doc);
+    for (let i = 0; i < 6; i++) R.step(1);
+    await sleep(300);
+    const ch = R.charts()[0], mgr = ch.manager();
+    const cell = cells()[0], plot = cell.querySelector('.bt-plot'), el = ch.chart.chartElement(); // paczka nasłuchuje na elemencie wykresu LWC (capture)
+    const xy = (t, p) => { const r = el.getBoundingClientRect(); return { x: r.left + ch.chart.timeScale().timeToCoordinate(t), y: r.top + ch.series.priceToCoordinate(p) }; };
+    const ptr = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 9, pointerType: 'mouse', bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+    const click = async (x, y) => { ptr('pointerdown', x, y); await sleep(40); ptr('pointerup', x, y); window.dispatchEvent(new PointerEvent('pointerup')); await sleep(80); };
+    const dbl = async (x, y) => { el.dispatchEvent(new MouseEvent('dblclick', { clientX: x, clientY: y, bubbles: true, cancelable: true })); await sleep(120); };
+    const callouts = () => mgr.drawings().filter((d) => d.kind === 'callout');
+    const field = () => plot.querySelector('input.swc-text');
+    const typeIn = (v) => { const f = field(); f.value = v; f.dispatchEvent(new Event('input', { bubbles: true })); };
+    const key = (k) => field()?.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+
+    await section('narzedzie', async () => {
+      const btn = cell.querySelector('.swc-tools [data-tool="callout"]');
+      rec('narzedzie', !!btn, 'przycisk Callout na pasku narzędzi');
+      rec('narzedzie', btn && btn.getAttribute('aria-label') === 'Callout' && btn.title === 'Callout', `etykieta: ${btn && btn.getAttribute('aria-label')} / ${btn && btn.title}`);
+      rec('narzedzie', btn && btn.querySelector('svg path') && btn.querySelector('svg').getAttribute('stroke') === 'currentColor', 'ikona SVG w kolorze currentColor');
+      const tools = [...cell.querySelectorAll('.swc-tools [data-tool]')].map((b) => b.dataset.tool);
+      rec('narzedzie', tools.indexOf('callout') === tools.indexOf('text') + 1 && tools.includes('text'), `kolejność: ${tools.join(',')}`);
+      btn.click();
+      rec('narzedzie', btn.getAttribute('aria-pressed') === 'true' && mgr.tool() === 'callout', `narzędzie wybrane: ${mgr.tool()}`);
+      const b = ch.bars();
+      const tip = { t: b[b.length - 8][0], p: b[b.length - 8][4] }, ctr = { t: b[b.length - 3][0], p: b[b.length - 8][4] + 12 };
+      const a = xy(tip.t, tip.p), c = xy(ctr.t, ctr.p);
+      await click(a.x, a.y);
+      rec('narzedzie', callouts().length === 0, 'po pierwszym kliknięciu rysunku jeszcze nie ma');
+      await click(c.x, c.y);
+      const d0 = callouts()[0];
+      rec('narzedzie', callouts().length === 1 && d0.points.length === 2, `dwa kliknięcia tworzą callout (${callouts().length})`);
+      rec('narzedzie', d0 && Math.abs(d0.points[0].price - tip.p) < 5 && d0.points[0].price !== d0.points[1].price, `grot w punkcie 0: ${d0 && d0.points[0].price} (kliknięto ${tip.p})`);
+      rec('narzedzie', btn.getAttribute('aria-pressed') === 'false' && !mgr.tool(), 'po postawieniu narzędzie zdjęte');
+      // nowy rysunek od razu w trybie edycji tekstu; styl z tokenów (nie błękit paczki)
+      await sleep(100);
+      rec('narzedzie', !!field(), 'pole tekstu otwarte po postawieniu');
+      rec('narzedzie', d0 && d0.style.backgroundColor !== '#0097a7' && d0.style.textColor !== '#ffffff', `styl z tokenów, nie z paczki: tło ${d0 && d0.style.backgroundColor}, tekst ${d0 && d0.style.textColor}`);
+      if (field()) { typeIn('BOS'); key('Enter'); }
+      await sleep(80);
+      rec('narzedzie', !field() && callouts()[0].text === 'BOS' && callouts()[0].style.text === 'BOS', `Enter zapisuje tekst: ${callouts()[0].text}`);
+      // dwuklik w dymku: edycja w miejscu z istniejącym tekstem; Esc anuluje, Enter zapisuje
+      const mid = xy(callouts()[0].points[1].time, callouts()[0].points[1].price);
+      await dbl(mid.x, mid.y);
+      rec('narzedzie', !!field() && field().value === 'BOS', `dwuklik otwiera edycję z tekstem: ${field() && field().value}`);
+      if (field()) { typeIn('INNY'); key('Escape'); }
+      await sleep(80);
+      rec('narzedzie', !field() && callouts()[0].text === 'BOS', `Esc anuluje: ${callouts()[0].text}`);
+      await dbl(mid.x, mid.y);
+      if (field()) { typeIn('Sweep'); key('Enter'); }
+      await sleep(80);
+      rec('narzedzie', callouts()[0].text === 'Sweep', `Enter po dwukliku zapisuje: ${callouts()[0].text}`);
+      // przeciągnięcie grota zmienia tylko punkt grota
+      const before = JSON.parse(JSON.stringify(callouts()[0].points));
+      mgr.select([callouts()[0].id]);
+      await sleep(60);
+      const g0 = xy(before[0].time, before[0].price), g1 = { x: g0.x - 40, y: g0.y + 30 };
+      ptr('pointerdown', g0.x, g0.y);
+      for (let k = 1; k <= 5; k++) { document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 9, pointerType: 'mouse', bubbles: true, buttons: 1, clientX: g0.x + (g1.x - g0.x) * k / 5, clientY: g0.y + (g1.y - g0.y) * k / 5 })); await sleep(20); }
+      document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 9, pointerType: 'mouse', bubbles: true, clientX: g1.x, clientY: g1.y }));
+      await sleep(120);
+      const after = callouts()[0].points;
+      rec('narzedzie', after[0].time !== before[0].time || after[0].price !== before[0].price, `grot przesunięty: ${before[0].price} → ${after[0].price}`);
+      rec('narzedzie', after[1].time === before[1].time && after[1].price === before[1].price, 'środek dymku bez zmian');
+      // zapis w pliku sesji: rodzaj callout w DrawingDoc
+      await ch.rysunki().flush();
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); return (x.drawings?.NQ?.[DAY]?.d || []).some((d) => d.kind === 'callout') ? x : null; }, 5000);
+      rec('narzedzie', !!disk, 'callout zapisany w pliku sesji (drawings.NQ.<dzień>.d)');
+      // panel stylu: tło, ramka, tekst, rozmiar, pogrubienie
+      const gear = cell.querySelector('.swc-gear');
+      mgr.select([callouts()[0].id]);
+      await sleep(150);
+      gear.click();
+      await sleep(150);
+      const panel = cell.querySelector('.swc-style');
+      const has = (sel) => !!panel.querySelector(sel);
+      rec('narzedzie', has('[data-k="backgroundColor"]') && has('[data-k="color"]') && has('[data-k="textColor"]') && has('[data-k="fontSize"]') && has('[data-k="bold"]') && has('[data-k="text"]') && has('[data-k="opacity"]'), `panel stylu calloutu: ${[...panel.querySelectorAll('[data-k]')].map((e) => e.dataset.k).join(',')}`);
+      const bold = panel.querySelector('[data-k="bold"]');
+      if (bold) { bold.checked = true; bold.dispatchEvent(new Event('change', { bubbles: true })); }
+      await sleep(80);
+      rec('narzedzie', callouts()[0].style.bold === true, 'pogrubienie z panelu trafia do stylu');
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem('thq.chart.toolStyle.v1') || '{}'); } catch { saved = {}; }
+      rec('narzedzie', saved.callout && saved.callout.bold === true && saved.callout.backgroundColor, `pamięć stylu narzędzia: ${JSON.stringify(saved.callout)}`);
+    });
+  }
+
+  if (part === 'kolory') {
+    // H2 (30.10.2026): rysunki z kolorem domyślnym idą za motywem (edytor replayu = edytor Live, podgląd SVG), kolor ręczny zostaje, zapis się nie zmienia
+    const doc = await mk('Sesja H2 kolory', { cursor: nyAt(DAY, '09:40') });
+    const R = await open(doc);
+    for (let i = 0; i < 6; i++) R.step(1);
+    await sleep(300);
+    const ch = R.charts()[0], mgr = ch.manager(), rys = ch.rysunki();
+    const cell = cells()[0], el = ch.chart.chartElement();
+    const html = document.documentElement;
+    const setTheme = async (th) => { html.setAttribute('data-theme', th); await sleep(250); };
+    const rgb = (v) => { const c = document.createElement('canvas').getContext('2d'); c.fillStyle = '#000'; c.fillStyle = v; c.fillRect(0, 0, 1, 1); const d = c.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2]]; };
+    const lum = (v) => { const a = rgb(v).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+    const tokNow = (n) => getComputedStyle(cell.querySelector('.bt-plot')).getPropertyValue(n).trim();
+    const bgNow = () => { let n = cell.querySelector('.bt-plot'); while (n) { const bg = getComputedStyle(n).backgroundColor; if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg; n = n.parentElement; } return getComputedStyle(document.body).backgroundColor; };
+    const b = ch.bars();
+    const T = (k) => b[b.length - k][0], Pp = (k) => b[b.length - k][4];
+    // dokument zapisany przed H2: kolory domyślne jako literał z Onyx (tak zapisywał edytor), linia ręczna #cccccc
+    const old = { v: 1, lib: '0.6.2', at: new Date().toISOString(), d: [
+      { id: 'dw_def', kind: 'trend-line', points: [{ time: T(20), price: Pp(20) }, { time: T(4), price: Pp(4) }], style: { color: '#f3f3f3', width: 1, textColor: '#f3f3f3', fontSize: 12 } },
+      { id: 'dw_cpi', kind: 'callout', text: 'CPI', points: [{ time: T(12), price: Pp(12) }, { time: T(6), price: Pp(6) + 10 }], style: { color: '#f3f3f3', width: 1, textColor: '#f3f3f3', fontSize: 14, backgroundColor: '#f3f3f3', transparency: 85, wordWrap: false, text: 'CPI' } },
+      { id: 'dw_man', kind: 'trend-line', points: [{ time: T(18), price: Pp(18) - 5 }, { time: T(3), price: Pp(3) - 5 }], style: { color: '#cccccc', width: 1 } },
+    ] };
+    const st = (id) => mgr.get(id)?.style || {};
+    await section('edytor', async () => {
+      rys.applyExternal(old);
+      await sleep(100);
+      rec('edytor', mgr.get('dw_def') && mgr.get('dw_cpi') && mgr.get('dw_man'), 'stary dokument (literał domyślny z Onyx) otwiera się: trzy rysunki');
+      const on = { line: st('dw_def').color, cpi: [st('dw_cpi').color, st('dw_cpi').textColor, st('dw_cpi').backgroundColor], man: st('dw_man').color, bg: bgNow() };
+      const saved0 = JSON.stringify(rys.currentDoc().d);
+      await setTheme('platinum');
+      const pl = { line: st('dw_def').color, cpi: [st('dw_cpi').color, st('dw_cpi').textColor, st('dw_cpi').backgroundColor], man: st('dw_man').color, bg: bgNow() };
+      rec('edytor', on.line !== pl.line, `linia domyślna: Onyx ${on.line}, Platinum ${pl.line}`);
+      rec('edytor', on.cpi.every((x, k) => x !== pl.cpi[k]), `callout domyślny: Onyx ${on.cpi}, Platinum ${pl.cpi}`);
+      rec('edytor', on.man === '#cccccc' && pl.man === '#cccccc', `linia ręczna bez zmian: ${on.man} / ${pl.man}`);
+      for (const [th, m] of [['onyx', on], ['platinum', pl]]) {
+        rec('edytor', ratio(m.line, m.bg) >= 3, `${th}: kontrast linii ${m.line} do tła ${m.bg}: ${ratio(m.line, m.bg).toFixed(2)}`);
+        rec('edytor', ratio(m.cpi[1], m.bg) >= 3, `${th}: kontrast tekstu calloutu ${m.cpi[1]} do tła ${m.bg}: ${ratio(m.cpi[1], m.bg).toFixed(2)}`);
+      }
+      rec('edytor', JSON.stringify(rys.currentDoc().d) === saved0, 'przełączenie motywu nie zmienia zapisu rysunków');
+      const def = rys.currentDoc().d.find((d) => d.id === 'dw_def');
+      rec('edytor', def.style.color === '#f3f3f3', `zapis trzyma wartość z Onyx (starsze wersje otwierają rysunek jak dotąd): ${def.style.color}`);
+      rec('edytor', !/czekają/.test(cell.querySelector('.swc-save')?.textContent || ''), `bez zapisu po zmianie motywu: ${cell.querySelector('.swc-save')?.textContent}`);
+      await setTheme('onyx');
+      rec('edytor', st('dw_def').color === on.line && st('dw_cpi').textColor === on.cpi[1], 'powrót do Onyx na żywo');
+    });
+    await section('nowy', async () => {
+      // nowy callout narzędziem w Platinum: kolory z Platinum, po przełączeniu na Onyx z Onyx
+      await setTheme('platinum');
+      const xy = (t, p) => { const r = el.getBoundingClientRect(); return { x: r.left + ch.chart.timeScale().timeToCoordinate(t), y: r.top + ch.series.priceToCoordinate(p) }; };
+      const ptr = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 9, pointerType: 'mouse', bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+      const click = async (x, y) => { ptr('pointerdown', x, y); await sleep(40); ptr('pointerup', x, y); window.dispatchEvent(new PointerEvent('pointerup')); await sleep(80); };
+      const ids0 = new Set(mgr.drawings().map((d) => d.id));
+      cell.querySelector('.swc-tools [data-tool="callout"]').click();
+      const a = xy(T(9), Pp(9)), c = xy(T(5), Pp(9) + 15);
+      await click(a.x, a.y); await click(c.x, c.y);
+      await sleep(100);
+      const f = cell.querySelector('input.swc-text');
+      if (f) { f.value = 'NEW'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); }
+      await sleep(100);
+      const nd = mgr.drawings().find((d) => !ids0.has(d.id) && d.kind === 'callout');
+      rec('nowy', !!nd, 'nowy callout narysowany');
+      const fgPl = rgb(tokNow('--fg')).join(), fgOn = '243,243,243';
+      rec('nowy', nd && rgb(nd.style.textColor).join() === fgPl, `nowy callout w Platinum: tekst ${nd && nd.style.textColor} = --fg ${fgPl}`);
+      await setTheme('onyx');
+      rec('nowy', nd && rgb(st(nd.id).textColor).join() === fgOn && rgb(st(nd.id).color).join() === fgOn, `ten sam callout w Onyx: ${nd && st(nd.id).textColor}`);
+      const sv = nd && rys.currentDoc().d.find((d) => d.id === nd.id);
+      rec('nowy', sv && sv.style.textColor === '#f3f3f3', `nowy rysunek w zapisie z wartością z Onyx: ${sv && sv.style.textColor}`);
+    });
+    await section('reczny', async () => {
+      // kolor z panelu stylu = ręczny: nie zmienia się z motywem
+      mgr.select(['dw_def']);
+      await sleep(150);
+      cell.querySelector('.swc-gear').click();
+      await sleep(150);
+      const inp = cell.querySelector('.swc-style [data-k="color"]');
+      rec('reczny', !!inp, 'pole koloru w panelu stylu');
+      if (inp) { inp.value = '#ff8800'; inp.dispatchEvent(new Event('input', { bubbles: true })); }
+      await sleep(80);
+      await setTheme('platinum');
+      rec('reczny', st('dw_def').color === '#ff8800', `kolor z panelu zostaje w Platinum: ${st('dw_def').color}`);
+      rec('reczny', st('dw_def').textColor !== '#f3f3f3', `kolor tekstu tej linii (domyślny) dalej idzie za motywem: ${st('dw_def').textColor}`);
+      await setTheme('onyx');
+      await rys.flush();
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); const d = (x.drawings?.NQ?.[DAY]?.d || []).find((q) => q.id === 'dw_def'); return d && d.style.color === '#ff8800' ? d : null; }, 5000);
+      rec('reczny', !!disk, `ręczny kolor w pliku sesji: ${disk && JSON.stringify(disk.style)}`);
+    });
+    await section('svg', async () => {
+      // podgląd SVG (ta sama funkcja dla podglądu trade'a): kolory domyślne za motywem, ręczny bez zmian
+      const G = await import('/js/geometria.js');
+      const P = await import('/js/podglad.js');
+      rec('svg', typeof P.previewShapes === 'function', 'podglad.js eksportuje previewShapes (kształty rysunków podglądu)');
+      if (typeof P.previewShapes !== 'function') return;
+      const W = 460, H = 220, n = 30, cand = b.slice(-n);
+      const lo = Math.min(...cand.map((x) => x[3])) - 20, hi = Math.max(...cand.map((x) => x[2])) + 20;
+      const s = G.chartScales({ candles: cand, xs: G.indexScale({ lastIndex: n - 1, right: W - 10, spacing: (W - 20) / n }), ys: G.priceScaleFrom(lo, H - 10, hi, 10), box: { left: 0, right: W, top: 0, bottom: H }, pip: 0.25, step: 15, measure: G.canvasMeasure });
+      const dr = P.previewShapes(old.d, s);
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:0;top:0;z-index:99999;background:var(--chart-bg, var(--float))';
+      box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><g class="drw">${dr.items.map(P.drawingSvgOf).join('')}</g></svg>`;
+      document.body.appendChild(box);
+      const m = () => { const sv = box.querySelector('svg'); const lines = [...sv.querySelectorAll('line')]; const cp = sv.querySelector('path.drw-callout'), tx = [...sv.querySelectorAll('text')].find((x) => x.textContent === 'CPI');
+        return { line: getComputedStyle(lines[0]).stroke, man: getComputedStyle(lines[lines.length - 1]).stroke, cpi: cp && getComputedStyle(cp).stroke, txt: tx && getComputedStyle(tx).fill, bg: getComputedStyle(box).backgroundColor }; };
+      const on = m();
+      await setTheme('platinum');
+      const pl = m();
+      rec('svg', on.line !== pl.line && on.cpi !== pl.cpi && on.txt !== pl.txt, `SVG: Onyx ${JSON.stringify(on)}, Platinum ${JSON.stringify(pl)}`);
+      rec('svg', on.man === 'rgb(204, 204, 204)' && pl.man === on.man, `SVG: linia ręczna bez zmian (${on.man} / ${pl.man})`);
+      for (const [th, x] of [['onyx', on], ['platinum', pl]]) rec('svg', ratio(x.line, x.bg) >= 3 && ratio(x.txt, x.bg) >= 3, `${th}: kontrast SVG linii ${ratio(x.line, x.bg).toFixed(2)}, tekstu ${ratio(x.txt, x.bg).toFixed(2)} (tło ${x.bg})`);
+      await setTheme('onyx');
+      box.remove();
+    });
+  }
+
+  if (part === 'shotcallout') {
+    // zrzut D2: callout w edytorze (u góry) i ten sam rysunek w podglądzie SVG (okienko w prawym dolnym rogu)
+    const doc = await mk('NQ otwarcie 2024', { cursor: nyAt(DAY, '09:40') });
+    const R = await open(doc);
+    for (let i = 0; i < 8; i++) R.step(1);
+    await sleep(300);
+    const ch = R.charts()[0], b = ch.bars();
+    const d = { kind: 'callout', text: 'Sweep low, wejscie', points: [{ time: b[b.length - 10][0], price: b[b.length - 10][3] }, { time: b[b.length - 18][0], price: b[b.length - 10][3] - 14 }], style: { text: 'Sweep low, wejscie' } };
+    const { styleForTool } = await import('/js/rysunki.js');
+    const cs = getComputedStyle(document.documentElement), tok = (n) => cs.getPropertyValue(n).trim();
+    const c = { fg: tok('--fg'), fg2: tok('--fg-2'), be: tok('--be'), profit: tok('--profit'), loss: tok('--loss'), asia: tok('--n-asia'), london: tok('--n-london'), ny: tok('--n-ny') };
+    d.style = { ...styleForTool('callout', c, false, {}), text: 'Sweep low, wejscie', bold: true };
+    ch.manager().add(d);
+    await sleep(400);
+    const G = await import('/js/geometria.js');
+    const P = await import('/js/podglad.js');
+    const W = 460, H = 220, n = 30, cand = b.slice(-n);
+    const lo = Math.min(...cand.map((x) => x[3])) - 20, hi = Math.max(...cand.map((x) => x[2])) + 6;
+    const sp = (W - 20) / n;
+    const s = G.chartScales({ candles: cand, xs: G.indexScale({ lastIndex: n - 1, right: W - 10, spacing: sp }), ys: G.priceScaleFrom(lo, H - 10, hi, 10), box: { left: 0, right: W, top: 0, bottom: H }, pip: 0.25, step: 15, measure: G.canvasMeasure });
+    const d2 = { ...d, points: [{ time: cand[n - 4][0], price: cand[n - 4][3] }, { time: cand[n - 12][0], price: cand[n - 4][3] - 12 }] };
+    const sh = G.shapes(d2, s);
+    const candles = G.candleShapes(cand, s, {}, 0).map((k) => `<line x1="${k.wick.x}" x2="${k.wick.x}" y1="${k.wick.y1}" y2="${k.wick.y2}" stroke="${k.up ? c.profit : c.loss}"/><rect x="${k.body.x}" y="${k.body.y}" width="${k.body.w}" height="${k.body.h}" fill="${k.up ? c.profit : c.loss}"/>`).join('');
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;right:24px;bottom:24px;background:var(--chrome);border:1px solid var(--line);padding:6px;z-index:99999';
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="shot-svg">${candles}<g class="drw">${P.drawingSvgOf(sh)}</g></svg><div class="note">podgląd SVG (miniatury i karty)</div>`;
+    document.body.appendChild(box);
+    await sleep(200);
+  }
+
+  if (part === 'shot') {
+    const kind = qs.get('kind') === '4' ? '4' : '2h';
+    const doc = await mk('NQ otwarcie 2024', { layout: kind === '4' ? LAY4 : LAY2, cursor: nyAt(DAY, '09:40') });
+    const R = await open(doc);
+    for (let i = 0; i < 6; i++) R.step(1);
+    const b = R.charts()[0].bars();
+    R.charts()[0].manager().add({ kind: 'trend-line', points: [{ time: b[b.length - 20][0], price: b[b.length - 20][4] }, { time: b[b.length - 2][0], price: b[b.length - 2][4] }], style: { color: '#cccccc', width: 2 } });
+    await sleep(500);
+  }
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

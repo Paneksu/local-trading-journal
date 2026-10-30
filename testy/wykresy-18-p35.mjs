@@ -305,7 +305,7 @@ export default ({ test, H, assert, ROOT }) => {
     assert.deepEqual(m.ops, [{ op: 'addProperty', db: 'trades', role: 'contract', spec: { type: 'rich_text', name: { pl: 'Kontrakt', en: 'Contract' } } }]);
     assert.ok(ROLES.trades.contract.optional);
     const sch = json(path.join(ROOT, 'schema/notion-schema.json'));
-    assert.equal(sch.schemaVersion, 5);
+    assert.ok(sch.schemaVersion >= 5); // 006 (Backtest, E2) podnosi dalej
     assert.deepEqual(sch.databases.trades.properties.contract, { type: 'rich_text', name: { pl: 'Kontrakt', en: 'Contract' } });
     const A = await H.atrapa(++port);
     const dir = H.tmp();
@@ -423,7 +423,7 @@ DS_FINANSE=${I.DS_FINANSE}
       assert.equal((await A.writes()).length, w1, 'ponowne przejście niczego nie zapisuje');
       const schema3 = (await A.dump())[H.IDS.DS_TRADES].schema;
       assert.deepEqual(Object.keys(schema3).filter((k) => /kontrakt|contract/i.test(k)), ['Kontrakt'], 'jedno pole, bez duplikatu');
-      assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, 5);
+      assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, json(path.join(ROOT, 'schema/notion-schema.json')).schemaVersion); // do bieżącej wersji (od E2: 6)
     } finally { A.stop(); }
   });
 
@@ -460,7 +460,7 @@ DS_FINANSE=${I.DS_FINANSE}
       for (const v of [3, 4, 5]) assert.ok(changes.some((c) => c.version === v && c.kind === 'property' && c.status === 'add'), `migracja ${v} dodaje pole`);
       const schema = (await A.dump())[H.IDS.DS_TRADES].schema;
       for (const name of ['Cena wejścia', 'Cena wyjścia', 'SL', 'TP', 'Rysunki', 'BE', 'Kontrakt']) assert.ok(schema[name], `pole „${name}” dodane`);
-      assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, 5, 'wersja schematu dochodzi do 5');
+      assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, json(path.join(ROOT, 'schema/notion-schema.json')).schemaVersion, 'wersja schematu dochodzi do bieżącej (od E2: 6)');
     } finally { A.stop(); }
   });
 

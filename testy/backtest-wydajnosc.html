@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: wydajność replayu backtestu H1 (strona robocza)</title>
+<!-- Strona robocza odbioru H1 (testy/backtest-e2e.mjs, uruchamiany osobno od run.mjs), Chrome/Edge headless przez CDP, czas rzeczywisty, podawana tylko przez dashboard
+     testowy (THQ_TEST_PAGES=1) pod /__testy/. Serwer testowy czyta KOPIĘ prawdziwych świec (TEST_CONFIG_DIR, narzedzia/kopia-swiec-odbior.mjs) i atrapę Notion.
+     Progi §9: krok ≤ 16 ms p95 (500 kroków, NQ 15s + ES 1m), odtwarzanie 100× przez 90 min (klatki > 34 ms w ≤ 1%, żadna > 100 ms), skok do następnego dnia ≤ 1,5 s
+     (mediana z 5 dni, z pobraniem dnia). Prawdziwe moduły: bt-replay.js, bt-wykres.js, bt-klient.js. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], perf }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [], perf = {};
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const frame = () => new Promise((r) => requestAnimationFrame(r));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+const DAY = '2024-03-12';
+const NEXT = ['2024-03-12', '2024-04-10', '2024-05-15', '2024-06-12', '2024-07-11']; // dni, DO których idzie skok (karta H1)
+try {
+  for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k);
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const LAY2 = { kind: '2h', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }] };
+  const mk = async (name, pool, cursor = null, layout = LAY2) => {
+    const doc = newSessionDoc({
+      id: newSessionId(), name,
+      def: { instruments: ['NQ', 'ES'], from: pool[0], to: pool[pool.length - 1], balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
+      pool, now: Date.now(),
+    });
+    doc.layout = JSON.parse(JSON.stringify(layout));
+    if (cursor) doc.cursor = cursor;
+    await client.create(doc);
+    return doc;
+  };
+  // ustawienia replayu jak w dashboardzie (domyślne), z szybkością 100×
+  const settings = { ...sanitizeBt(null), speed: 100 };
+  const open = async (doc) => {
+    const R = openReplay(document.body, { sessionId: doc.id, client, getSettings: () => settings, notionEveryMs: 0 });
+    await R.ready;
+    window.__btCharts = R.charts();
+    return R;
+  };
+  const lastT = (ch) => { const b = ch.bars(); return b.length ? b[b.length - 1][0] : null; };
+
+  // ---- 1. krok: 500 kroków NQ 15s przy dwóch wykresach (NQ 15s + ES 1m) ----
+  // Koszt kroku = część synchroniczna (seek + series.update obu wykresów + pasek) + rysowanie LWC: LWC rysuje w requestAnimationFrame zgłoszonym przy zmianie danych,
+  // więc nasz rAF zgłoszony po kroku wykonuje się w tej samej klatce zaraz po rysowaniu: performance.now() − początek klatki = koszt rysowania (metoda z C1).
+  await section('krok', async () => {
+    const doc = await mk('H1 krok', [DAY], nyAt(DAY, '09:30'));
+    const R = await open(doc);
+    const c0 = R.cursor();
+    rec('krok', c0 === nyAt(DAY, '09:30') && R.charts().length === 2, `start 9:30 NY, dwa wykresy (${R.charts().length})`);
+    const xs = [], syncs = [];
+    await new Promise((done) => {
+      const one = () => requestAnimationFrame(() => {
+        const t0 = performance.now(); R.step(1); const t1 = performance.now();
+        requestAnimationFrame((ts) => { syncs.push(t1 - t0); xs.push((t1 - t0) + Math.max(0, performance.now() - ts)); if (xs.length < 500) one(); else done(); });
+      });
+      one();
+    });
+    perf.stepP95 = pct(xs, 0.95); perf.stepMed = median(xs); perf.stepMax = Math.max(...xs); perf.stepSyncP95 = pct(syncs, 0.95); perf.steps = xs.length;
+    perf.stepCursorEnd = R.cursor() - c0;
+    rec('krok', xs.length === 500, `500 kroków (kursor +${R.cursor() - c0} s)`);
+    rec('krok', perf.stepP95 <= 16, `p95 kroku dwóch wykresów: ${perf.stepP95.toFixed(2)} ms (mediana ${perf.stepMed.toFixed(2)}, max ${perf.stepMax.toFixed(2)}, część synchroniczna p95 ${perf.stepSyncP95.toFixed(2)})`);
+    const cur = R.cursor();
+    rec('krok', R.charts().every((ch) => lastT(ch) != null && lastT(ch) <= cur), 'po krokach żaden wykres nie ma świecy po kursorze');
+    R.close();
+  });
+
+  // ---- 2. odtwarzanie 100× od 9:30 do 11:00 (5 400 s ≈ 54 s) ----
+  await section('odtwarzanie', async () => {
+    const doc = await mk('H1 odtwarzanie', [DAY], nyAt(DAY, '09:30'));
+    const R = await open(doc);
+    const end = nyAt(DAY, '11:00');
+    R.setSpeed(100);
+    const ts = [];
+    let stopAt = null;
+    const t0 = performance.now();
+    await new Promise((done) => {
+      const loop = (t) => {
+        ts.push(t);
+        if (R.cursor() >= end) { R.pause(); stopAt = R.cursor(); done(); return; }
+        if (performance.now() - t0 > 120000) { R.pause(); done(); return; }
+        requestAnimationFrame(loop);
+      };
+      R.play();
+      requestAnimationFrame(loop);
+    });
+    const wall = (performance.now() - t0) / 1000;
+    const gaps = []; for (let i = 11; i < ts.length; i++) gaps.push(ts[i] - ts[i - 1]);
+    const slow = gaps.filter((g) => g > 34).length, worst = Math.max(...gaps);
+    perf.playFrames = gaps.length; perf.playSlow = slow; perf.playSlowPct = (slow / gaps.length) * 100; perf.playWorst = worst; perf.playWall = wall; perf.playMedFrame = median(gaps);
+    perf.playEndOver = stopAt == null ? null : stopAt - end;
+    rec('odtwarzanie', stopAt != null && stopAt >= end && stopAt - end <= 100 * 0.25, `kursor na końcu 11:00 NY (+${stopAt == null ? '–' : (stopAt - end).toFixed(2)} s po 11:00; krok klatki 100× ≈ 1,7 s)`);
+    rec('odtwarzanie', perf.playSlowPct <= 1, `klatki > 34 ms: ${slow} z ${gaps.length} (${perf.playSlowPct.toFixed(2)}%, próg 1%); mediana klatki ${perf.playMedFrame.toFixed(1)} ms; czas ${wall.toFixed(1)} s`);
+    rec('odtwarzanie', worst <= 100, `najdłuższa klatka ${worst.toFixed(1)} ms (próg 100)`);
+    const cur = R.cursor();
+    rec('odtwarzanie', R.charts().every((ch) => lastT(ch) != null && lastT(ch) <= cur), 'po odtwarzaniu żaden wykres nie ma świecy po kursorze');
+    R.close();
+  });
+
+  // ---- 2b. J (przegląd P3-4): odtwarzanie 100× na NQ 1s z trzema pozycjami „Zawsze pokazuj” (podpisy jak TV liczone w każdej klatce), próg jak §9 ----
+  await section('podpisy', async () => {
+    const D = await import('/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js');
+    const doc = await mk('J podpisy', [DAY], nyAt(DAY, '09:30'), { kind: '1', active: 0, charts: [{ instrument: 'NQ', tf: '1s' }] });
+    const R = await open(doc);
+    const ch = R.charts()[0], M = ch.rysunki().manager, b = ch.bars(), t1 = b[b.length - 1][0], px = b[b.length - 1][4];
+    const ids = [-6, 0, 6].map((dp, k) => M.add({ kind: k === 1 ? 'short-position' : 'long-position', points: [{ time: t1 - 1200 + k * 60, price: px + dp }, { time: t1, price: px + dp }],
+      style: { ...D.defaultStyleFor(k === 1 ? 'short-position' : 'long-position'), stopLevel: 5, profitLevel: 10, showStats: true, accountSize: 50000, riskDisplayMode: 'money', riskAmount: 500 } }));
+    await frame();
+    rec('podpisy', ids.every((id) => ch.statLabels(M.get(id)).length === 3), `trzy pozycje z podpisami (${ids.map((id) => ch.statLabels(M.get(id)).length).join(',')})`);
+    const end = nyAt(DAY, '11:00');
+    R.setSpeed(100);
+    const ts = [];
+    const t0 = performance.now();
+    await new Promise((done) => {
+      const loop = (t) => {
+        ts.push(t);
+        if (R.cursor() >= end || performance.now() - t0 > 120000) { R.pause(); done(); return; }
+        requestAnimationFrame(loop);
+      };
+      R.play();
+      requestAnimationFrame(loop);
+    });
+    const gaps = []; for (let i = 11; i < ts.length; i++) gaps.push(ts[i] - ts[i - 1]);
+    const slow = gaps.filter((g) => g > 34).length;
+    perf.labelsFrames = gaps.length; perf.labelsSlowPct = (slow / gaps.length) * 100; perf.labelsWorst = Math.max(...gaps); perf.labelsMedFrame = median(gaps);
+    rec('podpisy', R.cursor() >= end, 'odtwarzanie doszło do 11:00 NY');
+    rec('podpisy', perf.labelsSlowPct <= 1, `klatki > 34 ms: ${slow} z ${gaps.length} (${perf.labelsSlowPct.toFixed(2)}%, próg 1%); mediana ${perf.labelsMedFrame.toFixed(1)} ms; najdłuższa ${perf.labelsWorst.toFixed(1)} ms`);
+    R.close();
+  });
+
+  // ---- 3. skok „następny dzień” z pobraniem dnia: od kliknięcia „Skocz” do pierwszego narysowanego wykresu nowego dnia ----
+  await section('skok', async () => {
+    const pool = ['2024-02-13', ...NEXT];
+    const doc = await mk('H1 skok', pool);
+    localStorage.setItem('thq.bt.jump.v1', 'nextDay');
+    const R = await open(doc);
+    const scr = document.querySelector('.bt-screen');
+    const times = [];
+    for (let i = 0; i < NEXT.length; i++) {
+      const want = NEXT[i], from = nyAt(want, '00:00') - 86400 * 4;
+      const sel = scr.querySelector('.bt-jump'); sel.value = 'nextDay'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await frame();
+      const t0 = performance.now();
+      scr.querySelector('[data-bt="jump"]').click();
+      // nowy dzień: indeks dnia w sesji, oba wykresy z danymi nowego dnia (ostatnia świeca w dniu skoku), potem jedna klatka rysowania
+      let ok = false;
+      while (performance.now() - t0 < 15000) {
+        await frame();
+        const d = R.doc();
+        if (d.pool[d.dayIdx] === want && R.charts().length === 2 && R.charts().every((ch) => lastT(ch) != null && lastT(ch) >= from && lastT(ch) <= R.cursor())) { ok = true; break; }
+      }
+      await frame();
+      const ms = performance.now() - t0;
+      times.push(ms);
+      rec('skok', ok, `${want}: wykresy nowego dnia po ${ms.toFixed(0)} ms (kursor ${new Date(R.cursor() * 1000).toISOString().slice(11, 19)} UTC)`);
+    }
+    perf.jumpTimes = times.map((x) => Math.round(x)); perf.jumpMedian = median(times);
+    rec('skok', perf.jumpMedian <= 1500, `mediana skoku z pobraniem dnia: ${perf.jumpMedian.toFixed(0)} ms (próg 1 500), pojedyncze: ${perf.jumpTimes.join(', ')}`);
+    R.close();
+  });
+
+  out.textContent = JSON.stringify({ checks, perf });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks, perf });
+}
+</script>
+</body>
+</html>

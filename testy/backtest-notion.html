@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: zapis backtestu do Notion E2 (strona robocza)</title>
+<!-- Strona robocza testów backtest-E2 (testy/backtest-E2-notion.mjs), Chrome/Edge headless przez CDP, podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Serwer testowy ma świece syntetyczne i atrapę Notion po migracji 006 (nigdy prawdziwe Notion). Prawdziwe moduły: bt-replay.js, bt-klient.js, trasa POST /api/backtest/notion.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 15000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(40); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+
+try {
+  localStorage.removeItem('thq.bt.open.v1');
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const DAY1 = '2024-03-12', DAY2 = '2024-03-13';
+  const client = createSessionClient();
+  const suf = new URLSearchParams(location.search).get('suf') || ''; // drugi przebieg (np. 375 px) ma własne sesje
+  const noScroll = () => document.documentElement.scrollWidth <= window.innerWidth + 1;
+  const t0 = nyAt(DAY1, '09:45');
+  const trade = (n, o = {}) => ({
+    id: `t${n}`, day: DAY1, instrument: 'NQ', contract: 'NQH4', dir: 'Long', qty: 1, entryT: t0 + n * 600, entryPrice: 18000, sl0: 17990, sl: 17990, tp: 18020, be: false,
+    exits: [{ t: t0 + n * 600 + 300, price: 18010, qty: 1, reason: 'manual' }], exitT: t0 + n * 600 + 300, exitPrice: 18010, r: 1, pnl: 200, maeR: -0.2, mfeR: 1.1,
+    setup: 'Breakout', notes: '', journal: 'done', drawings: null, notion: { id: null, state: 'pending', error: null }, ...o,
+  });
+  const mk = async (id, trades) => {
+    const doc = newSessionDoc({
+      id, name: `UI ${id}`,
+      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
+      pool: [DAY1, DAY2], now: Date.now(),
+    });
+    doc.trades = trades;
+    await client.create(doc);
+    return doc;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const label = () => scr().querySelector('.bt-notion').textContent;
+  const btn = (b) => scr().querySelector(`[data-bt="${b}"]`);
+  const onDisk = (id) => getJson(`/api/backtest/session/${id}`);
+
+  const part = new URLSearchParams(location.search).get('part') || '';
+  const enter = (el) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  if (part === 'poprawki') {
+    // Poprawki po review (E2): sesje przygotowuje test w Node (testy/backtest-E2-poprawki.mjs)
+    // panel: trade z błędem wysyłki na liście „do uzupełnienia”, setup spoza reguły zapisu odrzucony z komunikatem przy polu
+    const R = openReplay(document.body, { sessionId: 'bt-uipanel01', client, notionEveryMs: 0 });
+    await R.ready;
+    const tb = scr().querySelector('.bt-todo');
+    rec('panel', !tb.hidden && tb.textContent.includes('1'), `lista: „${tb.textContent}”, ukryta: ${tb.hidden}`);
+    tb.click();
+    const item = scr().querySelector('[data-todo="t1"]');
+    rec('panel', !!item, 'trade z błędem wysyłki na liście');
+    item?.click();
+    const jr = await until(() => scr().querySelector('.bt-jr'));
+    const inp = jr?.querySelector('[name="setup"]');
+    rec('panel', inp && inp.maxLength === 40, `maxlength ${inp?.maxLength}`);
+    inp.value = 'FVG/OB'; inp.dispatchEvent(new Event('input', { bubbles: true })); enter(inp);
+    rec('panel', jr.isConnected && inp.getAttribute('aria-invalid') === 'true' && /40/.test(jr.querySelector('.bt-jr-hint').textContent), `odrzucony z komunikatem: „${jr.querySelector('.bt-jr-hint').textContent}”`);
+    inp.value = 'FVG OB'; inp.dispatchEvent(new Event('input', { bubbles: true })); enter(inp);
+    const x = R.doc().trades[0];
+    rec('panel', !jr.isConnected && x.setup === 'FVG OB' && x.jEdited > 0, `zapisany: ${x.setup}, jEdited ${x.jEdited}`);
+    btn('notion').click();
+    rec('panel', await until(() => label() === 'Niezapisane w Notion: 0'), `po wysyłce: „${label()}”`);
+    R.close();
+    await sleep(100);
+    // timer: bieżący, niezakończony dzień nigdy nie wychodzi automatycznie
+    const R1 = openReplay(document.body, { sessionId: 'bt-uitimer01', client, notionEveryMs: 100 });
+    await R1.ready;
+    await sleep(800);
+    rec('timer', label() === 'Niezapisane w Notion: 1', `bieżący dzień po 800 ms: „${label()}”`);
+    R1.close();
+    await sleep(100);
+    // timer: próbowany trade zakończonego dnia jest ponawiany
+    const R2 = openReplay(document.body, { sessionId: 'bt-uitimer02', client, notionEveryMs: 100 });
+    await R2.ready;
+    rec('timer', await until(() => label() === 'Niezapisane w Notion: 0'), `zakończony dzień: „${label()}”`);
+    R2.close();
+    out.textContent = JSON.stringify({ checks });
+  } else {
+  // 1) „Zapisz do Notion” bez kończenia dnia: wszystkie zaległe (także trade bez opisu), dzień trwa dalej
+  await mk('bt-uinotion1' + suf, [trade(1), trade(2, { journal: 'todo', setup: '' })]);
+  const R = openReplay(document.body, { sessionId: 'bt-uinotion1' + suf, client, notionEveryMs: 0 });
+  await R.ready;
+  rec('przycisk', label() === 'Niezapisane w Notion: 2', `licznik przed wysyłką: „${label()}”`);
+  rec('przycisk', !btn('notion').disabled, 'przycisk aktywny przy zaległych');
+  rec('szerokość', noScroll(), `pasek bez poziomego przewijania przy ${window.innerWidth} px (scrollWidth ${document.documentElement.scrollWidth})`);
+  btn('notion').click();
+  const zero = await until(() => label() === 'Niezapisane w Notion: 0');
+  rec('przycisk', zero, `licznik po wysyłce: „${label()}”`);
+  rec('przycisk', btn('notion').disabled, 'przycisk nieaktywny bez zaległych');
+  const d1 = await onDisk('bt-uinotion1' + suf);
+  rec('przycisk', d1.trades.every((x) => x.notion?.state === 'sent' && x.notion.id), `plik sesji: ${JSON.stringify(d1.trades.map((x) => x.notion))}`);
+  rec('przycisk', d1.days?.[DAY1]?.status !== 'done' && R.doc().dayIdx === 0 && btn('end-day').textContent === 'Zakończ dzień', 'dzień trwa dalej');
+  R.close();
+  await sleep(100);
+
+  // 2) „Zakończ dzień” wysyła trade'y dnia
+  await mk('bt-uinotion2' + suf, [trade(1)]);
+  const R2 = openReplay(document.body, { sessionId: 'bt-uinotion2' + suf, client, notionEveryMs: 0 });
+  await R2.ready;
+  rec('koniec dnia', label() === 'Niezapisane w Notion: 1', `licznik: „${label()}”`);
+  await R2.endDay();
+  const zero2 = await until(() => label() === 'Niezapisane w Notion: 0');
+  rec('koniec dnia', zero2, `licznik po zakończeniu dnia: „${label()}”`);
+  const d2 = await until(async () => { const d = await onDisk('bt-uinotion2' + suf); return d.trades[0].notion?.state === 'sent' ? d : null; });
+  rec('koniec dnia', d2 && d2.days?.[DAY1]?.status === 'done', `plik sesji: dzień ${d2?.days?.[DAY1]?.status}, trade ${JSON.stringify(d2?.trades?.[0]?.notion)}`);
+  // kolejny zapis stanu z przeglądarki (wysyłka nie podbiła wersji, więc bez 409) nie kasuje id strony
+  R2.step(1);
+  await sleep(1500);
+  const d3 = await onDisk('bt-uinotion2' + suf);
+  rec('koniec dnia', !scr().querySelector('.bt-stale:not([hidden])') && d3.trades[0].notion?.state === 'sent', `po zapisie z przeglądarki: ${JSON.stringify(d3.trades[0].notion)}`);
+  R2.close();
+  out.textContent = JSON.stringify({ checks });
+  }
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

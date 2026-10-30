@@ -1,6 +1,6 @@
 {
   "name": "justjournal",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "JustJournal: lokalny dashboard statystyk tradingowych z dziennikiem w Notion. / JustJournal: local trading statistics dashboard with the journal in Notion.",
   "type": "module",
   "private": true,

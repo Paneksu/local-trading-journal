@@ -14,6 +14,7 @@ import { parseTf, SESSIONS, sessionWindows, pdhlSpans, overlayLevels } from './s
 import { dateRef } from './kontrakty.js';
 import { confirmDialog, toast } from './modal.js';
 import * as G from './geometria.js';
+import { themed, CSS_COLORS } from './rysunki-kolory.js';
 import { newsDefaults, normNews, buildNewsModel, newsGeometry, newsSvg, timeToX, candleWindow, feed as newsFeed, NEWS_IMPS, EARN_CLASSES } from './newsy.js';
 import { mountNewsLayer } from './newsy-warstwa.js';
 import { chartSettings, closePoints } from './styl-wykresu.js'; // cykl importów jest bezpieczny: nic z tego modułu nie jest wołane w czasie ładowania
@@ -465,7 +466,26 @@ export function overlayGeometry(m, sc, p, box) {
     if (p.labels && x2 - lx > 40) Object.assign(out, { label: levelLabel(l), lx, ly: l.side === 'hi' ? y - 4 : y + 12 });
     lines.push(out);
   }
+  spreadLabels(lines);
   return { rects, lines };
+}
+// H2 (ocena wyglądu #5, P1): dwie etykiety w tym samym miejscu (np. PDL i Londyn L przy prawie tej samej cenie) stały jedna na drugiej. Etykieta, która
+// nachodzi na już postawioną (w pionie < LABEL_H i w poziomie na szerokość tekstu), przesuwa się w prawo za nią. Szerokość szacowana z liczby znaków
+// (czcionka etykiet 10–11 px), bez pomiaru: wystarcza do rozsunięcia, a pojedyncze etykiety zostają tam, gdzie były.
+export const LABEL_H = 12, LABEL_CH = 6.2, LABEL_GAP = 6;
+export function spreadLabels(lines) {
+  const placed = [];
+  for (const l of lines) {
+    if (!l.label) continue;
+    const w = l.label.length * LABEL_CH;
+    for (let guard = 0; guard < 50; guard++) {
+      const hit = placed.find((p) => Math.abs(p.ly - l.ly) < LABEL_H && l.lx < p.lx + p.w + LABEL_GAP && p.lx < l.lx + w + LABEL_GAP);
+      if (!hit) break;
+      l.lx = hit.lx + hit.w + LABEL_GAP;
+    }
+    placed.push({ lx: l.lx, ly: l.ly, w });
+  }
+  return lines;
 }
 export const DASHES = { dashed: [5, 4], dotted: [1, 3] };
 export const BOX_STROKE_ALPHA = 0.5; // ramka boxa sesji: kolor sesji przy 50% (wypełnienie ma krycie z ustawień)
@@ -609,6 +629,41 @@ function saveTf(v) { try { localStorage.setItem(TF_KEY, v); } catch { /* localSt
 const SVGNS = 'http://www.w3.org/2000/svg';
 export const DECIMAL = () => (num(1.5, 1).includes(',') ? ',' : '.');
 const f1 = (v) => (Math.round(v * 10) / 10).toString();
+
+// P27: kolor części (poziom Fibonacciego/Gann, tekst, wypełnienie) wygrywa z kolorem rysunku; grubość i styl linii, przezroczystość wypełnienia
+// i rozmiar tekstu z danych rysunku. Bez danych: klasy CSS (tokeny).
+// D2: jedna funkcja SVG dla podglądu, miniatur i kart Udostępnij (testy: backtest-D2).
+// H2 (30.10.2026): kształty rysunków podglądu; kolory domyślne jako zmienne CSS bieżącego motywu (rysunki-kolory.js), ręczne bez zmian
+export const previewShapes = (drawings, s) => G.drawingShapes((drawings || []).map((d) => themed(d, CSS_COLORS)), s);
+export function drawingSvgOf(sh) {
+  const col0 = sh.color ? esc(sh.color) : null;
+  return sh.parts.map((p) => {
+    const col = p.color ? esc(p.color) : col0;
+    const dash = p.dash && p.dash !== 'solid' ? ` stroke-dasharray="${p.dash === 'dotted' ? '1 3' : '5 4'}"` : '';
+    // dane rysunku w style= (atrybuty prezentacji przegrywają z regułami CSS .drw)
+    const sw = Number.isFinite(p.width) ? ` style="stroke-width:${f1(p.width)}"` : '';
+    if (p.t === 'line') return `<line class="${p.cls}" x1="${f1(p.x1)}" y1="${f1(p.y1)}" x2="${f1(p.x2)}" y2="${f1(p.y2)}"${col ? ` stroke="${col}"` : ''}${dash}${sw}/>`;
+    if (p.t === 'rect') {
+      const fc = p.fillColor ? esc(p.fillColor) : col;
+      const css = [Number.isFinite(p.fillOpacity) ? `fill-opacity:${Math.round(p.fillOpacity * 1000) / 1000}` : '', Number.isFinite(p.width) ? `stroke-width:${f1(p.width)}` : ''].filter(Boolean).join(';');
+      return `<rect class="${p.cls}${p.fill ? ' fill' : ''}${p.stroke === false ? ' nostroke' : ''}" x="${f1(p.x)}" y="${f1(p.y)}" width="${f1(Math.max(0, p.w))}" height="${f1(Math.max(0, p.h))}"${col && p.stroke !== false ? ` stroke="${col}"` : ''}${fc && p.fill ? ` fill="${fc}"` : ''}${css ? ` style="${css}"` : ''}${dash}/>`;
+    }
+    if (p.t === 'text') {
+      const base = p.baseline === 'hanging' ? 'hanging' : 'middle';
+      const rot = p.angle ? ` transform="rotate(${f1(p.angle)} ${f1(p.ax)} ${f1(p.ay)})"` : '';
+      const fs = Number.isFinite(p.size) || p.fontWeight ? ` style="${[Number.isFinite(p.size) ? `font-size:${f1(p.size)}px` : '', p.fontWeight ? `font-weight:${p.fontWeight}` : ''].filter(Boolean).join(';')}"` : '';
+      return `<text class="${p.cls}" x="${f1(p.x)}" y="${f1(p.y)}" text-anchor="${p.anchor}"${p.anchor === 'end' && p.baseline !== 'hanging' ? ' dx="-4"' : ''} dominant-baseline="${base}"${col ? ` fill="${col}"` : ''}${fs}${rot}>${esc(p.text)}</text>`;
+    }
+    if (p.t === 'path') {
+      // D2: dymek calloutu: obrys w kolorze ramki, wypełnienie tłem z krytem (jak rect.fill)
+      const fc = p.fillColor ? esc(p.fillColor) : col;
+      const css = [Number.isFinite(p.fillOpacity) ? `fill-opacity:${Math.round(p.fillOpacity * 1000) / 1000}` : '', Number.isFinite(p.width) ? `stroke-width:${f1(p.width)}` : ''].filter(Boolean).join(';');
+      return `<path class="${p.cls}${p.fill ? ' fill' : ''}" d="${p.d}"${col ? ` stroke="${col}"` : ''}${fc && p.fill ? ` fill="${fc}"` : ''}${css ? ` style="${css}"` : ''} stroke-linejoin="round"/>`;
+    }
+    if (p.t === 'circle') return `<circle class="${p.cls}" cx="${f1(p.x)}" cy="${f1(p.y)}" r="${f1(p.r)}"/>`; // P28: kropka wyjścia pozycji (jak levelsSvg)
+    return '';
+  }).join('');
+}
 
 // Świece jako dwie ścieżki na kierunek (mało elementów DOM przy 1 500 świecach); wspólne dla podglądu i miniatury.
 // P55 (29.10.2026), «Lekko przygaszone»: świece z podziału 1m (c.synth) idą do osobnych ścieżek z klasą .synth (krycie w CSS), prawdziwe wyglądają jak dotąd.
@@ -968,7 +1023,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     S.yr = startRange(S.autoY, S.yr, lo, hi);
     const ys = !S.autoY ? G.priceScale({ min: S.yr.min, max: S.yr.max, top: mt, height: ph, margins: { top: 0, bottom: 0 } })
       : G.priceScale({ min: lo, max: hi, top: mt, height: ph, margins: { top: 0.08, bottom: 0.08 } });
-    const s = G.chartScales({ candles: S.candles, xs, ys, box: { left: ml, right: ml + pw, top: mt, bottom: mt + ph }, pip: 0.25, step, decimal: DECIMAL() });
+    const s = G.chartScales({ candles: S.candles, xs, ys, box: { left: ml, right: ml + pw, top: mt, bottom: mt + ph }, pip: 0.25, step, decimal: DECIMAL(), measure: G.canvasMeasure });
 
     // siatka i oś ceny (po prawej, jak w terminalach)
     // etykiety SL/TP stoją na osi ceny: podziałka zbyt blisko nich znika
@@ -1023,9 +1078,9 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     // poziomy i pozycja trade'a
     const lv = tradeIn ? levels(s, iEntry, iExit, ml + pw, W) : '';
     // rysunki z JSON (bez edycji)
-    const dr = G.drawingShapes(drawings, s);
+    const dr = previewShapes(drawings, s);
     root.querySelector('.swc-skip').textContent = dr.skipped ? t.p('{n} rysunek widoczny tylko w trybie edycji', dr.skipped) : '';
-    const drw = dr.items.map(drawingSvg).join('');
+    const drw = dr.items.map(drawingSvgOf).join('');
 
     const cid = `pvc-${uid}`;
     plot.querySelector('svg')?.remove();
@@ -1071,32 +1126,6 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
   }
 
   const levels = (...args) => levelsSvg(trade, ...args, { cfg: chartSettings() });
-
-  // P27: kolor części (poziom Fibonacciego/Gann, tekst, wypełnienie) wygrywa z kolorem rysunku; grubość i styl linii, przezroczystość wypełnienia
-  // i rozmiar tekstu z danych rysunku. Bez danych: klasy CSS (tokeny).
-  function drawingSvg(sh) {
-    const col0 = sh.color ? esc(sh.color) : null;
-    return sh.parts.map((p) => {
-      const col = p.color ? esc(p.color) : col0;
-      const dash = p.dash && p.dash !== 'solid' ? ` stroke-dasharray="${p.dash === 'dotted' ? '1 3' : '5 4'}"` : '';
-      // dane rysunku w style= (atrybuty prezentacji przegrywają z regułami CSS .drw)
-      const sw = Number.isFinite(p.width) ? ` style="stroke-width:${f1(p.width)}"` : '';
-      if (p.t === 'line') return `<line class="${p.cls}" x1="${f1(p.x1)}" y1="${f1(p.y1)}" x2="${f1(p.x2)}" y2="${f1(p.y2)}"${col ? ` stroke="${col}"` : ''}${dash}${sw}/>`;
-      if (p.t === 'rect') {
-        const fc = p.fillColor ? esc(p.fillColor) : col;
-        const css = [Number.isFinite(p.fillOpacity) ? `fill-opacity:${Math.round(p.fillOpacity * 1000) / 1000}` : '', Number.isFinite(p.width) ? `stroke-width:${f1(p.width)}` : ''].filter(Boolean).join(';');
-        return `<rect class="${p.cls}${p.fill ? ' fill' : ''}${p.stroke === false ? ' nostroke' : ''}" x="${f1(p.x)}" y="${f1(p.y)}" width="${f1(Math.max(0, p.w))}" height="${f1(Math.max(0, p.h))}"${col && p.stroke !== false ? ` stroke="${col}"` : ''}${fc && p.fill ? ` fill="${fc}"` : ''}${css ? ` style="${css}"` : ''}${dash}/>`;
-      }
-      if (p.t === 'text') {
-        const base = p.baseline === 'hanging' ? 'hanging' : 'middle';
-        const rot = p.angle ? ` transform="rotate(${f1(p.angle)} ${f1(p.ax)} ${f1(p.ay)})"` : '';
-        const fs = Number.isFinite(p.size) ? ` style="font-size:${f1(p.size)}px"` : '';
-        return `<text class="${p.cls}" x="${f1(p.x)}" y="${f1(p.y)}" text-anchor="${p.anchor}"${p.anchor === 'end' && p.baseline !== 'hanging' ? ' dx="-4"' : ''} dominant-baseline="${base}"${col ? ` fill="${col}"` : ''}${fs}${rot}>${esc(p.text)}</text>`;
-      }
-      if (p.t === 'circle') return `<circle class="${p.cls}" cx="${f1(p.x)}" cy="${f1(p.y)}" r="${f1(p.r)}"/>`; // P28: kropka wyjścia pozycji (jak levelsSvg)
-      return '';
-    }).join('');
-  }
 
   // ---- dymek OHLC ----
   function showTip(px) {
@@ -1346,7 +1375,7 @@ export function miniSvg(trade, { tf, bars }, { w = 96, h = 30, cfg = chartSettin
   for (const c of bars) { if (c[3] < lo) lo = c[3]; if (c[2] > hi) hi = c[2]; }
   for (const v of [trade.entryPrice, trade.exitPrice, trade.sl, trade.tp, trade.be]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
   const ys = G.priceScale({ min: lo, max: hi, top: mt, height: ph, margins: { top: 0.06, bottom: 0.06 } });
-  const s = G.chartScales({ candles: bars, xs, ys, box: { left: ml, right: ml + pw, top: mt, bottom: mt + ph }, pip: 0.25, step, decimal: DECIMAL() });
+  const s = G.chartScales({ candles: bars, xs, ys, box: { left: ml, right: ml + pw, top: mt, bottom: mt + ph }, pip: 0.25, step, decimal: DECIMAL(), measure: G.canvasMeasure });
   const lv = levelsSvg(trade, s, iEntry, iExit, ml + pw, w, { mini: true, cfg });
   const cid = `swm-${++miniId}`;
   return `<svg class="swc-mini-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true" focusable="false"><defs><clipPath id="${cid}"><rect x="0" y="0" width="${w}" height="${h}"/></clipPath></defs>` +

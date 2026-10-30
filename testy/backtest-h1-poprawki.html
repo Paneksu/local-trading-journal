@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: poprawki po przeglądzie H2 (strona robocza)</title>
+<!-- Strona robocza testów backtest-H1 po przeglądzie H2 (testy/backtest-H1-poprawki.mjs), Chrome/Edge headless przez CDP, podawana tylko przez dashboard testowy
+     (THQ_TEST_PAGES=1) pod /__testy/. Świece wyłącznie syntetyczne (NQ z 1s 9:30–11:00, ES tylko 1m, dni 2024-03-12 i 2024-03-13). Prawdziwe moduły: bt-replay.js,
+     bt-zlecenia.js, bt-wykres.js, bt-wypelnienia.js. ?part=es: handel ES obok NQ 15s w oknie 1s (przegląd kodu #1) i podpowiedź przy wyłączonym Kup;
+     ?part=dni: podwójne „Następny dzień” (#2) i wysyłka do Notion w kolejce (#3). Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const part = new URLSearchParams(location.search).get('part') || 'es';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const DAY1 = '2024-03-12', DAY2 = '2024-03-13';
+try {
+  for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k);
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt, DEFAULT_JUMPS } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const settings = { ...sanitizeBt(null), jumps: [...DEFAULT_JUMPS.map((j) => ({ ...j })), { id: 'go', name: 'go', cel: { kind: 'offset', sec: 1 }, skrot: '' }] };
+  const mk = async (name, pool, { cursor = null, layout = null } = {}) => {
+    const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ', 'ES'], from: pool[0], to: pool[pool.length - 1], balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] }, pool, now: Date.now() });
+    if (layout) doc.layout = layout;
+    if (cursor) doc.cursor = cursor;
+    await client.create(doc);
+    return doc;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P(`[name="${name}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  const note = () => P('.bt-ord-note').textContent;
+  const REW = 'Przeglądasz wstecz';
+  const LAY = { kind: '2h', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }] };
+
+  if (part === 'es') {
+    await section('es', async () => {
+      const doc = await mk('H2 ES obok NQ', [DAY1], { cursor: nyAt(DAY1, '09:35'), layout: LAY });
+      const R = openReplay(document.body, { sessionId: doc.id, client, getSettings: () => settings, notionEveryMs: 0, confirm: async () => true });
+      await R.ready;
+      // podpowiedź: bez SL i wielkości Kup jest wyłączone, notka mówi dlaczego (zgłoszenie z zrzutów H2)
+      rec('podpowiedz', P('[data-o="buy"]').disabled && /Wpisz SL albo wielkość/.test(note()), `bez SL: Kup wyłączone, notka „${note()}”`);
+      // aktywny NQ 15s: dwa kroki → 9:35:30 w oknie 1s; NQ wyznacza znak wodny na :30, ES widzi ostatnią pełną minutę (9:35:00)
+      R.step(1); R.step(1);
+      rec('es', R.cursor() === nyAt(DAY1, '09:35') + 30 && R.book().hw === nyAt(DAY1, '09:35') + 30, `kursor i znak wodny 9:35:30 (hw − 9:35 = ${R.book().hw - nyAt(DAY1, '09:35')} s)`);
+      R.activate(1);
+      rec('es', R.activeIndex() === 1 && R.charts()[1].instrument === 'ES', 'aktywny wykres ES 1m');
+      setF('sl', '5'); setF('tp', '20'); setF('qty', '2');
+      P('[data-o="buy"]').click();
+      const pos = R.book().positions.ES;
+      rec('es', !!pos && pos.qty === 2 && !new RegExp(REW).test(note()), `Kup ES przy NQ na :30: ${pos ? `Long ${pos.qty} @ ${pos.entryPrice}` : 'brak pozycji'}; notka „${note()}”`);
+      P('[data-o="be"]').click();
+      rec('es', !new RegExp(REW).test(note()), `BE ES nie jest blokowane jako „wstecz” (notka „${note()}”)`);
+      setF('part', '1'); P('[data-o="partial"]').click();
+      rec('es', R.book().positions.ES?.openQty === 1 && !new RegExp(REW).test(note()), `Zamknij część ES: otwarte ${R.book().positions.ES?.openQty}`);
+      P('[data-o="close"]').click();
+      const tr = (R.doc().trades || []).find((x) => x.instrument === 'ES');
+      rec('es', !R.book().positions.ES && tr && tr.exits.length === 2, `Zamknij pozycję ES: trade ${tr?.id} ${tr?.exits?.map((x) => x.reason).join('+')}, R ${tr?.r}`);
+      document.querySelector('.bt-jr [data-jr="skip"]')?.click();
+      // znak wodny per instrument: krok wstecz blokuje handel na obu (panel), silnik nadal pilnuje ES przy cofniętym ES
+      R.step(1); // NQ 9:35:45
+      R.activate(0); R.step(-1); R.step(-1); R.step(-1); R.activate(1);
+      setF('sl', '5'); setF('qty', '1');
+      rec('es', P('[data-o="buy"]').disabled && new RegExp(REW).test(note()), `po krokach wstecz (${new Date(R.cursor() * 1000).toISOString().slice(11, 19)}): Kup ES zablokowane, notka „${note()}”`);
+      P('[data-o="back"]').click();
+      await sleep(50);
+      setF('qty', '1');
+      P('[data-o="buy"]').click();
+      rec('es', !!R.book().positions.ES, `po „Wróć do bieżącej chwili” Kup ES działa (kursor ${new Date(R.cursor() * 1000).toISOString().slice(11, 19)})`);
+      // „Zakończ dzień” z otwartą pozycją ES przy NQ w środku minuty: pytanie o zamknięcie (confirm testowy = tak), zamknięcie eod, dzień zakończony
+      R.activate(0); R.step(1); R.step(1);
+      R.endDay();
+      await until(() => R.doc().days[DAY1]?.status === 'done', 4000);
+      const eod = (R.doc().trades || []).filter((x) => x.instrument === 'ES').pop();
+      rec('es', R.doc().days[DAY1]?.status === 'done' && !R.book().positions.ES && eod?.exits?.[0]?.reason === 'eod', `Zakończ dzień z pozycją ES: dzień ${R.doc().days[DAY1]?.status}, wyjście ${eod?.exits?.[0]?.reason}`);
+      R.close();
+    });
+  }
+
+  if (part === 'dialog') {
+    // H2 (zrzuty po poprawkach): prawdziwe okno pytania (modal.js, bez atrapy confirm) musi stać NAD ekranem replayu, inaczej „Zakończ dzień” z pozycją nic nie pokazuje
+    await section('dialog', async () => {
+      const doc = await mk('H2 pytanie nad replayem', [DAY1], { cursor: nyAt(DAY1, '09:40') });
+      const R = openReplay(document.body, { sessionId: doc.id, client, getSettings: () => settings, notionEveryMs: 0 });
+      await R.ready;
+      setF('sl', '10'); setF('qty', '1');
+      P('[data-o="buy"]').click();
+      rec('dialog', !!R.book().positions.NQ, 'pozycja otwarta');
+      scr().querySelector('[data-bt="end-day"]').click();
+      const m = await until(() => document.querySelector('.scrim .modal'), 3000);
+      const r = m?.getBoundingClientRect();
+      const hit = r && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      rec('dialog', !!m && !!hit && m.contains(hit), `okno pytania widoczne nad replayem (element w środku okna: ${hit?.className || hit?.tagName || 'brak'})`);
+      [...(m?.querySelectorAll('button') || [])].find((b) => /Anuluj/.test(b.textContent))?.click();
+      R.close();
+    });
+  }
+
+  if (part === 'dni') {
+    // fałszywa wysyłka do Notion: pierwsza wolna (2 s), rejestr wywołań
+    const calls = [];
+    let slow = true;
+    const notion = async (opts) => { calls.push(opts); if (slow) { slow = false; await sleep(2000); } return { sent: 0, skipped: 0, failed: [], pending: 0, notion: {} }; };
+    const cl = { ...client, notion };
+    await section('nastepny', async () => {
+      const doc = await mk('H2 następny dzień', [DAY1, DAY2]);
+      const R = openReplay(document.body, { sessionId: doc.id, client: cl, getSettings: () => settings, notionEveryMs: 0, confirm: async () => true });
+      await R.ready;
+      await R.endDay(); // dzień 1 zakończony (wysyłka dnia 1 trwa 2 s)
+      rec('nastepny', R.doc().days[DAY1]?.status === 'done', 'dzień 1 zakończony');
+      // podwójne „Następny dzień”: drugie kliknięcie w trakcie wczytywania nic nie robi
+      const b = scr().querySelector('[data-bt="end-day"]');
+      b.click(); b.click(); R.endDay();
+      const busy = b.disabled;
+      await until(() => R.doc().pool[R.doc().dayIdx] === DAY2 && R.charts().length > 0, 6000);
+      await sleep(200);
+      rec('nastepny', R.doc().dayIdx === 1 && R.doc().days[DAY2]?.status === 'active', `po podwójnym kliknięciu: dzień ${R.doc().pool[R.doc().dayIdx]} = ${R.doc().days[DAY2]?.status} (przycisk w trakcie wczytywania ${busy ? 'wyłączony' : 'aktywny'})`);
+      rec('nastepny', busy, 'przycisk wyłączony w trakcie wczytywania dnia');
+      // dzień 2 kończy się, gdy wysyłka dnia 1 jeszcze trwa: prośba idzie do kolejki
+      await R.endDay();
+      await until(() => calls.some((c) => c.day === DAY2), 4000);
+      rec('kolejka', calls.some((c) => c.day === DAY1) && calls.some((c) => c.day === DAY2), `wysyłki: ${JSON.stringify(calls)}`);
+      R.close();
+    });
+  }
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

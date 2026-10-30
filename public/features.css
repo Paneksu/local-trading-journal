@@ -122,7 +122,7 @@ td.res { white-space: nowrap; font-weight: 600; }
 
 /* ---------- szczegóły trade'a (lightbox) ---------- */
 .lb { --primary: var(--lb-primary); --primary-fg: var(--lb-primary-fg); --well: var(--lb-well); --edge: var(--lb-edge); }
-/* podgląd wykresu w lightboxie: lightbox jest zawsze ciemny, więc linia wykresu, wciśnięty segment i pole wpisu też (w Platinum tokeny motywu są ciemne); wartości w tokenach --lb-* w styles.css */
+/* podgląd wykresu w lightboxie: linia wykresu, wciśnięty segment i pole wpisu z tokenów --lb-* (styles.css): w Onyx wartości ciemne, w Platinum tokeny motywu (H2) */
 .lb { --n-blue: var(--lb-n-blue); --n-orange: var(--lb-n-orange); --n-purple: var(--lb-n-purple); /* pasy sesji na zawsze ciemnym tle */
   --n-red: var(--lb-n-red); --n-yellow: var(--lb-n-yellow); /* 1.4.0: znaczniki newsów i earningsów (czerwone, żółte) na zawsze ciemnym wykresie, kontrast AA także w Platinum */
   --chart-line: var(--fg); --seg-on: var(--lb-seg-on); --input: var(--lb-input); --well-shadow: var(--lb-well-shadow); }
@@ -451,6 +451,10 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
 .sp { width: min(372px, calc(100vw - 24px)); }
 .sp-tabs { margin: 2px 0 10px; }
 .sp-tabs button { flex: 1; }
+/* H2 (ocena wyglądu #2): 7 zakładek (z „Backtest”) nie mieściło się w 372 px i etykiety się zlewały: szerszy popover na desktopie, przyciski z odstępem, zawijanie zamiast ściskania */
+@media (min-width: 1024px) { .sp { width: min(480px, calc(100vw - 24px)); } }
+.seg.sp-tabs { flex-wrap: wrap; }
+.seg.sp-tabs button { flex: 1 0 auto; padding: 0 8px; }
 .sp-reset { padding: 12px 0 2px; }
 .sp #sp-body > .lbl { display: block; margin: 12px 0 8px; }
 .pv { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--float); box-shadow: inset 0 0 0 1px var(--line); }
@@ -1025,3 +1029,230 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
   .cal-now { display: block; }
   .cal-now td { display: block; }
 }
+/* Backtest (1.5.0, pakiet C1): zakładka z listą sesji, kreator sesji, ekran replayu nad dashboardem. Kolory wyłącznie z tokenów motywu. */
+.bt-view { gap: 12px; }
+.bt-list { padding: 6px 18px; overflow-x: auto; }
+.bt-tab { width: 100%; border-collapse: collapse; }
+.bt-tab th { padding: 8px 10px 8px 0; text-align: left; font-size: var(--t-sm); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-2); white-space: nowrap; }
+.bt-tab td { padding: 8px 10px 8px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+.bt-tab .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bt-tab td.pos { color: var(--profit); } .bt-tab td.neg { color: var(--loss); }
+.bt-l-ago { color: var(--fg-2); font-size: var(--t-sm); white-space: nowrap; }
+.bt-tab .bt-l-ago { padding-left: 24px; } /* H2 #14: specyficzność wyższa niż .bt-tab td/th (sam .bt-l-ago przegrywał) */
+.bt-l-act { text-align: right; white-space: nowrap; }
+.bt-form { display: flex; flex-direction: column; gap: 12px; }
+.bt-fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px 20px; }
+.bt-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.bt-f .sp-in { width: 100%; max-width: none; }
+.bt-f[aria-invalid="true"] .sp-in, .bt-f .sp-in[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
+.bt-row { display: flex; align-items: center; gap: 8px; }
+.bt-row .sp-in { flex: 1; min-width: 0; }
+/* H2 (ocena wyglądu #1, #8): zakres dat i kolejność dni zajmują dwie kolumny siatki (rok nie znika pod ikoną kalendarza, segment w jednym rzędzie) */
+@media (min-width: 700px) { .bt-fgrid > .bt-f-wide { grid-column: span 2; } }
+.bt-f[data-k="dates"] .sp-in { min-width: 9.5em; }
+.bt-chk { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.bt-adv > summary { cursor: pointer; font-size: var(--t-sm); font-weight: 600; color: var(--fg-2); }
+.bt-adv[open] > summary { padding-bottom: 6px; }
+/* F2: edytor filtra dni w kreatorze (bt-filtr-widok.js). Kontrolki dashboardu (.seg, .check, .sp-in, .btn); wszystko zawija się do 375 px. */
+.bt-advb { min-width: 0; }
+.bt-fbadge { margin-left: 6px; font-weight: 400; }
+.bt-fe { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bt-ftree, .bt-fgrp, .bt-fitems { min-width: 0; }
+.bt-fgrp { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); }
+.bt-froot { padding: 10px; }
+.bt-fgh, .bt-fgf { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.bt-fgf .bt-fadd { flex: 1 1 200px; min-width: 0; max-width: 340px; }
+.bt-fitems { display: flex; flex-direction: column; gap: 6px; }
+.bt-fempty { margin: 0; }
+.bt-fcond { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 6px 8px; border-radius: 6px; background: rgb(var(--fg-rgb) / .04); min-width: 0; }
+.bt-fl { font-size: var(--t-sm); font-weight: 600; }
+.bt-fp { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; flex: 1 1 160px; min-width: 0; }
+.bt-fmulti { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.bt-fnl { display: inline-flex; align-items: center; gap: 6px; }
+.bt-fp .sp-in { width: auto; max-width: 100%; min-width: 0; }
+.bt-fp .bt-fev { width: 180px; }
+.bt-fp .bt-fnum { width: 90px; }
+.bt-fcond > .icon-btn, .bt-fgh > .icon-btn { margin-left: auto; }
+.bt-fts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.bt-fts .sp-in { width: auto; flex: 1 1 140px; min-width: 0; max-width: 240px; }
+.bt-fres { font-size: var(--t-md); }
+.bt-fdays, .bt-fman, .bt-fno { list-style: none; margin: 0; padding: 0; }
+.bt-fdays { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 12px; max-height: 240px; overflow-y: auto; box-shadow: inset 0 0 0 1px var(--line); border-radius: 6px; padding: 4px 8px; }
+.bt-fdays:empty { display: none; }
+.bt-fdays li, .bt-fman li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--t-sm); content-visibility: auto; contain-intrinsic-size: auto 26px; }
+.bt-fdays li { height: 26px; }
+.bt-fd { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bt-fd i { font-style: normal; color: var(--fg-2); }
+.bt-ftag { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }
+.bt-fdays li .icon-btn { margin-left: auto; width: 22px; height: 22px; }
+.bt-fman li { justify-content: space-between; }
+.bt-fno-w > summary { cursor: pointer; font-size: var(--t-sm); color: var(--fg-2); }
+.bt-fno { font-size: var(--t-sm); color: var(--fg-2); max-height: 160px; overflow-y: auto; }
+.bt-fnote { margin: 0; color: var(--loss); }
+.bt-err:empty { display: none; }
+.bt-factions { display: flex; justify-content: flex-end; gap: 8px; }
+.bt-screen { position: fixed; inset: 0; z-index: 140; display: flex; flex-direction: column; background: var(--chrome); color: var(--fg); }
+/* H2 (P1 ze zrzutów): okno pytania (modal.js, .scrim z-index 110) leżało pod ekranem replayu (140): „Zakończ dzień” z pozycją niczego nie pokazywał. Okno otwarte nad replayem idzie wyżej. */
+.bt-screen ~ .scrim { z-index: 150; }
+.bt-top, .bt-ctl { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 14px; }
+.bt-top { border-bottom: 1px solid var(--line); }
+.bt-ctl { border-top: 1px solid var(--line); }
+.bt-ttl { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-right: auto; min-width: 0; }
+.bt-name { font-size: var(--t-md); font-weight: 700; }
+.bt-dayn, .bt-date, .bt-daytype, .bt-stats { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-daytype:empty, .bt-date:empty { display: none; }
+.bt-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
+.bt-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; align-items: center; }
+.bt-notion.err::before { content: "●"; color: var(--warn); margin-right: 4px; } /* E2: trade z błędem zapisu w Notion (komunikat w title); H2 #12: kolor neutralny, kropka ostrzeżenia zamiast koloru straty */
+.bt-charts { position: relative; flex: 1; min-height: 0; display: flex; }
+.bt-chart { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.bt-chart[hidden] { display: none; }
+.bt-plot { flex: 1; min-height: 0; }
+.bt-secnote { position: absolute; left: 12px; top: 8px; z-index: 3; margin: 0; pointer-events: none; }
+.bt-state { flex: 1; justify-content: center; }
+.bt-state[hidden] { display: none; }
+.bt-tfl { display: inline-flex; align-items: center; gap: 8px; }
+.bt-tfl .sp-in.sp-sel { width: auto; height: 28px; }
+.bt-msg { margin-left: auto; }
+@media (max-width: 640px) {
+  .bt-list { padding: 4px 12px; }
+  .bt-tab thead { display: none; }
+  .bt-tab, .bt-tab tbody { display: block; }
+  .bt-tab tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .bt-tab tbody tr:first-child { border-top: 0; }
+  .bt-tab td { display: block; padding: 0; border: 0; }
+  .bt-tab .num { text-align: left; }
+  .bt-l-act { grid-column: 1 / -1; text-align: left; }
+  .bt-top, .bt-ctl { padding: 6px 10px; gap: 6px 8px; }
+  .bt-layout { display: none; }
+}
+/* Backtest C2: panel zleceń, skoki przy pasku i zakładka Ustawień */
+.bt-ordhost:empty { display: none; }
+.bt-ord { display: flex; flex-direction: column; gap: 6px; padding: 6px 14px; border-top: 1px solid var(--line); }
+.bt-ord-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 6px 12px; }
+.bt-ord-row[hidden], .bt-ord-f[hidden], .bt-ord [hidden] { display: none; }
+.bt-ord-f { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.bt-ord-f .sp-in { width: 88px; height: 28px; }
+.bt-buy { color: var(--profit); }
+.bt-ord .bt-buy:disabled, .bt-ord .bt-sell:disabled { opacity: .55; } /* H2 P3 #16: powód w title */
+.bt-sell { color: var(--loss); }
+.bt-ord-info { margin-right: auto; font-size: var(--t-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; align-self: center; }
+.bt-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px 0 10px; border: 1px solid var(--line); border-radius: 6px; font-size: var(--t-sm); color: var(--fg-2); }
+.bt-ord-note { margin: 0; min-height: 1.2em; }
+.bt-ord-note[data-state="rewound"] { color: var(--be); }
+.bt-ctl .bt-jump { width: auto; max-width: 190px; height: 28px; }
+.bt-sj { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center; }
+.bt-sj > input[data-btf="name"] { flex: 1 1 100%; }
+.bt-sj > select, .bt-sj > input[type="time"], .bt-sj > input[type="number"] { flex: 1 1 110px; min-width: 0; width: auto; }
+.bt-sj > select { min-width: 9.5em; } /* H2 P1 #22: pełna nazwa skoku („Następny news”, „Przesunięcie (min)”) */
+.bt-sj > .bt-skrot { flex: 0 0 64px; width: 64px; } /* H2 P1 #22: skrót skoku to jeden klawisz; pełny zapis w title */
+.bt-sj { padding-bottom: 8px; border-bottom: 1px solid var(--line); } /* H2 P3 #19: granica między skokami */
+.bt-sjk { margin: 0 0 0 auto; font-size: var(--t-xs); }
+.bt-skrot { text-align: center; cursor: pointer; }
+.bt-skrot[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
+.bt-sjb { display: flex; gap: 8px; flex-wrap: wrap; }
+.bt-sal, .bt-sdef { display: flex; flex-direction: column; gap: 6px; }
+.bt-sa { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bt-sa .sp-in { width: 150px; } /* H2 (ocena wyglądu #3): „Shift+ArrowRight” w całości; pełny zapis także w title */
+.bt-sa .bt-row .sp-in { width: 84px; flex: none; }
+.bt-serr { color: var(--danger); }
+.bt-smsg:empty { display: none; }
+@media (max-width: 640px) {
+  .bt-ord { padding: 6px 10px; }
+  .bt-ord-f .sp-in { width: 76px; }
+}
+.bt-stale { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0; padding: 6px 14px; border-top: 1px solid var(--line); color: var(--danger); }
+.bt-stale[hidden] { display: none; }
+/* D1: układ 1, 2h, 2v, 4 wykresów na jednym zegarze; aktywny wykres ma ramkę, jego instrument dostaje zlecenia, jego interwał wyznacza krok */
+.bt-grid { flex: 1; min-height: 0; display: grid; gap: 1px; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); background: var(--line); }
+.bt-grid[data-kind="2h"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.bt-grid[data-kind="2v"] { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.bt-grid[data-kind="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.bt-cell { position: relative; min-width: 0; min-height: 0; height: auto; gap: 0; background: var(--chrome); }
+.bt-grid:not([data-kind="1"]) .bt-cell[data-active="true"] { box-shadow: inset 0 0 0 1px var(--fg-2); }
+.bt-ch { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 8px; }
+.bt-ch .sp-in.sp-sel { width: auto; height: 26px; font-size: var(--t-sm); }
+.bt-ch .swc-save { font-size: var(--t-xs); color: var(--fg-2); }
+.bt-ch .swc-save:empty, .bt-ch .swc-meter[hidden] { display: none; }
+.bt-cell .swc-stage { min-height: 0; }
+.bt-cell .bt-plot { min-height: 0; }
+.bt-cell .swc-tools { margin-left: auto; }
+@media (max-width: 640px) {
+  .bt-charts { overflow-y: auto; }
+  .bt-grid[data-kind] { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(260px, 1fr); }
+  .bt-cell .swc-tools { margin-left: 0; }
+}
+/* E1: panel journalingu w rogu wykresu (setup + notatka), lista „do uzupełnienia” w pasku, ekran „Sesja ukończona” */
+.bt-jr { position: absolute; bottom: 36px; z-index: 6; width: 300px; max-width: calc(100% - 16px); display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--popover); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px color-mix(in srgb, var(--fg) 12%, transparent); }
+.bt-jr[data-corner="left"] { left: 8px; }
+.bt-jr[data-corner="right"] { right: 8px; }
+.bt-jr[data-v="top"] { bottom: auto; top: 8px; } /* H2: panel omija świece także w pionie (pickVert) */
+.bt-jr-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.bt-jr-r, .bt-jr-usd { font-variant-numeric: tabular-nums; font-weight: 600; }
+.bt-jr-r.pos, .bt-jr-usd.pos { color: var(--profit); } .bt-jr-r.neg, .bt-jr-usd.neg { color: var(--loss); }
+.bt-jr-g { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.bt-jr-g dt { color: var(--fg-2); } .bt-jr-g dd { margin: 0; }
+.bt-jr-f { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.bt-jr-f .sp-in { width: 100%; max-width: none; }
+.bt-jr-f textarea.sp-in { resize: none; height: auto; min-height: 52px; }
+.bt-jr-f .sp-in[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
+.bt-jr-b { display: flex; align-items: center; gap: 6px; }
+.bt-jr-hint { flex: 1; margin: 0; font-size: var(--t-xs); }
+.bt-todo-w { position: relative; display: inline-flex; }
+.bt-todo-w .bt-todo[hidden], .bt-todo-l[hidden] { display: none; }
+.bt-todo-l { position: absolute; top: 100%; right: 0; z-index: 30; display: flex; flex-direction: column; gap: 4px; min-width: 200px; max-height: 50vh; overflow-y: auto; margin-top: 4px; padding: 6px; background: var(--popover); border: 1px solid var(--line); border-radius: 10px; }
+.bt-todo-l .btn { justify-content: flex-start; }
+.bt-l-todo { margin-left: 8px; }
+.bt-fin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 28px; text-align: center; }
+.bt-fin[hidden] { display: none; }
+.bt-fin h3 { margin: 0; }
+.bt-fin p { margin: 0; }
+.bt-fin-b { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+@media (max-width: 640px) {
+  .bt-jr { width: auto; left: 8px; right: 8px; }
+  .bt-jr[data-corner="left"], .bt-jr[data-corner="right"] { left: 8px; right: 8px; }
+}
+
+/* Statystyki backtestu (1.5.0, pakiet G): zakres, kafle, tabele z przygaszonymi wierszami poniżej MIN_N, wykonanie. Kolory z tokenów motywu. */
+.bt-st-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.bt-st-pick { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.bt-st-few { margin: 0; }
+.bt-st-card { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.bt-st-card p { margin: 0; }
+.bt-st-tw { overflow-x: auto; }
+.bt-st-tab td, .bt-st-tab th { padding-right: 14px; }
+.bt-st-tab tr.bt-few td, .bt-st-tab td.bt-few { color: var(--fg-2); }
+.bt-st-tab tr.bt-few td.pos, .bt-st-tab tr.bt-few td.neg, .bt-st-tab td.bt-few.pos, .bt-st-tab td.bt-few.neg { color: var(--fg-2); }
+.bt-few-tag { white-space: nowrap; margin-left: 6px; }
+.bt-st-verdict { font-size: var(--t-sm); color: var(--fg); }
+.bt-st-kvs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; margin: 0; }
+.bt-st-kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bt-st-kv dt { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-st-kv dd { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.bt-st-kv dd b { font-size: var(--t-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
+.bt-st-h4 { margin: 6px 0 0; font-size: var(--t-sm); font-weight: 500; color: var(--fg-2); }
+.bt-st-eq, .bt-st-mae { min-width: 0; position: relative; }
+@media (max-width: 640px) {
+  .bt-st-card .sec-h, .bt-view > .sec > .sec-h { align-items: flex-start; }
+  .bt-st-tab th { letter-spacing: .04em; }
+}
+.bt-view .seg { flex-wrap: wrap; max-width: 100%; }
+.bt-st-tiles, .bt-st-ex { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+@media (max-width: 640px) {
+  /* tabele statystyk zostają tabelami (przewijane w ramce), bez przebudowy listy sesji na karty */
+  .bt-st-tab { display: table; width: max-content; min-width: 100%; }
+  .bt-st-tab thead { display: table-header-group; }
+  .bt-st-tab tbody { display: table-row-group; }
+  .bt-st-tab tr { display: table-row; padding: 0; }
+  .bt-st-tab th, .bt-st-tab td { white-space: nowrap; }
+  /* H2 (ocena wyglądu #4): reguła listy sesji (.bt-tab td { display: block }) rozsypywała tabelę statystyk; komórki wracają do tabeli, ramka .bt-st-tw przewija */
+  .bt-st-tab th, .bt-st-tab td { display: table-cell; padding: 6px 14px 6px 0; border-top: 1px solid var(--line); }
+  .bt-st-tab thead th { border-top: 0; }
+}
+
+/* H2 #25: w kaflach „Wykonanie” etykieta zajmuje wolne miejsce, więc liczby stoją w jednej linii także przy etykiecie w dwóch wierszach */
+.bt-st-ex .tile .lbl { flex-grow: 1; }
+/* H2 #26: nagłówek grupy (Backtest / Live) nad środkiem swoich trzech kolumn, z linią pod spodem */
+.bt-st-tab th.bt-st-grp { text-align: center; padding-right: 0; border-bottom: 1px solid var(--line); }
+/* H2 #21: replay w Platinum stoi na tej samej ramie --chrome co podgląd: podpisy sesji i newsów w ciemniejszym pomarańczu i żółci (≥ 5:1), jak --lb-n-* */
+:root[data-theme="platinum"] .bt-screen { --n-orange: var(--chrome-n-orange); --n-yellow: var(--chrome-n-yellow); --warn: var(--chrome-warn); }

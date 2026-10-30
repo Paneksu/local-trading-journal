@@ -1,6 +1,6 @@
 {
   "$comment": "Jedno źródło prawdy o schemacie Notion: strona główna, 4 bazy, pola, opcje, relacje, formuły i widoki. Używa go setup.mjs (nowa instalacja), a aktualizacje dokładają różnice migracjami z migrations/. Zmiany tylko addytywne, patrz CONTRIBUTING.md. Formuły: {{p:rola}} to prop(\"nazwa pola\"), {{o:rola:token}} to nazwa opcji w języku instalacji, {{x:baza.rola}} to sama nazwa pola z innej bazy. / Single source of truth for the Notion workspace; additive changes only.",
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "rootPage": {
     "icon": "📊",
     "title": { "pl": "Dziennik tradingowy", "en": "Trading Journal" },
@@ -113,6 +113,9 @@
         "tp": { "type": "number", "name": { "pl": "TP", "en": "TP" } },
         "be": { "type": "number", "name": { "pl": "BE", "en": "BE" } },
         "contract": { "type": "rich_text", "name": { "pl": "Kontrakt", "en": "Contract" } },
+        "btSession": { "type": "rich_text", "name": { "pl": "Sesja backtestu", "en": "Backtest session" } },
+        "btMae": { "type": "number", "name": { "pl": "MAE (R)", "en": "MAE (R)" } },
+        "btMfe": { "type": "number", "name": { "pl": "MFE (R)", "en": "MFE (R)" } },
         "konta": { "type": "relation", "name": { "pl": "Konta", "en": "Accounts" }, "to": "konta", "syncedRole": "trades" },
         "chart": { "type": "url", "name": { "pl": "Wykres", "en": "Chart" } },
         "manual": {

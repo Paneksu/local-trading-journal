@@ -1064,8 +1064,14 @@ for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^newsy-\d+.
   (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
 }
 
+// ---------- moduł Backtest (1.5.0): testy z testy/backtest-<karta>-*.mjs, dane tylko syntetyczne (testy/bt-dane-syntetyczne.mjs) ----------
+// backtest-e2e.mjs (H1) to odbiór na kopii prawdziwych świec, uruchamiany osobno: run.mjs go nie importuje
+for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^backtest-.*\.mjs$/.test(n) && n !== 'backtest-e2e.mjs').sort()) {
+  (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
+}
+
 // ---------- uruchomienie ----------
-let pass = 0, fail = 0, skipped = 0; // skipped: odfiltrowane fragmentem nazwy z linii poleceń (D2, przegląd 28.10.2026)
+let pass = 0, fail = 0, skipped = 0, skipEnv = 0; // skipEnv: test sam się pominął (np. brak Chrome/Edge): e.skipTest, liczony osobno, nie jako zdany // skipped: odfiltrowane fragmentem nazwy z linii poleceń (D2, przegląd 28.10.2026)
 const t0 = Date.now();
 for (const t of tests) {
   if (only && !t.name.includes(only)) { skipped++; continue; }
@@ -1075,6 +1081,7 @@ for (const t of tests) {
     pass++;
     console.log(`✓ ${t.name} (${((Date.now() - s) / 1000).toFixed(1)} s)`);
   } catch (e) {
+    if (e && e.skipTest) { skipEnv++; console.log(`- ${t.name} (POMINIĘTY: ${e.message})`); continue; } // finally poniżej i tak sprząta
     fail++;
     console.log(`✗ ${t.name}\n  ${String(e.stack || e).split('\n').slice(0, 6).join('\n  ')}`);
   } finally {
@@ -1082,5 +1089,5 @@ for (const t of tests) {
   }
 }
 H.cleanupTemps();
-console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped${skipEnv ? `, ${skipEnv} pominiętych (brak środowiska)` : ''} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 process.exit(fail ? 1 : 0);

@@ -2,7 +2,7 @@
 // Strona robocza zapisuje wynik w <pre id="wynik">PASS …</pre> albo FAIL …. Brak Chrome i Edge: findBrowser() zwraca null (test „pominięty”).
 // Flagi sprawdzone 27.10.2026 na Chrome i Edge (Windows): --headless=new --virtual-time-budget=10000 --dump-dom.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -62,7 +62,7 @@ export function dumpDom(url, { timeoutMs = 60_000, width = 1200, height = 800 } 
 // pod --virtual-time-budget nagrywanie nie kończy się (sprawdzone 28.10.2026 na Edge: --dump-dom zwraca stronę przed wynikiem).
 // Port DevTools losowy (--remote-debugging-port=0, odczyt z DevToolsActivePort), więc nie zajmuje stałych portów (9222, 9223).
 // until: wyrażenie JS, na które czekamy; extract: wyrażenie, którego wartość zwracamy (returnByValue).
-export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent" } = {}) {
+export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent", shot = null, mobile = false } = {}) {
   const exe = findBrowser();
   if (!exe) throw new Error('Brak Chrome/Edge');
   const prof = newProfile();
@@ -74,7 +74,8 @@ export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 
   try {
     let port = 0;
     const f = path.join(prof, 'DevToolsActivePort');
-    while (!port && Date.now() < deadline) { if (existsSync(f)) port = Number(readFileSync(f, 'utf8').split('\n')[0]) || 0; if (!port) await sleep(100); }
+    // H2: Windows bywa, że przeglądarka jeszcze pisze plik (EBUSY przy odczycie, pełny przebieg 30.10.2026): czekamy i czytamy znowu
+    while (!port && Date.now() < deadline) { try { if (existsSync(f)) port = Number(readFileSync(f, 'utf8').split('\n')[0]) || 0; } catch { port = 0; } if (!port) await sleep(100); }
     if (!port) throw new Error('DevTools: brak portu');
     let target = null;
     while (!target && Date.now() < deadline) { try { target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((x) => x.type === 'page'); } catch { await sleep(100); } }
@@ -86,9 +87,16 @@ export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 
     ws.onmessage = (m) => { const j = JSON.parse(m.data); if (j.id && pend.has(j.id)) { pend.get(j.id)(j); pend.delete(j.id); } };
     const send = (method, params = {}) => new Promise((res) => { const i = ++id; pend.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
     const ev = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }))?.result?.result?.value;
+    // H2: mobile = prawdziwa szerokość telefonu (headless nie zmniejsza okna poniżej ~500 px, więc emulacja zamiast --window-size)
+    if (mobile) await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await send('Page.navigate', { url });
     while (Date.now() < deadline) {
-      if (await ev(`(() => { try { return !!(${until}); } catch { return false; } })()`)) return await ev(extract);
+      if (await ev(`(() => { try { return !!(${until}); } catch { return false; } })()`)) {
+        const v = await ev(extract);
+        // H1: zrzut roboczy po wyniku (shot = ścieżka PNG poza repo, np. backtest-wyniki/); strona zostawia na ekranie stan do obejrzenia
+        if (shot) { const r = await send('Page.captureScreenshot', { format: 'png' }); if (r?.result?.data) writeFileSync(shot, Buffer.from(r.result.data, 'base64')); }
+        return v;
+      }
       await sleep(250);
     }
     throw new Error('DevTools: przekroczony czas strony: ' + String(await ev(extract)).slice(0, 300));

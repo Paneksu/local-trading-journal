@@ -389,7 +389,7 @@ export default ({ test, H, assert, ROOT }) => {
 
   test('newsy-06: zakładka i panele podpięte: Kalendarz w #tabs i w tabbarze, karty w lewym panelu (renderDesk), tylko tokeny w CSS kalendarza, telefon bez tabeli', () => {
     const app = readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
-    assert.ok(/data-v="calendar"/.test(app) && /item\('view', 'calendar'/.test(app) && /VIEWS = \['stats', 'trades', 'prop', 'gallery', 'calendar'\]/.test(app));
+    assert.ok(/data-v="calendar"/.test(app) && /item\('view', 'calendar'/.test(app) && /VIEWS = \['stats', 'trades', 'prop', 'gallery', 'calendar'(, 'backtest')?\]/.test(app)); // 1.5.0 (backtest-C1): zakładka Backtest po Kalendarzu
     const desk = app.slice(app.indexOf('function renderDesk'), app.indexOf('const DAYS_FULL'));
     assert.ok(/newsDeskHtml\(\)/.test(desk), 'karty w lewym panelu');
     const side = app.slice(app.indexOf('function renderSide'), app.indexOf('const cmpRecent'));

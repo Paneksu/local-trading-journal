@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: kreator z filtrem dni F2 (strona robocza)</title>
+<!-- Strona robocza testów backtest-F2 (testy/backtest-F2-kreator.mjs), Chrome/Edge headless przez CDP, podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Indeks dni to ręczne DayFeatures (1 500 dni, bez serwera); zapisy sesji trafiają do atrapy klienta. Do paska replayu używany jest prawdziwy serwer testowy ze świecami syntetycznymi.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. ?part=kreator|pasek|mobile|shot, ?theme=platinum. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<button id="gear" type="button" aria-expanded="false" hidden>gear</button>
+<section class="sec" id="k"></section>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'kreator';
+if (qs.get('w')) { document.body.style.width = qs.get('w') + 'px'; document.body.style.overflowX = 'visible'; }
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// ---- indeks dni (ręczne DayFeatures) ----
+const pad = (n) => String(n).padStart(2, '0');
+function makeDays(count) {
+  const out = [];
+  let d = new Date(Date.UTC(2018, 0, 2));
+  while (out.length < count) {
+    const wd = d.getUTCDay();
+    if (wd >= 1 && wd <= 5) {
+      const i = out.length, day = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+      out.push({
+        day, wd, month: d.getUTCMonth() + 1, has1s: { NQ: true }, has1m: { NQ: true, ES: true },
+        holiday: { before: false, after: false }, rollWeek: false,
+        news: i % 21 === 0 ? [{ name: 'CPI', kind: 'news', imp: 'high', hm: '08:30', when: 'pre' }] : i % 17 === 0 ? [{ name: 'JOLTS Job Openings', kind: 'news', imp: 'medium', hm: '10:00', when: 'open' }] : [],
+        fedChair: false, opex: i % 63 === 0 ? 'monthly' : null, opexWeek: false, earnings: [],
+        mkt: { NQ: { gapPct: ((i * 37) % 200 - 100) / 100, gapPts: ((i * 37) % 200 - 100), onRange: 50 + (i % 90), prevRange: 100 + (i % 120), prevDir: i % 2 ? 'up' : 'down', inside: i % 5 === 0, preVsPd: ['above', 'below', 'inside'][i % 3], atrRatio: 0.5 + (i % 20) / 10 } },
+      });
+    }
+    d = new Date(d.getTime() + 86400000);
+  }
+  return out;
+}
+
+try {
+  localStorage.removeItem('thq.bt.open.v1');
+  const { openKreator, newSessionDoc } = await import('/js/bt-kreator.js');
+  const { matchDays } = await import('/js/bt-filtr.js');
+  const { templateEntry, templateFilter, sanitizeBt } = await import('/js/bt-czas.js');
+  const F = await import('/js/bt-filtr-widok.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+
+  const DAYS = makeDays(1500);
+  const FIRST = DAYS[0].day, LAST = DAYS[DAYS.length - 1].day;
+  const stub = (days = DAYS) => {
+    const s = { calls: 0, created: null };
+    s.days = async () => { s.calls++; return { days, version: 1 }; };
+    s.create = async (doc) => { s.created = doc; return { rev: 1 }; };
+    return s;
+  };
+  const host = document.getElementById('k');
+  const mount = (client, opts = {}) => {
+    host.innerHTML = '';
+    const k = openKreator(host, { client, now: () => Date.parse(LAST) + 86400000 * 2, ...opts });
+    const f = k.form;
+    const set = (n, v) => { const el = f.querySelector(`[name="${n}"]`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+    return { k, f, set };
+  };
+  const ev = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
+  const open = async (f) => { const d = f.querySelector('details.bt-adv'); d.open = true; ev(d, 'toggle'); await until(() => f.querySelector('.bt-fe')); await sleep(30); return f.querySelector('.bt-fe'); };
+  const addCond = (scope, kind) => { const s = scope.querySelector(':scope > .bt-fgh .bt-fadd, :scope > .bt-fgf .bt-fadd'); s.value = kind; ev(s, 'change'); };
+  const count = (e) => Number((e.querySelector('.bt-fcount').textContent.match(/\d+/) || [])[0]);
+
+  if (part === 'kreator' || part === 'shot') {
+    await section('zwiniete', async () => {
+      const c = stub();
+      const { k, f, set } = mount(c);
+      const d = f.querySelector('details.bt-adv'), sm = d?.querySelector('summary');
+      rec('zwiniete', d && !d.open && sm?.getAttribute('aria-expanded') === 'false', `sekcja zwinięta: aria-expanded=${sm?.getAttribute('aria-expanded')}`);
+      rec('zwiniete', f.querySelector('[name="name"]').offsetParent !== null && f.querySelector('[name="from"]').offsetParent !== null, 'formularz klasyczny widoczny');
+      rec('zwiniete', !f.querySelector('.bt-fe'), 'edytor filtra nie jest zbudowany przed rozwinięciem');
+      rec('zwiniete', c.calls === 0, 'indeks dni nie pobrany przed rozwinięciem');
+      set('name', 'Bez filtra'); set('from', FIRST); set('to', DAYS[20].day); set('balance', '50000'); set('risk', '100');
+      f.requestSubmit();
+      await until(() => c.created);
+      rec('zwiniete', c.created && c.created.def.filter === null && same(c.created.def.excluded, []), `filter null: ${JSON.stringify(c.created?.def?.filter)}`);
+      // rozwinięcie i zwinięcie bez warunków też zostawia null
+      const c2 = stub();
+      const m2 = mount(c2);
+      await open(m2.f);
+      m2.f.querySelector('details.bt-adv').open = false; ev(m2.f.querySelector('details.bt-adv'), 'toggle');
+      rec('zwiniete', m2.f.querySelector('summary').getAttribute('aria-expanded') === 'false', 'aria-expanded wraca na false po zwinięciu');
+      m2.set('name', 'Pusty filtr'); m2.set('from', FIRST); m2.set('to', DAYS[20].day); m2.set('balance', '50000'); m2.set('risk', '100');
+      m2.f.requestSubmit();
+      await until(() => c2.created);
+      rec('zwiniete', c2.created && c2.created.def.filter === null, 'rozwinięty i zwinięty bez warunków: filter null');
+    });
+
+    await section('grupy', async () => {
+      const { f, set } = mount(stub());
+      set('from', FIRST); set('to', LAST);
+      const e = await open(f);
+      rec('grupy', f.querySelector('summary').getAttribute('aria-expanded') === 'true', 'aria-expanded true po rozwinięciu');
+      const sel = e.querySelector('.bt-fadd');
+      const labels = [...sel.querySelectorAll('optgroup')].map((g) => g.label);
+      const want = ['Kalendarz', 'Newsy', 'Wygasanie', 'Earningsy'];
+      // [U] 30.10.2026 «Gap od ceny startu»: grupa „Rynek” liczona przed godziną startu replayu, nie przed 9:30
+      rec('grupy', want.every((w, i) => labels[i] === w) && /^Rynek/.test(labels[4]) && /przed godziną startu/.test(labels[4]), `grupy warunków: ${JSON.stringify(labels)}`);
+      const kinds = [...sel.querySelectorAll('option[value]')].map((o) => o.value).filter(Boolean);
+      const { COND_KINDS } = await import('/js/bt-filtr.js');
+      rec('grupy', same([...kinds].sort(), [...COND_KINDS].sort()), `lista obejmuje wszystkie rodzaje warunków (${kinds.length})`);
+      // dodanie warunku: dzień tygodnia = wtorek
+      const root = e.querySelector('.bt-fgrp');
+      addCond(root, 'wd');
+      const c1 = root.querySelector('.bt-fcond[data-kind="wd"]');
+      rec('grupy', !!c1, 'warunek dodany');
+      const tue = c1.querySelector('[data-p="days"] input[value="2"]'); tue.checked = true; ev(tue, 'change');
+      const n1 = count(e);
+      rec('grupy', n1 === DAYS.filter((d) => d.wd === 2).length, `dni tygodnia = wtorek: ${n1}`);
+      // lub: wtorek lub czwartek -> druga grupa; przełącznik i/lub
+      const root2 = e.querySelector('.bt-fgrp');
+      const orBtn = root2.querySelector(':scope > .bt-fgh [data-k="op"] [data-v="or"]');
+      const andBtn = root2.querySelector(':scope > .bt-fgh [data-k="op"] [data-v="and"]');
+      rec('grupy', andBtn?.getAttribute('aria-pressed') === 'true', 'domyślnie i');
+      addCond(root2, 'wd');
+      const c2 = root2.querySelectorAll(':scope > .bt-fitems > .bt-fcond[data-kind="wd"]')[1];
+      const thu = c2.querySelector('[data-p="days"] input[value="4"]'); thu.checked = true; ev(thu, 'change');
+      rec('grupy', count(e) === 0, `i: wtorek i czwartek = ${count(e)}`);
+      orBtn.click();
+      rec('grupy', orBtn.getAttribute('aria-pressed') === 'true' && count(e) === DAYS.filter((d) => d.wd === 2 || d.wd === 4).length, `lub: ${count(e)}`);
+      // nie przy warunku
+      const not2 = c2.querySelector('[data-act="not"]'); not2.checked = true; ev(not2, 'change');
+      rec('grupy', count(e) === DAYS.filter((d) => d.wd === 2 || d.wd !== 4).length, `wtorek lub nie(czwartek): ${count(e)}`);
+      not2.checked = false; ev(not2, 'change');
+      // nie przy grupie
+      const gnot = root2.querySelector(':scope > .bt-fgh [data-act="not"]'); gnot.checked = true; ev(gnot, 'change');
+      rec('grupy', count(e) === DAYS.filter((d) => !(d.wd === 2 || d.wd === 4)).length, `nie(wtorek lub czwartek): ${count(e)}`);
+      gnot.checked = false; ev(gnot, 'change');
+      // grupa zagnieżdżona: (wtorek lub czwartek) i (grupa: CPI)
+      root2.querySelector(':scope > .bt-fgf [data-act="addgrp"]').click();
+      const inner = root2.querySelector(':scope > .bt-fitems > .bt-fgrp');
+      rec('grupy', !!inner, 'grupa zagnieżdżona dodana');
+      addCond(inner, 'event');
+      const ev1 = inner.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'); ev1.value = 'CPI'; ev(ev1, 'change');
+      const cpi = DAYS.filter((d) => d.news.some((n) => n.name === 'CPI'));
+      rec('grupy', count(e) === DAYS.filter((d) => d.wd === 2 || d.wd === 4 || d.news.some((n) => n.name === 'CPI')).length, `lub z grupą CPI: ${count(e)} (CPI ${cpi.length})`);
+      // usunięcie warunku
+      c1.querySelector('[data-act="del"]').click();
+      rec('grupy', count(e) === DAYS.filter((d) => d.wd === 4 || d.news.some((n) => n.name === 'CPI') || false).length || !root.querySelector('.bt-fcond[data-kind="wd"]'), 'usunięcie warunku zmienia licznik');
+    });
+
+    await section('licznik', async () => {
+      const c = stub();
+      const { f, set } = mount(c);
+      set('from', FIRST); set('to', LAST);
+      const e = await open(f);
+      const calls0 = c.calls;
+      const root = e.querySelector('.bt-fgrp');
+      addCond(root, 'wd');
+      const wd = root.querySelector('.bt-fcond[data-kind="wd"]');
+      const times = [];
+      for (let i = 1; i <= 5; i++) {
+        const cb = wd.querySelector(`[data-p="days"] input[value="${i}"]`);
+        cb.checked = !cb.checked;
+        const t0 = performance.now(); ev(cb, 'change'); const dt = performance.now() - t0;
+        times.push(dt);
+      }
+      const li = e.querySelectorAll('.bt-fdays li[data-day]').length;
+      rec('licznik', times.every((x) => x <= 100), `zmiana warunku przy 1 500 dniach: ${times.map((x) => x.toFixed(1)).join(', ')} ms`);
+      rec('licznik', c.calls === calls0, `bez zapytań do serwera przy zmianie warunku (${c.calls - calls0})`);
+      rec('licznik', li === count(e) || e.querySelector('.bt-fmore'), `lista zgodna z licznikiem (${li} / ${count(e)})`);
+      // zmiana zakresu dat to jedno nowe zapytanie, nie więcej
+      const before = c.calls;
+      set('to', DAYS[700].day);
+      await sleep(150);
+      rec('licznik', c.calls === before + 1 || c.calls === before, `zmiana zakresu: zapytania ${c.calls - before}`);
+      rec('licznik', count(e) <= DAYS.slice(0, 701).length, `licznik po zmianie zakresu: ${count(e)}`);
+    });
+
+    await section('reczne', async () => {
+      const { f, set } = mount(stub());
+      set('from', '2023-01-02'); set('to', '2023-01-13');
+      const e = await open(f);
+      const n0 = count(e);
+      const row = e.querySelector('.bt-fdays li[data-day="2023-01-04"]');
+      rec('reczne', n0 === 10 && !!row, `10 dni w zakresie: ${n0}`);
+      row.querySelector('[data-act="drop"]').click();
+      rec('reczne', count(e) === n0 - 1 && !e.querySelector('.bt-fdays li[data-day="2023-01-04"]'), 'dzień wyrzucony z listy');
+      const man = e.querySelector('.bt-fman li[data-day="2023-01-04"]');
+      rec('reczne', !!man, 'dzień na liście wykluczonych ręcznie');
+      man.querySelector('[data-act="restore"]').click();
+      rec('reczne', count(e) === n0 && !e.querySelector('.bt-fman li[data-day="2023-01-04"]'), 'przywrócony');
+    });
+
+    await section('reczne-sesja', async () => {
+      const c = stub();
+      const { f, set } = mount(c);
+      set('from', '2023-01-02'); set('to', '2023-01-13');
+      const e = await open(f);
+      e.querySelector('.bt-fdays li[data-day="2023-01-05"] [data-act="drop"]').click();
+      set('name', 'Ręczne'); set('balance', '50000'); set('risk', '100');
+      f.requestSubmit();
+      await until(() => c.created);
+      rec('reczne', c.created && same(c.created.def.excluded, ['2023-01-05']) && !c.created.pool.includes('2023-01-05') && c.created.pool.length === 9, `sesja: wykluczone ${JSON.stringify(c.created?.def?.excluded)}, pula ${c.created?.pool?.length}`);
+      const r = matchDays(c.created.def, DAYS);
+      rec('reczne', r.excluded.some((x) => x.day === '2023-01-05' && x.reason === 'manual'), 'powód manual');
+    });
+
+    await section('bezdanych', async () => {
+      const days = makeDays(40);
+      days[3].has1s = { NQ: false };
+      days[4].has1m = { NQ: true, ES: false };
+      const { f, set } = mount(stub(days));
+      set('from', days[0].day); set('to', days[39].day);
+      const e = await open(f);
+      const rows = [...e.querySelectorAll('.bt-fno li[data-day]')];
+      rec('bezdanych', rows.length === 1 && rows[0].dataset.day === days[3].day, `lista Wyłączone (NQ): ${rows.map((r) => r.textContent)}`);
+      rec('bezdanych', /sekund 9:30–11:00/.test(rows[0]?.textContent || '') && /NQ/.test(rows[0]?.textContent || ''), `powód: ${rows[0]?.textContent}`);
+      // ES: powód o minutach
+      f.querySelector('[name="inst"][value="NQ"]').checked = false; ev(f.querySelector('[name="inst"][value="NQ"]'), 'change');
+      f.querySelector('[name="inst"][value="ES"]').checked = true; ev(f.querySelector('[name="inst"][value="ES"]'), 'change');
+      await sleep(150);
+      const rows2 = [...e.querySelectorAll('.bt-fno li[data-day]')];
+      rec('bezdanych', rows2.length === 1 && /minut 9:30–16:00/.test(rows2[0].textContent) && /ES/.test(rows2[0].textContent), `powód ES: ${rows2.map((r) => r.textContent)}`);
+      rec('bezdanych', ![...e.querySelectorAll('.bt-fno li')].some((r) => /filtr|filter/i.test(r.dataset.reason || '')), 'powód filter nie jest na liście wyłączonych');
+      // filtr, który odrzuca wszystkie dni: Create wyłączony z notką
+      f.querySelector('[name="inst"][value="NQ"]').checked = true; ev(f.querySelector('[name="inst"][value="NQ"]'), 'change');
+      f.querySelector('[name="inst"][value="ES"]').checked = false; ev(f.querySelector('[name="inst"][value="ES"]'), 'change');
+      await sleep(150);
+      const root = e.querySelector('.bt-fgrp');
+      addCond(root, 'event');
+      const nm = root.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'); nm.value = 'NFP'; ev(nm, 'change');
+      const create = f.querySelector('[data-bt="create"]');
+      rec('bezdanych', count(e) === 0 && create.disabled && !!e.querySelector('.bt-fnote:not([hidden])')?.textContent, `zero dni: Utwórz wyłączony (${create.disabled}), notka „${e.querySelector('.bt-fnote')?.textContent}”`);
+      nm.value = 'CPI'; ev(nm, 'change');
+      rec('bezdanych', !create.disabled && count(e) > 0, 'po poprawce filtra Utwórz znów włączony');
+    });
+
+    await section('szablony', async () => {
+      const saved = [];
+      const { f, set } = mount(stub(), { defaults: { templates: [] }, onTemplates: (list) => saved.push(JSON.parse(JSON.stringify(list))) });
+      set('from', FIRST); set('to', LAST);
+      const e = await open(f);
+      const root = e.querySelector('.bt-fgrp');
+      addCond(root, 'event');
+      const nm = root.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'); nm.value = 'CPI'; ev(nm, 'change');
+      const cnt = count(e);
+      const inp = e.querySelector('.bt-ftname'); inp.value = 'Dni CPI'; ev(inp, 'input');
+      e.querySelector('[data-act="tsave"]').click();
+      const last = saved[saved.length - 1];
+      rec('szablony', last && last.length === 1 && last[0].name === 'Dni CPI' && Array.isArray(last[0].filterJ), `zapisany szablon: ${JSON.stringify(last)?.slice(0, 120)}`);
+      const back = templateFilter(last?.[0]);
+      rec('szablony', back && back.items?.[0]?.k === 'event' && back.items[0].name === 'CPI', 'filtr odtwarzalny z wpisu');
+      // wybór szablonu wypełnia pusty edytor
+      const c2 = mount(stub(), { defaults: { templates: last } });
+      c2.set('from', FIRST); c2.set('to', LAST);
+      const e2 = await open(c2.f);
+      rec('szablony', count(e2) === DAYS.length, `edytor pusty: ${count(e2)}`);
+      const ts = e2.querySelector('.bt-ftsel'); ts.value = ts.querySelector('option[value]:not([value=""])').value; ev(ts, 'change');
+      rec('szablony', count(e2) === cnt && !!e2.querySelector('.bt-fcond[data-kind="event"]'), `po wyborze szablonu: ${count(e2)} dni (oczekiwane ${cnt})`);
+      // sesja utworzona z szablonu ma filtr
+      const cc = stub();
+      const c3 = mount(cc, { defaults: { templates: last } });
+      c3.set('name', 'CPI 2024'); c3.set('from', FIRST); c3.set('to', LAST); c3.set('balance', '50000'); c3.set('risk', '100');
+      const e3 = await open(c3.f);
+      const ts3 = e3.querySelector('.bt-ftsel'); ts3.value = ts3.querySelector('option[value]:not([value=""])').value; ev(ts3, 'change');
+      c3.f.requestSubmit();
+      await until(() => cc.created);
+      rec('szablony', cc.created && cc.created.pool.length === cnt && cc.created.pool.every((d) => DAYS.find((x) => x.day === d).news.some((n) => n.name === 'CPI')), `sesja z szablonu: pula ${cc.created?.pool?.length} dni CPI`);
+      rec('szablony', cc.created?.def?.filter?.items?.[0]?.k === 'event', 'definicja sesji niesie filtr');
+      // usunięcie szablonu z edytora
+      e2.querySelector('[data-act="tdel"]').click();
+      rec('szablony', !e2.querySelector('.bt-ftsel option[value]:not([value=""])'), 'szablon usunięty z listy');
+    });
+  }
+
+  if (part === 'ustawienia') {
+    await section('ustawienia', async () => {
+      const { createSettings } = await import('/js/ustawienia.js');
+      const { sanitizeChart } = await import('/js/styl-wykresu.js');
+      const { sanitizeShare } = await import('/js/udostepnij.js');
+      const { defaultCustom } = await import('/js/palety.js');
+      const bt = sanitizeBt({ templates: [templateEntry('Dni CPI', { op: 'and', not: false, items: [{ k: 'event', name: 'CPI' }] }), templateEntry('Wtorki', { op: 'and', not: false, items: [{ k: 'wd', days: [2] }] })] });
+      const st = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), chartTz: '', chartBadj: true, chart: sanitizeChart(null), beR: 0.1, beUsd: 0, bt };
+      let saves = 0;
+      const S = createSettings({ settings: st, save: () => { saves++; }, getTheme: () => 'onyx', applyAll: () => {}, onBe: () => {}, onBt: () => {} });
+      document.addEventListener('click', (ev) => { const b = ev.target.closest('[data-act]'); if (b) S.handle(b.dataset.act, b.dataset.v, b); });
+      document.addEventListener('change', (ev) => { S.onChange(ev); });
+      S.toggle('backtest');
+      const q$ = (x) => document.querySelector('.sp').querySelector(x);
+      rec('ustawienia', document.querySelectorAll('.sp .bt-tpl-r').length === 2, 'lista szablonów w zakładce Backtest (2)');
+      const nm = q$('[data-btt="0"]'); nm.value = 'Tylko CPI'; ev(nm, 'change');
+      rec('ustawienia', st.bt.templates[0].name === 'Tylko CPI' && saves >= 1 && templateFilter(st.bt.templates[0]).items[0].name === 'CPI', `zmiana nazwy zachowuje filtr: ${JSON.stringify(st.bt.templates.map((x) => x.name))}`);
+      const dup = q$('[data-btt="1"]'); dup.value = 'Tylko CPI'; ev(dup, 'change');
+      rec('ustawienia', st.bt.templates[1].name === 'Wtorki', 'nazwa zajęta przez inny szablon jest odrzucona');
+      // zmiana innego ustawienia Backtest nie gubi szablonów
+      const spd = q$('[data-btd="speed"]'); spd.value = '10'; ev(spd, 'change');
+      rec('ustawienia', st.bt.speed === 10 && st.bt.templates.length === 2, 'zapis szkicu zachowuje szablony');
+      q$('[data-act="bt-tdel"][data-v="0"]').click();
+      rec('ustawienia', st.bt.templates.length === 1 && st.bt.templates[0].name === 'Wtorki' && document.querySelectorAll('.sp .bt-tpl-r').length === 1, 'usunięcie szablonu');
+    });
+  }
+
+  if (part === 'pasek') {
+    await section('pasek', async () => {
+      const { openReplay } = await import('/js/bt-replay.js');
+      const { dayTypeLabel } = F;
+      const client = createSessionClient();
+      const DAY1 = '2024-03-12';
+      const feat = { day: DAY1, wd: 2, month: 3, has1s: { NQ: true }, has1m: { NQ: true }, holiday: { before: false, after: false }, rollWeek: false, news: [{ name: 'CPI', kind: 'news', imp: 'high', hm: '08:30', when: 'pre' }, { name: 'JOLTS Job Openings', kind: 'news', imp: 'medium', hm: '10:00', when: 'open' }], fedChair: true, opex: 'monthly', opexWeek: true, earnings: [], mkt: {} };
+      const cpiFilter = { op: 'and', not: false, items: [{ k: 'event', name: 'CPI' }] };
+      rec('pasek', dayTypeLabel(feat, cpiFilter) === 'CPI 8:30', `dayTypeLabel z filtrem CPI: „${dayTypeLabel(feat, cpiFilter)}”`);
+      const tags = dayTypeLabel(feat, null).split(', ');
+      rec('pasek', tags.length <= 2 && tags[0] === 'CPI', `dayTypeLabel bez filtra: „${dayTypeLabel(feat, null)}”`);
+      rec('pasek', dayTypeLabel({ ...feat, news: [], opex: null, fedChair: false, opexWeek: false }, null) === 'bez newsów', 'dzień bez wydarzeń: „bez newsów”');
+      const mk = async (name, filter) => {
+        const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter, excluded: [] }, pool: [DAY1], now: Date.now() });
+        await client.create(doc);
+        return doc;
+      };
+      for (const [label, filter, want] of [['z filtrem CPI', cpiFilter, 'CPI 8:30'], ['bez filtra', null, 'CPI, OPEX']]) {
+        const doc = await mk('Sesja F2 ' + label, filter);
+        const R = openReplay(document.body, { sessionId: doc.id, client, loadFeatures: async () => feat });
+        await R.ready;
+        const el = document.querySelector('.bt-screen .bt-daytype');
+        await until(() => el.textContent);
+        rec('pasek', el.textContent === want, `pasek ${label}: „${el.textContent}” (oczekiwane „${want}”)`);
+        R.close();
+        await sleep(100);
+      }
+      // brak cech (błąd indeksu) nie psuje ekranu
+      const doc = await mk('Sesja F2 błąd', null);
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadFeatures: async () => { throw new Error('x'); } });
+      await R.ready;
+      rec('pasek', document.querySelector('.bt-screen .bt-daytype').textContent === '' && !!document.querySelector('.bt-screen .bt-name').textContent, 'błąd cech dnia: pasek bez typu, ekran działa');
+      R.close();
+    });
+  }
+
+  // Okno headless ma minimum ok. 500 px, a dashboard blokuje ramki (X-Frame-Options), więc 375 px to szerokość treści: body ustawione na 375 px i pomiar prawej krawędzi elementów
+  if (part === 'mobile') {
+    await section('375', async () => {
+      document.body.style.width = '375px'; document.body.style.overflowX = 'visible';
+      const c = stub();
+      const { f, set } = mount(c, { defaults: { templates: [templateEntry('Dni CPI z długą nazwą szablonu do sprawdzenia zawijania', { op: 'and', not: false, items: [{ k: 'event', name: 'CPI' }] })] } });
+      set('from', FIRST); set('to', LAST);
+      const e = await open(f);
+      const root = e.querySelector('.bt-fgrp');
+      for (const k of ['wd', 'gap', 'event', 'month']) addCond(root, k);
+      root.querySelector(':scope > .bt-fgf [data-act="addgrp"]').click();
+      await sleep(100);
+      rec('375', document.body.scrollWidth <= 375, `szerokość treści ${document.body.scrollWidth} px (okno ${innerWidth})`);
+      const over = [...document.querySelectorAll('.bt-fe *')].filter((x) => x.getBoundingClientRect().right > 376).slice(0, 3).map((x) => x.className || x.tagName);
+      rec('375', over.length === 0, `elementy poza oknem: ${over.join(', ')}`);
+    });
+  }
+
+  if (part === 'shot') {
+    const { f, set } = mount(stub(), { defaults: { templates: [templateEntry('Dni CPI', { op: 'and', not: false, items: [{ k: 'event', name: 'CPI' }] })] } });
+    set('name', 'CPI 2024'); set('from', '2022-01-03'); set('to', '2023-12-29');
+    const e = await open(f);
+    const root = e.querySelector('.bt-fgrp');
+    addCond(root, 'event');
+    const nm = root.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'); nm.value = 'CPI'; ev(nm, 'change');
+    addCond(root, 'wd');
+    const wd = root.querySelector('.bt-fcond[data-kind="wd"]');
+    for (const i of [2, 3, 4]) { const cb = wd.querySelector(`[data-p="days"] input[value="${i}"]`); cb.checked = true; ev(cb, 'change'); }
+    rec('zrzut', true, 'kreator z rozwiniętym filtrem');
+  }
+  if (part === 'poprawki') {
+    const XSS = '"><img src=x onerror=window.__xss=1>';
+    const eh = (extra = {}) => { const d = document.createElement('div'); document.body.append(d); const calls = []; const m = F.mountFilterEditor(d, { days: DAYS, from: FIRST, to: LAST, onTemplates: (l) => calls.push(l), ...extra }); return { d, m, calls }; };
+    const evCond = (name) => ({ k: 'event', name });
+    await section('xss', async () => {
+      // filtr z sesji / szablonu z ładunkiem w polu liczbowym: odrzucony w całości, bez wstawienia znaczników
+      const a = eh({ filter: { op: 'and', not: false, items: [{ k: 'gap', unit: 'pct', min: XSS }, evCond('CPI')] } });
+      await sleep(50);
+      rec('xss', !a.d.querySelector('img') && window.__xss === undefined, 'pole liczbowe z ładunkiem: brak <img> i brak wykonania skryptu');
+      rec('xss', a.m.value() === null, 'filtr z niepoprawnym parametrem odrzucony (pusty edytor)');
+      // poprawny napis w nazwie wydarzenia (ładunek jako zwykły tekst) zostaje tekstem
+      const b = eh({ filter: { op: 'and', not: false, items: [evCond(XSS)] } });
+      await sleep(50);
+      const inp = b.d.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]');
+      rec('xss', inp && inp.value === XSS && !b.d.querySelector('img') && window.__xss === undefined, 'nazwa wydarzenia z ładunkiem jest wartością pola, nie znacznikiem');
+      // szablony: zły odpada, dobry zostaje
+      const good = templateEntry('Dobry', { op: 'and', not: false, items: [evCond('CPI')] });
+      const bad = templateEntry('Zły ' + XSS, { op: 'and', not: false, items: [{ k: 'gap', min: XSS }] });
+      const c = eh({ templates: [bad, good] });
+      await sleep(50);
+      const opts = [...c.d.querySelectorAll('.bt-ftsel option')].map((o) => o.textContent);
+      rec('xss', opts.length === 2 && opts[1] === 'Dobry', 'lista szablonów bez złego: ' + JSON.stringify(opts));
+      rec('xss', !document.querySelector('img') && window.__xss === undefined, 'cała strona bez wstrzykniętego <img>');
+      for (const x of [a, b, c]) { x.m.destroy(); x.d.remove(); }
+    });
+
+    await section('utworz', async () => {
+      const c = stub();
+      const { k, f, set } = mount(c);
+      set('name', 'Filtr 0 dni'); set('balance', '50000'); set('risk', '100');
+      set('from', DAYS[1].day); set('to', DAYS[10].day);
+      const e = await open(f);
+      const root = e.querySelector('.bt-fgrp');
+      addCond(root, 'event');
+      const nm = root.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'); nm.value = 'CPI'; ev(nm, 'input'); ev(nm, 'change');
+      await until(() => count(e) === 0 && f.querySelector('[data-bt="create"]').disabled);
+      rec('utworz', f.querySelector('[data-bt="create"]').disabled, 'filtr daje 0 dni: Utwórz wyłączone');
+      const d = f.querySelector('details.bt-adv'); d.open = false; ev(d, 'toggle');
+      rec('utworz', f.querySelector('[data-bt="create"]').disabled, 'po zwinięciu z aktywnym filtrem nadal wyłączone (0 dni)');
+      set('to', DAYS[25].day);
+      const ok = await until(() => !f.querySelector('[data-bt="create"]').disabled, 3000);
+      rec('utworz', !!ok, 'zmiana zakresu przy zwiniętej sekcji przelicza filtr i odblokowuje Utwórz');
+    });
+
+    await section('szablony', async () => {
+      const A = templateEntry('A', { op: 'and', not: false, items: [evCond('CPI')] }), B = templateEntry('B', { op: 'and', not: false, items: [evCond('NFP')] });
+      let ext = [A];
+      const x = eh({ templates: ext, getTemplates: () => ext });
+      ext = [A, B]; // zsynchronizowane z innego urządzenia po otwarciu kreatora
+      const nameIn = x.d.querySelector('.bt-ftname');
+      addCond(x.d.querySelector('.bt-fgrp'), 'event');
+      const nm = x.d.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'); nm.value = 'PPI'; ev(nm, 'input'); ev(nm, 'change');
+      nameIn.value = 'C'; ev(nameIn, 'input');
+      x.d.querySelector('[data-act="tsave"]').click();
+      const last = x.calls[x.calls.length - 1] || [];
+      rec('szablony', same(last.map((e) => e.name), ['A', 'B', 'C']), 'zapis dopisuje do świeżej listy, nie nadpisuje zsynchronizowanych: ' + JSON.stringify(last.map((e) => e.name)));
+      // usuwanie też na świeżej liście
+      ext = [A, B, last[2], templateEntry('D', { op: 'and', not: false, items: [evCond('PCE')] })];
+      const sel = x.d.querySelector('.bt-ftsel'); sel.value = '0'; ev(sel, 'change');
+      x.d.querySelector('[data-act="tdel"]').click();
+      const after = x.calls[x.calls.length - 1].map((e) => e.name);
+      rec('szablony', after.includes('D') && !after.includes('A'), 'usunięcie nie gubi świeżych: ' + JSON.stringify(after));
+      x.m.destroy(); x.d.remove();
+      // budżet: sześć dużych szablonów i siódmy ponad limit
+      const big = (i) => templateEntry('Duży ' + i, { op: 'and', not: false, items: Array.from({ length: 60 }, (_, j) => evCond('Wydarzenie ' + i + '-' + j + ' ' + 'x'.repeat(40))) });
+      const bigs = [0, 1, 2, 3, 4, 5].map(big);
+      const y = eh({ templates: bigs, getTemplates: () => bigs });
+      for (let j = 0; j < 60; j++) addCond(y.d.querySelector('.bt-fgrp'), 'event');
+      const names = [...y.d.querySelectorAll('.bt-fcond[data-kind="event"] [data-p="name"]')];
+      names.forEach((n, j) => { n.value = 'Inne wydarzenie ' + j + ' ' + 'z'.repeat(40); ev(n, 'input'); ev(n, 'change'); });
+      const ny = y.d.querySelector('.bt-ftname'); ny.value = 'Piąty'; ev(ny, 'input');
+      y.d.querySelector('[data-act="tsave"]').click();
+      rec('szablony', y.calls.length === 0 && /miejsca|limit/i.test(y.d.querySelector('.bt-fnote').textContent), 'ponad budżet: komunikat zamiast zapisu: ' + y.d.querySelector('.bt-fnote').textContent);
+      y.m.destroy(); y.d.remove();
+    });
+
+    await section('drobne', async () => {
+      const f1 = { day: '2024-11-05', news: [{ name: 'Wybory prezydenckie', imp: 'high', hm: '00:00', when: 'open', allDay: true }, { name: 'CPI', imp: 'high', hm: '08:30', when: 'pre' }] };
+      const flt = { op: 'or', not: false, items: [evCond('Wybory prezydenckie'), evCond('CPI')] };
+      const lab = F.dayTypeLabel(f1, flt, (s) => s);
+      rec('drobne', lab === 'Wybory prezydenckie, CPI 8:30', 'całodniowe bez godziny, CPI z godziną: ' + lab);
+      const x = eh({});
+      addCond(x.d.querySelector('.bt-fgrp'), 'gap');
+      const g = x.d.querySelector('.bt-fcond[data-kind="gap"]');
+      // [U] 30.10.2026 «Gap od ceny startu»: notka opisuje gap od ostatniej ceny przed godziną startu (najpóźniej 9:30)
+      rec('drobne', g && /godziną startu/.test(g.textContent) && /9:30/.test(g.textContent), 'notka przy gap o cenie startu: ' + (g?.textContent || '').slice(0, 160));
+      addCond(x.d.querySelector('.bt-fgrp'), 'atrRatio');
+      rec('drobne', /ATR\(14\) do średniej z 60 sesji/.test(x.d.textContent), 'etykieta ATR');
+      rec('drobne', !/Zakres poprzedniej sesji do ATR/.test(x.d.textContent), 'stara etykieta ATR zniknęła');
+      x.m.destroy(); x.d.remove();
+    });
+  }
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: replay backtestu C1 (strona robocza)</title>
+<!-- Strona robocza testu backtest-C1 (testy/backtest-C1-ekran.mjs, Chrome/Edge headless przez CDP, czas rzeczywisty), podawana tylko przez dashboard testowy
+     (THQ_TEST_PAGES=1) pod /__testy/. Serwer testowy ma w THQ_CONFIG_DIR wyłącznie świece syntetyczne (testy/bt-dane-syntetyczne.mjs), ReplayDay trafia do
+     window.__btDay z prawdziwego /api/backtest/day. Prawdziwe moduły: bt-kreator.js, bt-widok.js, bt-replay.js, bt-wykres.js, prawdziwy styles.css i features.css.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], perf }. ?theme=platinum przełącza motyw (zrzuty). ?shot=1 zostawia otwarty ekran replayu. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<section class="sec" id="k"></section>
+<section class="sec bt-view" id="l"></section>
+<section class="sec bt-view" id="l0"></section>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [], perf = {};
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 8000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(25); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+const p95 = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))]; };
+
+try {
+  localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: true, pdhl: true, news: true })); // nakładki włączone: najcięższy przypadek
+  localStorage.removeItem('thq.bt.open.v1');
+  window.__btStats = { setData: 0, update: 0 };
+  window.__btDay = await getJson('/api/backtest/day?instruments=NQ&day=2024-03-12&ctx=2');
+  const { openKreator } = await import('/js/bt-kreator.js');
+  const { createBacktestView } = await import('/js/bt-widok.js');
+  const { openReplay, OPEN_KEY } = await import('/js/bt-replay.js');
+  const { createSessionClient } = await import('/js/bt-klient.js');
+  const { matchDays, orderDays } = await import('/js/bt-filtr.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const { mergeBase, candlesAt } = await import('/js/bt-swieca.js');
+  const client = createSessionClient();
+  const day1 = window.__btDay;
+  // syntetyczny plan dnia (serwer testowy nie pobiera newsów): przechodzi przez visibleNews i newsPrimitive
+  day1.news = [
+    { t: nyAt('2024-03-12', '08:30'), day: '2024-03-12', name: 'CPI m/m', imp: 'high', kind: 'news', actual: '0.4%', forecast: '0.3%' },
+    { t: nyAt('2024-03-12', '10:00'), day: '2024-03-12', name: 'JOLTS', imp: 'medium', kind: 'news', actual: '8.7M' },
+  ];
+  const q = day1.inst.NQ;
+  const stream = mergeBase(q.m1, q.s1, q.real1s);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const docs = {};
+
+  // ---- formularz klasyczny ----
+  async function create(order, name) {
+    const host = document.getElementById('k');
+    let created = null;
+    const k = openKreator(host, { client, onCreated: (d) => { created = d; }, onCancel: () => {} });
+    const f = k.form;
+    const set = (n, v) => { f.querySelector(`[name="${n}"]`).value = v; };
+    set('name', name); set('from', '2024-03-11'); set('to', '2024-03-15'); set('balance', '50000'); set('risk', '1');
+    f.querySelector('[data-k="riskMode"] [data-v="pct"]').click();
+    f.querySelector(`[data-k="order"] [data-v="${order}"]`).click();
+    f.requestSubmit();
+    await until(() => created || (f.querySelector('.bt-err').textContent.match(/Nie udało|nie ma dni/) && 'err'));
+    return { created, f, host };
+  }
+  await section('formularz', async () => {
+    const host = document.getElementById('k');
+    const k = openKreator(host, { client });
+    const f = k.form;
+    for (const n of ['name', 'from', 'to', 'balance', 'risk', 'startTime', 'account']) rec('formularz', f.querySelector(`[name="${n}"]`), `pole ${n}`);
+    rec('formularz', f.querySelectorAll('[name="inst"]').length === 4, 'instrumenty ES, NQ, MES, MNQ');
+    rec('formularz', f.querySelector('[name="startTime"]').value === '09:00', `godzina startu domyślnie 09:00: ${f.querySelector('[name="startTime"]').value}`);
+    rec('formularz', same([...f.querySelectorAll('[data-k="riskMode"] button')].map((b) => b.dataset.v), ['usd', 'pct']), 'ryzyko USD albo % salda');
+    rec('formularz', same([...f.querySelectorAll('[data-k="order"] button')].map((b) => b.dataset.v), ['chrono', 'newest', 'random']), 'kolejność: chronologicznie, od najnowszych, losowo');
+    const adv = f.querySelector('details.bt-adv');
+    rec('formularz', adv && !adv.open, 'filtr zaawansowany zwinięty');
+    // walidacja: pusta nazwa
+    f.requestSubmit();
+    await sleep(50);
+    rec('formularz', f.querySelector('[name="name"]').getAttribute('aria-invalid') === 'true' && f.querySelector('.bt-err').textContent.length > 0, 'pusta nazwa odrzucona');
+    k.destroy();
+    const a = await create('chrono', 'Sesja C1 chrono');
+    rec('formularz', a.created, `sesja utworzona: ${a.f.querySelector('.bt-err').textContent}`);
+    const idx = await client.days({ instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15' });
+    const def = { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', filter: null, excluded: [] };
+    const want = orderDays(matchDays(def, idx.days).days, 'chrono', 1);
+    rec('formularz', same(a.created.pool, want) && want.length === 2, `pula = matchDays + orderDays: ${JSON.stringify(a.created.pool)} vs ${JSON.stringify(want)}`);
+    const disk = await getJson(`/api/backtest/session/${a.created.id}`);
+    rec('formularz', disk.rev === 1 && disk.def.risk.mode === 'pct' && disk.def.risk.value === 1 && disk.def.startTime === '09:00' && disk.def.balance === 50000, `zapis na dysku: ${JSON.stringify(disk.def)}`);
+    docs.chrono = disk;
+    const b = await create('random', 'Sesja C1 losowa');
+    rec('formularz', b.created && b.created.def.order === 'random' && same([...b.created.pool].sort(), want), 'sesja losowa: ten sam zbiór dni');
+    docs.random = b.created;
+    a.host.innerHTML = '';
+  });
+
+  // ---- lista sesji i widok pusty ----
+  await section('lista', async () => {
+    const v0 = createBacktestView({ client: { list: async () => [] }, storage: null });
+    v0.mount(document.getElementById('l0'));
+    const e = await until(() => document.querySelector('#l0 .empty [data-bt="new"]'));
+    rec('lista', e && /Nowa sesja/.test(e.textContent), 'widok pusty: .empty z przyciskiem „Nowa sesja”');
+    const v = createBacktestView({ client, storage: null, open: () => ({ close() {} }) });
+    v.mount(document.getElementById('l'));
+    const rows = await until(() => (document.querySelectorAll('#l tbody tr').length === 2 ? document.querySelectorAll('#l tbody tr') : null));
+    rec('lista', rows, 'dwie sesje na liście');
+    const txt = rows ? [...rows].map((r) => r.textContent).join('|') : '';
+    rec('lista', /Sesja C1 losowa/.test(txt) && /0 \/ 2/.test(txt) && /NQ/.test(txt), `wiersze: ${txt.replace(/\s+/g, ' ').slice(0, 200)}`);
+    rec('lista', document.querySelector('#l [data-bt="stats"]'), 'miejsce na „Statystyki”');
+    document.getElementById('l0').innerHTML = '';
+  });
+
+  // ---- ekran replayu ----
+  let R = null;
+  const btn = (b) => document.querySelector(`.bt-screen [data-bt="${b}"]`);
+  const loadDay = async ({ day }) => (day === '2024-03-12' ? window.__btDay : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+  const c0 = nyAt('2024-03-12', '09:00');
+  await section('start', async () => {
+    R = openReplay(document.body, { sessionId: docs.chrono.id, client, loadDay });
+    await R.ready;
+    rec('start', R.cursor() === c0, `kursor = 9:00 NY: ${R.cursor()} vs ${c0}`);
+    const bars = R.chart().bars();
+    rec('start', bars.length > 1000, `kontekst 1m: ${bars.length} świec`);
+    rec('start', bars.every((b) => b[0] < R.cursor()), 'żadnej świecy o t ≥ kursor');
+    rec('start', bars[0][0] <= day1.times.ctxFrom + 3600, 'historia od początku kontekstu');
+    rec('start', same(bars, candlesAt(stream, '1m', R.cursor())), 'świece = candlesAt');
+    rec('start', document.querySelector('.bt-screen .bt-name').textContent === 'Sesja C1 chrono', 'pasek: nazwa sesji');
+    rec('start', /1\s*\/\s*2/.test(document.querySelector('.bt-screen .bt-dayn').textContent), 'pasek: dzień 1 / 2');
+    rec('start', /^0([,.]0+)?R · 0 /.test(document.querySelector('.bt-screen .bt-res').textContent), `pasek: wynik w R: ${document.querySelector('.bt-screen .bt-res').textContent}`);
+    rec('start', /: 0/.test(document.querySelector('.bt-screen .bt-notion').textContent), 'pasek: niezapisane w Notion: 0');
+    rec('start', document.querySelector('.bt-screen .bt-date').textContent.length > 0, 'chronologicznie: data widoczna');
+    rec('start', document.querySelectorAll('.bt-screen .bt-cell').length === 1 && document.querySelector('.bt-screen [data-layout="1"]').getAttribute('aria-pressed') === 'true', 'układ: 1 wykres (D1: układy 2h, 2v i 4 włączone, testy w backtest-D1)');
+    rec('start', window.__btStats.setData === 1, `setData przy starcie: ${window.__btStats.setData}`);
+  });
+
+  await section('krok', async () => {
+    btn('step').click();
+    rec('krok', R.cursor() === c0 + 60, `krok 1m: ${R.cursor() - c0}`);
+    rec('krok', same(R.chart().bars(), candlesAt(stream, '1m', R.cursor())), 'po kroku świece = candlesAt');
+    btn('back').click();
+    rec('krok', R.cursor() === c0, 'krok wstecz');
+    btn('back').click();
+    rec('krok', R.cursor() === c0, 'nie przed godzinę startu');
+  });
+
+  await section('setData', async () => {
+    window.__btStats = { setData: 1, update: 0 }; // start już był (1 × setData)
+    const times = [];
+    for (let i = 0; i < 100; i++) { const t0 = performance.now(); btn('step').click(); times.push(performance.now() - t0); }
+    rec('setData', window.__btStats.setData <= 1, `setData przy 100 krokach: ${window.__btStats.setData}`);
+    rec('setData', window.__btStats.update >= 100, `update przy 100 krokach: ${window.__btStats.update}`);
+    rec('setData', R.cursor() === c0 + 6000, `100 kroków 1m: ${R.cursor() - c0}`);
+    rec('setData', same(R.chart().bars(), candlesAt(stream, '1m', R.cursor())), 'po 100 krokach świece = candlesAt');
+    perf.step1m = p95(times);
+  });
+
+  await section('play', async () => {
+    const a = R.cursor();
+    btn('play').click();
+    rec('play', btn('play').getAttribute('aria-pressed') === 'true', 'play wciśnięty');
+    await sleep(500);
+    btn('play').click();
+    const d = R.cursor() - a;
+    rec('play', d >= 40 && d <= 60, `100× przez 500 ms: ${d.toFixed(1)} s`);
+    const b = R.cursor();
+    await sleep(200);
+    rec('play', R.cursor() === b, 'pauza zatrzymuje');
+    rec('play', R.chart().bars().every((x) => x[0] < R.cursor()), 'po odtwarzaniu bez przyszłości');
+  });
+
+  await section('tf15s', async () => {
+    // cofnij do 9:10 i przełącz na 15s
+    const t910 = nyAt('2024-03-12', '09:10');
+    while (R.cursor() > t910) btn('back').click();
+    while (R.cursor() < t910) btn('step').click();
+    rec('tf15s', R.cursor() === t910, `kursor 9:10: ${R.cursor() - t910}`);
+    const sel = document.querySelector('.bt-screen .bt-tf');
+    sel.value = '15s'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const note = document.querySelector('.bt-screen .bt-secnote');
+    rec('tf15s', !note.hidden && /9:30/.test(note.textContent), 'notka „sekundy od 9:30” przy 9:10 na 15s');
+    rec('tf15s', same(R.chart().bars(), candlesAt(stream, '15s', R.cursor())), '15s przed 9:30: świece = candlesAt (minutowe)');
+    let n = 0;
+    while (R.cursor() < nyAt('2024-03-12', '09:30') && n < 100) { btn('step').click(); n++; }
+    rec('tf15s', n === 20, `przed 9:30 krok 15s = minuta: ${n} kroków`);
+    rec('tf15s', note.hidden, 'o 9:30 notka znika');
+    btn('step').click();
+    rec('tf15s', R.cursor() === nyAt('2024-03-12', '09:30') + 15, 'w oknie 1s krok 15 s');
+    rec('tf15s', same(R.chart().bars(), candlesAt(stream, '15s', R.cursor())), 'w oknie 1s: świece = candlesAt');
+  });
+
+  await section('koszt', async () => {
+    // Koszt kroku = część synchroniczna (seek + series.update + pasek) + narysowanie wykresu. LWC rysuje w requestAnimationFrame zgłoszonym przy zmianie danych,
+    // więc nasz rAF zgłoszony po kliknięciu wykonuje się w tej samej klatce zaraz po rysowaniu: performance.now() − początek klatki = koszt rysowania.
+    // Nakładki sesji, PDH/PDL i newsy są włączone (najcięższy przypadek).
+    const measure = (n) => new Promise((done) => {
+      const xs = [];
+      const one = () => requestAnimationFrame(() => {
+        const t0 = performance.now(); btn('step').click(); const t1 = performance.now();
+        requestAnimationFrame((ts) => { xs.push((t1 - t0) + (performance.now() - ts)); if (xs.length < n) one(); else done(p95(xs)); });
+      });
+      one();
+    });
+    perf.step15s = await measure(200);
+    const sel = document.querySelector('.bt-screen .bt-tf');
+    sel.value = '1s'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    perf.step1s = await measure(200);
+    sel.value = '1m'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    perf.step1m = await measure(100);
+    sel.value = '1s'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    rec('koszt', same(R.chart().bars(), candlesAt(stream, '1s', R.cursor())), '1s: świece = candlesAt');
+    for (const k of ['step1m', 'step15s', 'step1s']) rec('koszt', perf[k] <= 8, `p95 kroku ${k}: ${perf[k]?.toFixed(2)} ms (próg 8 ms)`);
+  });
+
+  await section('zapis', async () => {
+    const cur = R.cursor();
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    const saved = await until(async () => { const d = await getJson(`/api/backtest/session/${docs.chrono.id}`); return d.cursor === cur ? d : null; }, 900);
+    rec('zapis', saved, 'pagehide zapisuje kursor przed upływem 1 s');
+    rec('zapis', localStorage.getItem(OPEN_KEY) === docs.chrono.id, 'otwarta sesja zapamiętana');
+    R.close();
+    rec('zapis', !document.querySelector('.bt-screen') && localStorage.getItem(OPEN_KEY) === null, 'zamknięcie usuwa ekran');
+    const d = await until(async () => { const x = await getJson(`/api/backtest/session/${docs.chrono.id}`); return x.cursor === cur ? x : null; });
+    rec('zapis', d && d.dayIdx === 0 && d.days['2024-03-12'].status === 'active' && d.layout.charts[0].tf === '1s', `stan na dysku: ${JSON.stringify(d && { c: d.cursor - c0, i: d.dayIdx, days: d.days, tf: d.layout?.charts?.[0]?.tf })}`);
+    R = openReplay(document.body, { sessionId: docs.chrono.id, client: createSessionClient(), loadDay });
+    await R.ready;
+    rec('zapis', R.cursor() === cur, `po ponownym otwarciu ten sam kursor: ${R.cursor() - cur}`);
+    rec('zapis', document.querySelector('.bt-screen .bt-tf').value === '1s', 'ten sam TF');
+    R.close();
+  });
+
+  await section('ukryta', async () => {
+    R = openReplay(document.body, { sessionId: docs.random.id, client, loadDay });
+    await R.ready;
+    const top = () => document.querySelector('.bt-screen .bt-top').textContent;
+    const day = R.doc().pool[0];
+    rec('ukryta', document.querySelector('.bt-screen .bt-date').hidden && !/2024/.test(top()), `pasek bez daty: ${top().replace(/\s+/g, ' ')}`);
+    const o = R.chart().chart.options();
+    const t = R.cursor() - 3600;
+    const tick = o.timeScale.tickMarkFormatter(t, 2), lab = o.localization.timeFormatter(t);
+    rec('ukryta', /^\d{1,2}[:.]\d{2}/.test(tick) && !/[a-zA-Z]/.test(tick), `oś czasu tylko godziny: ${tick}`);
+    rec('ukryta', /^\d{1,2}[:.]\d{2}/.test(lab) && !/2024|[a-zA-Z]/.test(lab), `krzyżyk tylko godziny: ${lab}`);
+    btn('end-day').click();
+    await sleep(50);
+    rec('ukryta', !document.querySelector('.bt-screen .bt-date').hidden && /2024/.test(top()), `po „Zakończ dzień” data widoczna: ${top().replace(/\s+/g, ' ')}`);
+    const tick2 = R.chart().chart.options().timeScale.tickMarkFormatter(t, 2);
+    rec('ukryta', /[a-zA-Z]|\d{1,2}\s/.test(tick2) && tick2 !== tick, `oś po zakończeniu z datą: ${tick2}`);
+    const d = await until(async () => { const x = await getJson(`/api/backtest/session/${docs.random.id}`); return x.days?.[day]?.status === 'done' ? x : null; });
+    rec('ukryta', d, 'dzień zrobiony zapisany');
+    rec('ukryta', /Następny dzień/.test(btn('end-day').textContent), 'przycisk: następny dzień');
+    btn('end-day').click();
+    await until(() => R.doc().dayIdx === 1 && R.chart());
+    rec('ukryta', R.doc().dayIdx === 1 && R.cursor() === nyAt(R.doc().pool[1], '09:00'), 'następny dzień od godziny startu');
+    rec('ukryta', document.querySelector('.bt-screen .bt-date').hidden, 'następny dzień losowy: data znów ukryta');
+    if (qs.get('shot') !== '1') R.close();
+  });
+  out.textContent = JSON.stringify({ checks, perf });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks, perf });
+}
+</script>
+</body>
+</html>

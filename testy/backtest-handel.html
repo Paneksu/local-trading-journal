@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: handel w replayu backtestu C2 (strona robocza)</title>
+<!-- Strona robocza testów backtest-C2 (testy/backtest-C2-handel.mjs: ?part=handel, testy/backtest-C2-skroty.mjs: ?part=skroty), Chrome/Edge headless przez CDP,
+     podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/. Serwer testowy ma w THQ_CONFIG_DIR wyłącznie świece syntetyczne
+     (testy/bt-dane-syntetyczne.mjs). Prawdziwe moduły: bt-replay.js, bt-zlecenia.js, bt-wykres.js (z paczką rysowania), bt-wypelnienia.js, ustawienia.js,
+     prawdziwy styles.css i features.css. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. ?shot=1 zostawia otwarty ekran (zrzuty). -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<button id="gear" type="button" aria-expanded="false">gear</button>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'handel';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+
+try {
+  localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.jump.v1');
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, btDefaults, DEFAULT_JUMPS, sanitizeBt, collisions } = await import('/js/bt-czas.js');
+  const { mergeBase, visibleCount } = await import('/js/bt-swieca.js');
+  const { sizeFromRisk } = await import('/js/bt-wypelnienia.js');
+  const { positionPrices, roundTick } = await import('/js/rysunki.js');
+  const client = createSessionClient();
+  const day0 = await getJson('/api/backtest/day?instruments=NQ&day=2024-03-12&ctx=2');
+  const loadDay = async ({ day }) => (day === '2024-03-12' ? day0 : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+  const st = mergeBase(day0.inst.NQ.m1, day0.inst.NQ.s1, day0.inst.NQ.real1s);
+  const c0 = nyAt('2024-03-12', '09:00');
+  const mk = async (name, cl = client) => {
+    const doc = newSessionDoc({
+      id: newSessionId(), name,
+      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
+      pool: ['2024-03-12', '2024-03-13'], now: Date.now(),
+    });
+    await cl.create(doc);
+    return doc;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const btn = (b) => scr().querySelector(`[data-bt="${b}"]`);
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P(`[name="${name}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  const clickO = (o) => P(`[data-o="${o}"]`).click();
+  const lastClose = (c) => { const n = visibleCount(st, c); return st.bars[n - 1][4]; };
+  const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+  const closedLog = [];
+  const sessionOnDisk = (id) => getJson(`/api/backtest/session/${id}`);
+
+  if (part === 'handel') {
+    const doc = await mk('Sesja C2 handel');
+    const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, onClosed: (p) => closedLog.push(p) });
+    await R.ready;
+    const book = () => R.book();
+    const pos = () => book().positions.NQ;
+    const orderDraw = () => R.chart().tradingState();
+
+    await section('market', async () => {
+      rec('market', R.cursor() === c0, 'start 9:00');
+      setF('sl', '10'); setF('tp', '20');
+      const want = sizeFromRisk({ riskUsd: 500, entry: 10, sl: 0, instrument: 'NQ' });
+      rec('market', want === 2 && P('[name="qty"]').value === '2', `wielkość z ryzyka sesji w polu: ${P('[name="qty"]').value} (oczekiwane ${want})`);
+      const px = roundTick(lastClose(R.cursor()), 0.25);
+      const t0 = performance.now();
+      clickO('buy');
+      const p = pos();
+      rec('market', p && p.dir === 'Long' && p.qty === 2 && p.entryPrice === px, `pozycja Long po cenie ostatniej świecy: ${JSON.stringify(p && { d: p.dir, q: p.qty, e: p.entryPrice })} vs ${px}`);
+      rec('market', p && p.sl === px - 10 && p.tp === px + 20 && p.sl0 === p.sl, `SL ${p?.sl}, TP ${p?.tp}, sl0 ${p?.sl0}`);
+      const d = orderDraw().position;
+      const pr = d && positionPrices(d, 0.25);
+      rec('market', d && d.kind === 'long-position' && pr.entryPrice === px && pr.sl === px - 10 && pr.tp === px + 20, `rysunek long-position z cenami: ${JSON.stringify(pr)}`);
+      rec('market', d && d.locked === false, 'rysunek odblokowany (SL/TP przeciągane)');
+      rec('market', P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled && !P('.bt-ord-pos').hidden, 'Buy/Sell wyłączone, panel pozycji widoczny');
+      // stan w pliku sesji: natychmiast (bez opóźnienia kursora 1 s)
+      const disk = await until(async () => { const x = await sessionOnDisk(doc.id); return x.book?.positions?.NQ ? x : null; }, 700);
+      rec('zapis', disk && disk.book.positions.NQ.qty === 2 && performance.now() - t0 < 900, `book zapisany od razu: ${disk ? Math.round(performance.now() - t0) : 'brak'} ms`);
+      rec('zapis', disk && disk.hw === disk.book.hw && disk.book.hw >= c0, 'hw zapisany razem z book');
+    });
+
+    await section('sl', async () => {
+      const p0 = pos();
+      const mgr = R.chart().manager();
+      const d = orderDraw().position;
+      mgr.update({ ...d, style: { ...d.style, stopLevel: 7.1 } }); // przeciągnięcie SL w rysunku: 7,1 pkt od wejścia → 7,0 (tick 0,25)
+      await sleep(400);
+      const p = pos();
+      rec('sl', p && p.sl === p0.entryPrice - 7, `SL po przeciągnięciu zaokrąglony do ticka: ${p?.sl} (oczekiwane ${p0.entryPrice - 7})`);
+      rec('sl', p && p.sl0 === p0.sl0, `pierwotny SL bez zmian: ${p?.sl0}`);
+      const pr = positionPrices(orderDraw().position, 0.25);
+      rec('sl', pr.sl === p0.entryPrice - 7 && pr.tp === p0.tp, `rysunek zgodny z book: ${JSON.stringify(pr)}`);
+      const disk = await until(async () => { const x = await sessionOnDisk(doc.id); return x.book?.positions?.NQ?.sl === p0.entryPrice - 7 ? x : null; }, 700);
+      rec('sl', disk, 'zmiana SL zapisana od razu');
+      // przesunięcie wejścia w rysunku wraca na miejsce (wejście jest faktem)
+      const d2 = orderDraw().position;
+      mgr.update({ ...d2, points: d2.points.map((q) => ({ ...q, price: q.price + 5 })) });
+      await sleep(400);
+      const pr2 = positionPrices(orderDraw().position, 0.25);
+      rec('sl', pos().entryPrice === p0.entryPrice && pr2.entryPrice === p0.entryPrice, `wejście nie przesuwa się: ${pr2.entryPrice} vs ${p0.entryPrice}`);
+      // TP usunięty przez rysunek (profitLevel 0) → modifyPosition tp: null
+      const d3 = orderDraw().position;
+      mgr.update({ ...d3, style: { ...d3.style, profitLevel: 0 } });
+      await sleep(400);
+      rec('sl', pos().tp === null, `TP usunięty: ${pos().tp}`);
+      clickO('close');
+      rec('sl', !pos() && closedLog.length === 1, 'pozycja zamknięta ręcznie');
+    });
+
+    await section('market', async () => {
+      // ręczna wielkość nadpisuje wielkość z ryzyka
+      setF('qty', '3');
+      rec('market', P('[name="qty"]').value === '3', 'pole ręczne');
+      clickO('buy');
+      rec('market', pos() && pos().qty === 3, `ręczna wielkość nadpisuje: ${pos()?.qty}`);
+      clickO('close');
+      const tr = R.doc().trades;
+      rec('market', tr.length === 2 && tr[1].qty === 3 && tr[1].id === 't2' && tr[1].journal === 'todo', `trade'y w sesji: ${tr.map((x) => x.id + ':' + x.qty).join(',')}`);
+      setF('qty', ''); // puste pole = znów wielkość z ryzyka
+      rec('market', P('[name="qty"]').value === '2', `puste pole wraca do wielkości z ryzyka: ${P('[name="qty"]').value}`);
+    });
+
+    await section('ryzyko', async () => {
+      setF('sl', '100'); // 500 / (100 · 20) < 1
+      rec('ryzyko', P('[name="qty"]').value === '', `wielkość 0 → pole puste: «${P('[name="qty"]').value}»`);
+      rec('ryzyko', /Ryzyko za małe/.test(P('.bt-ord-note').textContent), `komunikat: ${P('.bt-ord-note').textContent}`);
+      rec('ryzyko', P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled, 'Buy/Sell zablokowane do wpisania liczby');
+      setF('qty', '1');
+      rec('ryzyko', !P('[data-o="buy"]').disabled && !P('[data-o="sell"]').disabled, 'po wpisaniu liczby ręcznie odblokowane');
+      setF('qty', ''); setF('sl', '10');
+    });
+
+    await section('limit', async () => {
+      const n = visibleCount(st, R.cursor()) - 1, p0 = st.bars[n][4];
+      // limit: kupno poniżej ceny; szukamy takiej odległości, żeby świeca z dotknięciem leżała w najbliższych 25 świecach
+      let P_ = null, jj = -1;
+      for (const dlt of [8, 6, 4, 3, 2, 1, 0.5]) {
+        const lim = roundTick(p0 - dlt, 0.25);
+        const j = st.bars.findIndex((b, i) => i > n && b[3] <= lim);
+        if (j > 0 && st.bars[j][0] - R.cursor() <= 1500) { P_ = lim; jj = j; break; }
+      }
+      rec('limit', P_ !== null, `scenariusz limitu znaleziony: P=${P_}, dotknięcie ${jj >= 0 ? st.bars[jj][0] - R.cursor() : '?'} s do przodu`);
+      setF('sl', ''); setF('tp', ''); setF('qty', '1');
+      P('[data-ot="limit"]').click();
+      rec('limit', !P('.bt-ord-price').hidden, 'pole ceny widoczne dla limit');
+      setF('price', String(P_));
+      clickO('buy');
+      rec('limit', book().orders.length === 1 && book().orders[0].type === 'limit' && book().orders[0].price === P_ && !pos(), `zlecenie oczekujące: ${JSON.stringify(book().orders.map((o) => [o.type, o.price]))}`);
+      rec('limit', orderDraw().orders.length === 1 && orderDraw().orders[0].price === P_, `linia zlecenia na wykresie: ${JSON.stringify(orderDraw().orders)}`);
+      rec('limit', P('.bt-ord-pend [data-cancel]') !== null, 'chip zlecenia z przyciskiem anulowania');
+      P('.bt-ord-pend [data-cancel]').click();
+      rec('limit', book().orders.length === 0 && orderDraw().orders.length === 0, 'anulowanie usuwa zlecenie i linię');
+      clickO('buy');
+      let guard = 0;
+      while (!pos() && guard++ < 80) btn('step').click();
+      const p = pos();
+      rec('limit', p && p.entryPrice === P_ && p.entryT === st.bars[jj][0], `wypełnienie po cenie limitu w świecy dotknięcia: ${p?.entryPrice} @ ${p ? p.entryT - st.bars[jj][0] : '?'} s od oczekiwanej świecy`);
+      rec('limit', book().orders.length === 0 && orderDraw().orders.length === 0, 'po wypełnieniu brak oczekujących');
+      clickO('close');
+      // stop: kupno powyżej ceny
+      const n2 = visibleCount(st, R.cursor()) - 1, q0 = st.bars[n2][4];
+      let S_ = null, js = -1;
+      for (const dlt of [8, 6, 4, 3, 2, 1, 0.5]) {
+        const stp = roundTick(q0 + dlt, 0.25);
+        const j = st.bars.findIndex((b, i) => i > n2 && b[2] >= stp);
+        if (j > 0 && st.bars[j][0] - R.cursor() <= 1500) { S_ = stp; js = j; break; }
+      }
+      rec('limit', S_ !== null, `scenariusz stopu znaleziony: S=${S_}`);
+      P('[data-ot="stop"]').click();
+      setF('price', String(S_));
+      clickO('buy');
+      rec('limit', book().orders.length === 1 && book().orders[0].type === 'stop', 'stop oczekujący');
+      guard = 0;
+      while (!pos() && guard++ < 80) btn('step').click();
+      const ps = pos(), bar = st.bars[js], want = bar[1] > S_ ? bar[1] : S_;
+      rec('limit', ps && ps.entryPrice === want && ps.entryT === bar[0], `stop wypełniony w świecy ${ps ? ps.entryT - bar[0] : '?'} s od oczekiwanej, po ${ps?.entryPrice} (oczekiwane ${want})`);
+      clickO('close');
+      P('[data-ot="market"]').click();
+    });
+
+    await section('be', async () => {
+      // scenariusz (czasowy, bo po 9:30 baza to sekundy): wejście po k krokach, po 5 kolejnych krokach cena po stronie zysku (BE da się ustawić), SL 10 nie dotknięty
+      const between = (x, y) => st.bars.filter((bar, i) => { const e = bar[0] + st.len[i]; return e > x && e <= y; });
+      let pick = null;
+      for (let k = 0; k < 60 && !pick; k++) {
+        const ce = R.cursor() + 60 * k, e = lastClose(ce), bs = between(ce, ce + 300);
+        for (const side of ['buy', 'sell']) {
+          const s_ = side === 'buy' ? 1 : -1;
+          const fav = (lastClose(ce + 300) - e) * s_;
+          const adv = Math.max(0, ...bs.map((bar) => (e - (s_ > 0 ? bar[3] : bar[2])) * s_));
+          if (fav >= 0.5 && adv < 8) { pick = { k, side, s: s_ }; break; }
+        }
+      }
+      rec('be', !!pick, `scenariusz BE znaleziony: ${JSON.stringify(pick)}`);
+      for (let k = 0; k < pick.k; k++) btn('step').click();
+      setF('sl', '10'); setF('qty', '4');
+      clickO(pick.side);
+      const e0 = pos().entryPrice;
+      for (let k = 0; k < 5; k++) btn('step').click();
+      rec('be', pos() && pos().openQty === 4, `po 5 krokach pozycja nadal otwarta: ${pos()?.openQty}`);
+      clickO('be');
+      rec('be', pos() && pos().sl === e0 && pos().be === true && pos().sl0 === (pick.s > 0 ? e0 - 10 : e0 + 10), `BE: SL = wejście (${pos()?.sl} vs ${e0}), sl0 bez zmian`);
+      rec('be', orderDraw().position && orderDraw().position.style.beLevel === 0, `rysunek niesie punkt BE: beLevel ${orderDraw().position?.style?.beLevel}`);
+      rec('be', P('[name="part"]').value === '2', `domyślna część = połowa: ${P('[name="part"]').value}`);
+      clickO('partial');
+      rec('be', pos() && pos().openQty === 2 && pos().exits.length === 1 && pos().exits[0].reason === 'partial', `zamknięcie części: ${JSON.stringify(pos()?.exits)}`);
+      const before = closedLog.length;
+      clickO('close');
+      rec('be', !pos() && closedLog.length === before + 1, 'zamknięcie reszty');
+      const ev = closedLog[closedLog.length - 1];
+      rec('be', ev && [ev.r, ev.pnl, ev.maeR, ev.mfeR].every((x) => typeof x === 'number' && Number.isFinite(x)), `onClosed z r, pnl, maeR, mfeR: ${JSON.stringify(ev && { r: ev.r, pnl: ev.pnl, mae: ev.maeR, mfe: ev.mfeR })}`);
+      const tr = R.doc().trades[R.doc().trades.length - 1];
+      rec('be', tr && tr.exits.length === 2 && tr.maeR === ev.maeR && tr.mfeR === ev.mfeR && tr.sl0 !== tr.sl, `trade w sesji: ${tr && JSON.stringify({ id: tr.id, r: tr.r, exits: tr.exits.map((x) => x.reason) })}`);
+      setF('qty', ''); setF('sl', '10'); setF('tp', '20');
+    });
+
+    await section('wstecz', async () => {
+      setF('sl', '200'); setF('tp', ''); setF('qty', '1');
+      clickO('buy');
+      rec('wstecz', !!pos(), 'pozycja otwarta przed cofnięciem');
+      btn('step').click(); btn('step').click();
+      const hw = book().hw;
+      btn('back').click();
+      rec('wstecz', R.cursor() < hw && book().hw === hw, 'kursor przed znakiem wodnym, hw bez zmian');
+      rec('wstecz', P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled, 'Buy/Sell wyłączone');
+      rec('wstecz', ['be', 'partial', 'close'].every((o) => P(`[data-o="${o}"]`).disabled), 'BE/część/zamknij wyłączone');
+      rec('wstecz', /Przeglądasz wstecz/.test(P('.bt-ord-note').textContent), `notka: ${P('.bt-ord-note').textContent}`);
+      const back = P('[data-o="back"]');
+      rec('wstecz', back && !back.hidden && /Wróć do bieżącej chwili/.test(back.textContent), 'przycisk „Wróć do bieżącej chwili”');
+      rec('wstecz', !!pos() && !!orderDraw().position, 'pozycja nadal widoczna (book i rysunek)');
+      const snap = JSON.stringify(pos());
+      btn('step').click();
+      rec('wstecz', JSON.stringify(pos()) === snap && R.cursor() <= hw, 'krok w przód do znaku wodnego niczego nie wypełnia drugi raz');
+      btn('back').click();
+      back.click();
+      rec('wstecz', R.cursor() === hw, `powrót ustawia kursor = hw: ${R.cursor() - hw}`);
+      rec('wstecz', !P('[data-o="back"]') || P('[data-o="back"]').hidden, 'po powrocie notka znika');
+      rec('wstecz', !P('[data-o="close"]').disabled, 'handel znów aktywny');
+      clickO('close');
+      // zlecenie oczekujące przy cofnięciu
+      setF('sl', ''); setF('tp', ''); setF('qty', '1');
+      P('[data-ot="limit"]').click();
+      setF('price', String(roundTick(lastClose(R.cursor()) - 400, 0.25)));
+      clickO('buy');
+      rec('wstecz', book().orders.length === 1, 'zlecenie limit złożone');
+      btn('step').click();
+      const hw2 = book().hw;
+      btn('back').click();
+      rec('wstecz', book().orders.length === 1 && orderDraw().orders.length === 1 && P('.bt-ord-pend [data-cancel]').disabled, 'oczekujące widoczne, anulowanie wyłączone podczas przeglądania wstecz');
+      P('[data-o="back"]').click();
+      rec('wstecz', R.cursor() === hw2, 'powrót');
+      P('.bt-ord-pend [data-cancel]').click();
+      rec('wstecz', book().orders.length === 0, 'anulowane po powrocie');
+      P('[data-ot="market"]').click();
+    });
+
+    out.textContent = JSON.stringify({ checks });
+    if (qs.get('shot') !== '1') R.close();
+  } else if (part === 'poprawki') {
+    // ---------------- poprawki po review C2 (kursor w środku świecy, pozycja między dniami, jeden zapis zamknięcia, pagehide, powtórzenie klawisza, 409) ----------------
+    const { placeOrder } = await import('/js/bt-wypelnienia.js');
+    const saves = []; let hold = 0;
+    const fetchImpl = async (u, o) => {
+      const isSave = String(u).includes('/session/save');
+      if (isSave) { const b = JSON.parse(o.body); saves.push({ keepalive: !!o.keepalive, rev: b.rev, cursor: b.doc.cursor, pos: !!b.doc.book?.positions?.NQ, trades: b.doc.trades.length }); }
+      const r = await fetch(u, o);
+      if (isSave && hold) await sleep(hold);
+      return r;
+    };
+    const cl = createSessionClient({ fetchImpl });
+    let rafCb = null;
+    const rafStub = (f) => { rafCb = f; return 1; }, cafStub = () => { rafCb = null; };
+
+    await section('wyrownanie', async () => {
+      const doc = await mk('Sesja C2 poprawki 1', cl);
+      const R = openReplay(document.body, { sessionId: doc.id, client: cl, loadDay, raf: rafStub, caf: cafStub });
+      await R.ready;
+      btn('play').click();
+      rafCb(1000); rafCb(1237); // dt = 0,237 s × 100 = 23,7 s: kursor w środku świecy 1m (ułamkowy)
+      btn('play').click();
+      rec('wyrownanie', R.cursor() > c0 + 20 && R.cursor() < c0 + 30 && !Number.isInteger(R.cursor()), 'kursor w środku świecy: +' + (R.cursor() - c0) + ' s');
+      setF('sl', '10'); setF('tp', '20');
+      clickO('buy');
+      const p = R.book().positions.NQ;
+      rec('wyrownanie', p && p.entryT === c0 && R.book().hw === c0, 'wejście i znak wodny na końcu ostatniej widocznej świecy: entryT +' + (p && p.entryT - c0) + ', hw +' + (R.book().hw - c0));
+      clickO('close');
+      const tr = R.doc().trades[0];
+      rec('wyrownanie', tr && tr.exitT >= tr.entryT && tr.maeR === 0 && tr.mfeR === 0, 'MAE/MFE bez świecy w budowie: ' + (tr && JSON.stringify({ e: tr.entryT - c0, x: tr.exitT - c0, mae: tr.maeR, mfe: tr.mfeR })));
+      R.close();
+    });
+
+    await section('dzien', async () => {
+      const doc = await mk('Sesja C2 poprawki 2', cl);
+      const R = openReplay(document.body, { sessionId: doc.id, client: cl, loadDay });
+      await R.ready;
+      btn('end-day').click();
+      await sleep(60);
+      rec('dzien', R.doc().days['2024-03-12'].status === 'done' && P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled, 'w dniu zrobionym nie składa się zleceń (Buy/Sell wyłączone)');
+      const lp = lastClose(R.cursor());
+      R.doc().book = placeOrder(R.book(), { instrument: 'NQ', side: 'buy', type: 'market', qty: 1, sl: lp - 10, tp: null }, { t: R.cursor(), price: lp }).book;
+      btn('end-day').click();
+      await sleep(120);
+      rec('dzien', !!R.book().positions.NQ && R.doc().dayIdx === 0 && /Zamknij pozycję/.test(scr().querySelector('.bt-msg').textContent), 'pozycja nie przechodzi na następny dzień (przycisk): idx ' + R.doc().dayIdx + ', «' + scr().querySelector('.bt-msg').textContent + '»');
+      await R.runJump('nySession');
+      rec('dzien', R.doc().dayIdx === 0 && !!R.book().positions.NQ, 'ani skokiem „następny dzień”');
+      R.doc().book = { ...R.book(), positions: { ...R.book().positions, NQ: null } };
+      btn('end-day').click();
+      await until(() => R.doc().dayIdx === 1 && R.chart());
+      rec('dzien', R.doc().dayIdx === 1, 'bez pozycji przejście działa');
+      R.close();
+    });
+
+    await section('zapis', async () => {
+      const doc = await mk('Sesja C2 poprawki 3', cl);
+      const R = openReplay(document.body, { sessionId: doc.id, client: cl, loadDay });
+      await R.ready;
+      // H1 (30.10.2026): bez stałych odczekań. Pod obciążeniem pełnego przebiegu zapis Buy bywał jeszcze w toku po 250 ms, więc zapis zamknięcia czekał w kolejce
+      // klienta i nie mieścił się w oknie 400 ms (✗ «zamknięcie = jeden zapis…: []»). Czekamy na brak zapisów w toku i w kolejce (cl.pending() = 0), asercja bez zmian.
+      await until(() => cl.pending() === 0, 8000); // zapis startowy i debounce kursora się kończą
+      setF('sl', '10'); setF('tp', '20');
+      clickO('buy');
+      await until(() => saves.some((x) => x.pos) && cl.pending() === 0, 8000);
+      const n0 = saves.length;
+      clickO('close');
+      await until(() => saves.length > n0 && cl.pending() === 0, 8000);
+      await sleep(400); // po zapisie zamknięcia nie przychodzi już żaden inny
+      const mine = saves.slice(n0);
+      rec('zapis', mine.length === 1 && mine[0].trades === 1 && !mine[0].pos, 'zamknięcie = jeden zapis z book i trade\'em: ' + JSON.stringify(mine));
+      // pagehide przy zapisie w toku: kolejny zapis idzie od razu, bez czekania na poprzedni
+      hold = 500;
+      clickO('buy');
+      btn('step').click();
+      const n1 = saves.length;
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      await sleep(150);
+      const kk = saves.slice(n1).find((x) => x.keepalive);
+      rec('zapis', kk && kk.cursor === R.cursor(), 'pagehide przy zapisie w toku wysyła od razu z keepalive: ' + JSON.stringify(kk));
+      await sleep(900); hold = 0;
+      const d = await sessionOnDisk(doc.id);
+      rec('zapis', d.cursor === R.cursor() && d.book.positions.NQ, 'stan na dysku = ostatni kursor i pozycja');
+      clickO('close');
+      await sleep(300);
+      const dd = await sessionOnDisk(doc.id);
+      rec('zapis', !scr().querySelector('.bt-stale:not([hidden])') && dd.trades.length === 2, 'kolejne zapisy po wyścigu nie kończą się 409: ' + JSON.stringify({ stale: !!scr().querySelector('.bt-stale:not([hidden])'), trades: dd.trades.length, rev: dd.rev }));
+
+      // powtórzenie klawisza
+      key('b');
+      rec('powtorzenie', !!R.book().positions.NQ, 'B otwiera pozycję');
+      clickO('close');
+      key('b', { repeat: true });
+      rec('powtorzenie', !R.book().positions.NQ, 'przytrzymany klawisz (repeat) nie mnoży zleceń');
+      const c1 = R.cursor();
+      key('ArrowRight', { shiftKey: true, repeat: true });
+      rec('powtorzenie', R.cursor() === c1 + 60, 'krok z przytrzymanym klawiszem działa (autopowtarzanie kroków)');
+
+      // 409: sesja zmieniona w innej karcie
+      await sleep(1300); // zapisy kursora się kończą
+      const other = createSessionClient();
+      const od = await other.load(doc.id); od.name = 'zmieniona gdzie indziej';
+      await other.save(od, { now: true });
+      setF('sl', '10'); setF('tp', '20');
+      clickO('buy');
+      await sleep(300);
+      const st = scr().querySelector('.bt-stale');
+      rec('stale', st && !st.hidden && /Sesja zmieniła się w innej karcie/.test(st.textContent) && st.querySelector('[data-bt="reopen"]'), 'komunikat 409: ' + (st && st.textContent));
+      rec('stale', P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled, 'handel zatrzymany po 409');
+      R.close();
+    });
+    out.textContent = JSON.stringify({ checks });
+  } else {
+    // ---------------- skróty, skoki, Ustawienia ----------------
+    const custom = { id: 'j9', name: '+5 min własny', cel: { kind: 'offset', sec: 300 }, skrot: '6' };
+    let settings = { ...btDefaults(), jumps: [...DEFAULT_JUMPS, custom] };
+    const doc = await mk('Sesja C2 skroty');
+    const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, getSettings: () => settings, onClosed: (p) => closedLog.push(p) });
+    await R.ready;
+    const sel = () => scr().querySelector('.bt-jump');
+
+    await section('lista', async () => {
+      const opts = [...sel().options];
+      rec('lista', opts.length === 6, `lista skoków: ${opts.map((o) => o.textContent).join(' | ')}`);
+      rec('lista', /Do 9:30 NY/.test(opts[0].textContent) && /\+5 min własny/.test(opts[5].textContent), 'domyślne skoki i skok z ustawień');
+      sel().value = 'plus15'; sel().dispatchEvent(new Event('change', { bubbles: true }));
+      rec('lista', localStorage.getItem('thq.bt.jump.v1') === 'plus15', 'wybór skoku zapamiętany');
+      btn('jump').click();
+      rec('lista', R.cursor() === c0 + 900, `przycisk „Skocz” (+15 min): ${R.cursor() - c0}`);
+      const ev = key('j');
+      rec('lista', ev.defaultPrevented && R.cursor() === c0 + 1800, `skrót J wykonuje wybrany skok: ${R.cursor() - c0}`);
+      key('6');
+      rec('lista', R.cursor() === c0 + 2100, `własny skok pod własnym skrótem (6): ${R.cursor() - c0}`);
+      btn('jump').click(); // +15 min z 9:35 → 9:50
+      sel().value = 'open'; sel().dispatchEvent(new Event('change', { bubbles: true }));
+      btn('jump').click();
+      rec('lista', /Nie ma dokąd/.test(scr().querySelector('.bt-msg').textContent) && R.cursor() === c0 + 3000, `skok do 9:30, który już minął: komunikat, kursor stoi (${scr().querySelector('.bt-msg').textContent})`);
+      setF('sl', '10'); setF('tp', '20'); clickO('buy');
+      sel().value = 'nySession'; sel().dispatchEvent(new Event('change', { bubbles: true }));
+      btn('jump').click();
+      await sleep(80);
+      // E1 (30.10.2026): skok „następny dzień” przechodzi przez endDay, więc z otwartą pozycją pyta o jej zamknięcie (dawniej: komunikat); „nie” zostawia dzień jak był
+      const dlg = document.querySelector('.scrim [data-cd="no"]');
+      if (dlg) dlg.click();
+      await sleep(80);
+      rec('lista', !!dlg && !!R.book().positions.NQ && R.doc().dayIdx === 0 && R.doc().days['2024-03-12'].status !== 'done', `otwarta pozycja: skok pyta o zamknięcie, po „nie” dzień nie kończy się (okno: ${!!dlg})`);
+      clickO('close');
+      btn('jump').click();
+      await until(() => R.doc().dayIdx === 1 && R.chart());
+      rec('lista', R.doc().dayIdx === 1 && R.doc().days['2024-03-12'].status === 'done', `następny dzień z puli, poprzedni done: idx ${R.doc().dayIdx}, ${JSON.stringify(R.doc().days)}`);
+      rec('lista', R.cursor() === nyAt('2024-03-13', '09:00'), 'nowy dzień od godziny startu');
+      rec('lista', R.book().hw === R.cursor() && Object.keys(R.book().hwi).length > 0, 'znak wodny silnika zaczyna od zera w nowym dniu');
+      key('2'); // skrót skoku nextDay (ostatni dzień puli)
+      await sleep(80);
+      rec('lista', /ostatni dzień/.test(scr().querySelector('.bt-msg').textContent) && R.doc().dayIdx === 1, `ostatni dzień puli: ${scr().querySelector('.bt-msg').textContent}`);
+      // prędkość i grafik klawiszy
+      const sp0 = R.speed();
+      key(']');
+      rec('lista', R.speed() > sp0, `] przyspiesza: ${sp0} → ${R.speed()}`);
+      key('[');
+      rec('lista', R.speed() === sp0, '[ zwalnia');
+      const c = R.cursor();
+      key('ArrowRight', { shiftKey: true });
+      rec('lista', R.cursor() === c + 60, 'Shift+→ krok');
+      key('ArrowLeft', { shiftKey: true });
+      rec('lista', R.cursor() === c, 'Shift+← krok wstecz');
+      key(' ');
+      rec('lista', scr().querySelector('[data-bt="play"]').getAttribute('aria-pressed') === 'true', 'Spacja: odtwarzanie');
+      key(' ');
+      rec('lista', scr().querySelector('[data-bt="play"]').getAttribute('aria-pressed') === 'false', 'Spacja: pauza');
+      // klawisze handlu (po kroku wstecz handel jest zablokowany, więc najpierw powrót do znaku wodnego)
+      key('ArrowRight', { shiftKey: true });
+      setF('sl', '10'); setF('tp', '20');
+      key('b');
+      rec('lista', !!R.book().positions.NQ && R.book().positions.NQ.dir === 'Long', 'B: kupno rynkowe z panelu');
+      key('C', { shiftKey: true });
+      rec('lista', !R.book().positions.NQ, 'Shift+C: zamknij pozycję');
+      key('s');
+      rec('lista', R.book().positions.NQ?.dir === 'Short', 'S: sprzedaż rynkowa');
+      key('C', { shiftKey: true });
+    });
+
+    await section('pole', async () => {
+      const c = R.cursor(), n = R.doc().trades.length;
+      for (const tag of ['textarea', 'input']) {
+        const f = document.createElement(tag);
+        document.body.appendChild(f); f.focus();
+        const evs = [key(' ', {}, f), key('b', {}, f), key('j', {}, f), key('ArrowRight', { shiftKey: true }, f)];
+        rec('pole', evs.every((e) => !e.defaultPrevented) && R.cursor() === c && !R.book().positions.NQ, `${tag}: Spacja, B, J, Shift+→ nie sterują replayem`);
+        f.remove();
+      }
+      rec('pole', R.doc().trades.length === n, 'brak nowych trade\'ów');
+      const e = key('j');
+      rec('pole', e.defaultPrevented, 'ten sam klawisz poza polem sterowanie przejmuje');
+    });
+
+    await section('rysunki', async () => {
+      // rysunki.js rejestruje window keydown w fazie capture PÓŹNIEJ niż ekran replayu; tu odtworzona jej obsługa (Escape zdejmuje narzędzie, strzałki stopPropagation)
+      const seen = { esc: 0, arrow: 0, ctrlz: 0 };
+      const onKey = (ev) => {
+        if (ev.key === 'Escape') { seen.esc++; ev.stopPropagation(); ev.preventDefault(); }
+        else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { seen.ctrlz++; ev.stopPropagation(); ev.preventDefault(); }
+        else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') { seen.arrow++; ev.stopPropagation(); }
+      };
+      window.addEventListener('keydown', onKey, true);
+      const c = R.cursor();
+      key('ArrowRight', { shiftKey: true });
+      rec('rysunki', R.cursor() === c + 60 && seen.arrow === 0, `Shift+→ robi krok mimo nasłuchu rysunków (kursor +${R.cursor() - c}, rysunki widziały ${seen.arrow})`);
+      key('ArrowRight');
+      rec('rysunki', R.cursor() === c + 60 && seen.arrow === 1, 'goła strzałka zostaje rysunkom');
+      const e = key('Escape');
+      rec('rysunki', seen.esc === 1 && R.cursor() === c + 60, 'Escape dociera do rysunków (zdejmuje narzędzie)');
+      key('z', { ctrlKey: true });
+      rec('rysunki', seen.ctrlz === 1, 'Ctrl+Z dociera do rysunków');
+      void e;
+      window.removeEventListener('keydown', onKey, true);
+    });
+
+    await section('zamkniecie', async () => {
+      const c = R.cursor();
+      R.close();
+      key('ArrowRight', { shiftKey: true });
+      key('j');
+      rec('zamkniecie', R.cursor() === c, 'po zamknięciu ekranu nasłuch klawiszy znika');
+    });
+
+    await section('ustawienia', async () => {
+      const { createSettings } = await import('/js/ustawienia.js');
+      const { sanitizeChart } = await import('/js/styl-wykresu.js');
+      const { sanitizeShare } = await import('/js/udostepnij.js');
+      const { defaultCustom } = await import('/js/palety.js');
+      const st2 = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), chartTz: '', chartBadj: true, chart: sanitizeChart(null), beR: 0.1, beUsd: 0, bt: sanitizeBt(null) };
+      let saves = 0, notified = 0;
+      const S = createSettings({ settings: st2, save: () => { saves++; }, getTheme: () => 'onyx', applyAll: () => {}, onBe: () => {}, onBt: () => { notified++; } });
+      // delegacja jak w app.js
+      document.addEventListener('click', (ev) => { const b = ev.target.closest('[data-act]'); if (b) S.handle(b.dataset.act, b.dataset.v, b); });
+      document.addEventListener('input', (ev) => { S.onInput(ev); });
+      document.addEventListener('change', (ev) => { S.onChange(ev); });
+      S.toggle('backtest');
+      const pop = () => document.querySelector('.sp');
+      const q$ = (s) => pop().querySelector(s);
+      const rows = () => pop().querySelectorAll('.bt-sj');
+      rec('ustawienia', q$('[data-fk="tab-backtest"]') && q$('[data-fk="tab-backtest"]').getAttribute('aria-selected') === 'true', 'zakładka „Backtest” w popoverze');
+      rec('ustawienia', rows().length === 5 && pop().querySelectorAll('[data-bts^="skroty:"]').length === 11, `5 skoków domyślnych i 11 skrótów akcji (J: drawEntry) (${rows().length})`);
+      rec('ustawienia', q$('[data-btd="startTime"]').value === '09:00' && q$('[data-btd="speed"]').value === '100' && q$('[data-btd="risk"]').value === '500', 'domyślna godzina startu, ryzyko, szybkość');
+      // dodaj
+      q$('[data-act="bt-add"]').click();
+      rec('ustawienia', rows().length === 6 && st2.bt.jumps.length === 6 && notified >= 1 && saves >= 1, `dodanie skoku zapisuje i powiadamia (${st2.bt.jumps.length})`);
+      // edytuj nazwę i cel
+      const i = 5;
+      const nm = q$(`[data-btf="name"][data-i="${i}"]`); nm.value = 'Do 10:15'; nm.dispatchEvent(new Event('change', { bubbles: true }));
+      const kd = q$(`[data-btf="cel.kind"][data-i="${i}"]`); kd.value = 'time'; kd.dispatchEvent(new Event('change', { bubbles: true }));
+      const at = q$(`[data-btf="cel.at"][data-i="${i}"]`);
+      rec('ustawienia', !!at && st2.bt.jumps[i].cel.kind === 'time', 'zmiana celu na godzinę NY pokazuje pole godziny');
+      at.value = '10:15'; at.dispatchEvent(new Event('change', { bubbles: true }));
+      rec('ustawienia', st2.bt.jumps[i].name === 'Do 10:15' && st2.bt.jumps[i].cel.at === '10:15', `nazwa i godzina zapisane: ${JSON.stringify(st2.bt.jumps[i])}`);
+      for (const [k, val, chk] of [['session', 'london', (c) => c.id === 'london'], ['news', 'medium', (c) => c.minImp === 'medium'], ['offset', null, (c) => c.sec === 900], ['nextDay', null, (c) => c.kind === 'nextDay']]) {
+        const kk = q$(`[data-btf="cel.kind"][data-i="${i}"]`); kk.value = k; kk.dispatchEvent(new Event('change', { bubbles: true }));
+        if (val) { const p = q$(`[data-btf="cel.${k === 'session' ? 'id' : 'minImp'}"][data-i="${i}"]`); p.value = val; p.dispatchEvent(new Event('change', { bubbles: true })); }
+        rec('ustawienia', st2.bt.jumps[i].cel.kind === k && chk(st2.bt.jumps[i].cel), `cel ${k}: ${JSON.stringify(st2.bt.jumps[i].cel)}`);
+      }
+      const off = q$(`[data-btf="cel.kind"][data-i="${i}"]`); off.value = 'offset'; off.dispatchEvent(new Event('change', { bubbles: true }));
+      const mn = q$(`[data-btf="cel.min"][data-i="${i}"]`); mn.value = '7'; mn.dispatchEvent(new Event('change', { bubbles: true }));
+      rec('ustawienia', st2.bt.jumps[i].cel.sec === 420, `przesunięcie w minutach → sekundy: ${st2.bt.jumps[i].cel.sec}`);
+      // skrót przez naciśnięcie klawisza
+      const sk = () => q$(`[data-bts="jump:${st2.bt.jumps[i].id}"]`);
+      key('k', {}, sk());
+      rec('ustawienia', st2.bt.jumps[i].skrot === 'K' && sk().value === 'K', `skrót wpisany klawiszem: ${st2.bt.jumps[i].skrot}`);
+      // kolizja z akcją (Spacja = odtwarzaj), z innym skokiem (1) i z zarezerwowanym (Escape nie jest przyjmowany, ArrowLeft tak)
+      const before = JSON.stringify(st2.bt);
+      key(' ', {}, sk());
+      rec('ustawienia', JSON.stringify(st2.bt) === before, 'kolizja ze skrótem akcji nie zapisuje się');
+      rec('ustawienia', sk().getAttribute('aria-invalid') === 'true' && q$('[data-bts="skroty:play"]').getAttribute('aria-invalid') === 'true' && !q$('.bt-serr').hidden, 'pola w kolizji podświetlone, komunikat widoczny');
+      key('1', {}, sk());
+      rec('ustawienia', JSON.stringify(st2.bt) === before && sk().getAttribute('aria-invalid') === 'true', 'kolizja z innym skokiem (1) też blokuje');
+      key('ArrowLeft', {}, sk());
+      rec('ustawienia', JSON.stringify(st2.bt) === before && sk().getAttribute('aria-invalid') === 'true', 'skrót zarezerwowany (strzałka) blokuje');
+      key('Backspace', {}, sk());
+      rec('ustawienia', st2.bt.jumps[i].skrot === '' && !pop().querySelector('[aria-invalid="true"]') && q$('.bt-serr').hidden, 'Backspace czyści skrót i zdejmuje kolizję');
+      key('k', {}, sk());
+      // skrót akcji
+      key('p', {}, q$('[data-bts="skroty:play"]'));
+      rec('ustawienia', st2.bt.skroty.play === 'P', `skrót akcji zmieniony: ${st2.bt.skroty.play}`);
+      // domyślne wartości
+      const stt = q$('[data-btd="startTime"]'); stt.value = '10:00'; stt.dispatchEvent(new Event('change', { bubbles: true }));
+      q$('[data-act="bt-risk-mode"][data-v="pct"]').click();
+      const rk = q$('[data-btd="risk"]'); rk.value = '1'; rk.dispatchEvent(new Event('change', { bubbles: true }));
+      const spd = q$('[data-btd="speed"]'); spd.value = '300'; spd.dispatchEvent(new Event('change', { bubbles: true }));
+      rec('ustawienia', st2.bt.startTime === '10:00' && st2.bt.risk.mode === 'pct' && st2.bt.risk.value === 1 && st2.bt.speed === 300, `domyślne zapisane: ${JSON.stringify({ s: st2.bt.startTime, r: st2.bt.risk, v: st2.bt.speed })}`);
+      const bad = q$('[data-btd="startTime"]'); bad.value = '17:00'; bad.dispatchEvent(new Event('change', { bubbles: true }));
+      rec('ustawienia', st2.bt.startTime === '10:00' && /od 00:00 do 15:59/.test(q$('.bt-smsg').textContent), `zła godzina startu odrzucona: ${q$('.bt-smsg').textContent}`);
+      // usuń
+      q$(`[data-act="bt-del"][data-v="${i}"]`).click();
+      rec('ustawienia', st2.bt.jumps.length === 5 && rows().length === 5, 'usunięcie skoku');
+      q$('[data-act="bt-reset"]').click();
+      rec('ustawienia', st2.bt.jumps.length === 5 && st2.bt.jumps[0].id === 'open', 'przywrócenie domyślnych skoków');
+      // kreator bierze domyślne z ustawień
+      S.toggle();
+      const { openKreator } = await import('/js/bt-kreator.js');
+      const host = document.createElement('div'); document.body.appendChild(host);
+      const kr = openKreator(host, { client, defaults: st2.bt });
+      rec('ustawienia', kr.form.querySelector('[name="startTime"]').value === '10:00' && kr.form.querySelector('[name="risk"]').value === '1' && kr.form.querySelector('[data-k="riskMode"] [aria-pressed="true"]').dataset.v === 'pct', 'kreator sesji używa domyślnej godziny i ryzyka z Ustawień');
+      kr.destroy(); host.remove();
+      // sanitizeBt: złe dane wracają do domyślnych
+      const sx = sanitizeBt({ jumps: [{ id: 'a', name: 'x', cel: { kind: 'time', at: '25:99' }, skrot: 'Q' }, { id: 'b', name: 'y', cel: { kind: 'offset', sec: 60 }, skrot: 'W' }], startTime: '18:00', speed: 7, skroty: { play: 'P', nieznany: 'X' } });
+      rec('ustawienia', sx.jumps.length === 1 && sx.jumps[0].id === 'b' && sx.startTime === '09:00' && sx.speed === 100 && sx.skroty.play === 'P' && !('nieznany' in sx.skroty), `sanitizeBt odrzuca złe pola: ${JSON.stringify({ j: sx.jumps.length, s: sx.startTime, v: sx.speed })}`);
+      rec('ustawienia', collisions(btDefaults().skroty, btDefaults().jumps).length === 0, 'domyślne skróty i skoki bez kolizji');
+    });
+    out.textContent = JSON.stringify({ checks });
+  }
+  if (!out.textContent || out.textContent === '…') out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

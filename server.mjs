@@ -14,6 +14,10 @@ import { createWriter, ValidationError, PAGE_ID_RE } from './lib/writes.mjs';
 import { createCandles } from './lib/candles.mjs';
 import { DatabentoError } from './lib/databento.mjs';
 import { createNews } from './lib/news-service.mjs';
+import { createReplayDay } from './lib/backtest-day.mjs';
+import { createBacktestStore, BacktestError, SESSION_BODY_LIMIT, SESSION_ID_RE } from './lib/backtest-store.mjs';
+import { createBacktestSync } from './lib/backtest-sync.mjs';
+import { createDayIndex } from './lib/backtest-index.mjs';
 import { NewsError } from './lib/news.mjs';
 import { normSymbol } from './lib/earnings.mjs';
 import { createEarnings } from './lib/earnings-service.mjs';
@@ -247,6 +251,12 @@ function startUpdate() {
 // Serwer słucha tylko na 127.0.0.1, ale strona otwarta w tej samej przeglądarce mogłaby próbować pisać po cichu.
 // Dlatego zapis wymaga: Hosta z loopbacka (anty DNS rebinding), Origin równego adresowi dashboardu, własnego nagłówka
 // X-THQ i JSON-a (to wymusza preflight CORS dla obcych stron, którego serwer nigdy nie zatwierdza).
+const replayDay = createReplayDay({ candles, news, earnings, t });
+// Backtest (1.5.0, pakiet C1): sesje w CONFIG_DIR/chart-data/backtest/sessions (źródło prawdy stanu sesji), pula dni z indeksu pokrycia świec.
+const btStore = createBacktestStore({ baseDir: path.join(CONFIG_DIR, 'chart-data'), t });
+// E2: wysyłka trade'ów sesji do bazy Trade'y (typ Backtest), idempotentna po znaczniku w polu „Sesja backtestu”
+const btSync = createBacktestSync({ store: btStore, writer, drawings, data, t });
+const btIndex = createDayIndex({ candles, news, earnings, baseDir: path.join(CONFIG_DIR, 'chart-data'), t });
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const ALLOWED_ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
 const isLoopback = (a) => a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
@@ -301,7 +311,7 @@ function sendError(res, e) {
     return sendJson(res, e.tooLarge ? 413 : 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
   }
   console.error('[write]', e.message);
-  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError ? e.status : 500;
+  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError || e instanceof BacktestError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
   const status = s === 401 || s < 400 || s > 599 ? 502 : s;
   return sendJson(res, status, { error: e.message, code: e.code, ...(e.left !== undefined ? { left: e.left } : {}) });
@@ -601,7 +611,11 @@ const server = http.createServer(async (req, res) => {
       const sh = req.method === 'POST' ? url.pathname.match(/^\/api\/trades\/([0-9a-f-]{36})\/shots$/i) : null;
       // Rysunki wykresu: JSON { id, doc } do 256 KB (maksimum 190 000 znaków po zapisie, z zapasem na znaki specjalne)
       const dr = req.method === 'POST' && url.pathname === '/api/drawings/save';
-      if (!isShutdown && !action && !isPage && !sh && !dr) { res.writeHead(405, SEC_HEADERS); return res.end(); }
+      // Backtest (C1): stan sesji JSON { id, doc, rev } do 4 MB (rysunki i trade'y całej sesji), wersja sprawdzana w magazynie (409 stale)
+      const bts = req.method === 'POST' && url.pathname === '/api/backtest/session/save';
+      // Backtest (E2): wysyłka trade'ów sesji do Notion, JSON { sessionId, day?, all?, auto? } do 4 KB
+      const btn = req.method === 'POST' && url.pathname === '/api/backtest/notion';
+      if (!isShutdown && !action && !isPage && !sh && !dr && !bts && !btn) { res.writeHead(405, SEC_HEADERS); return res.end(); }
       const bad = guardWrite(req, { json: !isShutdown });
       if (bad) {
         console.error('[write] rejected:', bad);
@@ -618,6 +632,18 @@ const server = http.createServer(async (req, res) => {
           if (!PAGE_ID_RE.test(sh[1])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');
           const body = await readJson(req, SHOT_BODY_LIMIT, 'Plik jest za duży: najwyżej 10 MB.');
           return sendJson(res, 200, await shots.add(sh[1].toLowerCase(), body));
+        }
+        if (bts) {
+          const body = await readJson(req, SESSION_BODY_LIMIT, 'Sesja jest zbyt duża.');
+          const bb = body && typeof body === 'object' && !Array.isArray(body) ? body : {}; // null/tablica: 400 z magazynu zamiast 500
+          return sendJson(res, 200, btStore.save(bb.id, bb.doc, bb.rev));
+        }
+        if (btn) {
+          const body = await readJson(req, 4096);
+          const bb = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+          if (typeof bb.sessionId !== 'string' || !SESSION_ID_RE.test(bb.sessionId)) throw new BacktestError(t('Nieprawidłowy identyfikator sesji backtestu.'), 400, 'bad-id');
+          if (bb.day != null && !(typeof bb.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(bb.day))) throw new BacktestError(t('Nieprawidłowy dzień.'), 400, 'bad-day');
+          return sendJson(res, 200, await btSync.push({ sessionId: bb.sessionId, day: bb.day ?? null, all: bb.all === true, auto: bb.auto === true }));
         }
         if (dr) {
           const body = await readJson(req, DRAWINGS_BODY_LIMIT, 'Rysunki są zbyt duże.');
@@ -673,6 +699,37 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/candles/size') return sendJson(res, 200, { bytes: await candles.dataBytes() }); // Ustawienia → Wykresy → Dane (P39: tylko rozmiar); przegląd HIJ, pkt 1: asynchronicznie, wynik z pamięci 60 s
     if (url.pathname === '/api/candles') {
       try { return sendJson(res, 200, candles.read(Object.fromEntries(url.searchParams))); } catch (e) { return sendError(res, e); }
+    }
+    // Backtest (1.5.0, pakiet A): cały dzień replayu jednym zapytaniem (kontekst 1m + prawdziwe 1s NQ + newsy). ES tylko 1m ([U] 30.10.2026).
+    if (url.pathname === '/api/backtest/day') {
+      try {
+        const c = url.searchParams.get('ctx');
+        return sendJson(res, 200, await replayDay.read({ instruments: (url.searchParams.get('instruments') ?? '').split(',').filter(Boolean), day: url.searchParams.get('day') ?? '', ctx: c === null ? 2 : /^\d{1,3}$/.test(c) ? Number(c) : NaN }));
+      } catch (e) { return sendError(res, e); }
+    }
+    if (url.pathname === '/api/backtest/sessions') {
+      try { return sendJson(res, 200, { sessions: btStore.list() }); } catch (e) { return sendError(res, e); }
+    }
+    const bsm = url.pathname.match(/^\/api\/backtest\/session\/([^/]{1,64})$/);
+    if (bsm) {
+      try {
+        const doc = btStore.read(bsm[1]);
+        return doc ? sendJson(res, 200, doc) : sendJson(res, 404, { error: t('Nie ma takiej sesji backtestu.'), code: 'not-found' });
+      } catch (e) { return sendError(res, e); }
+    }
+    // G (review F1–G #6): lekkie źródło statystyk (bez rysunków); ids=a,b albo bez parametru = wszystkie. Zły identyfikator = 400 (sendError).
+    if (url.pathname === '/api/backtest/stats-source') {
+      try {
+        const q = url.searchParams.get('ids');
+        return sendJson(res, 200, btStore.forStats(q === null || q === '' ? null : q.split(',').slice(0, 200)));
+      } catch (e) { return sendError(res, e); }
+    }
+    // Pula dni (C1; F1 rozszerza cechy dnia): dni robocze zakresu z pokryciem 1s NQ i 1m ES/NQ
+    if (url.pathname === '/api/backtest/days') {
+      try {
+        const q = (k) => url.searchParams.get(k) ?? '';
+        return sendJson(res, 200, btIndex.get({ instruments: q('instruments').split(',').filter(Boolean), from: q('from'), to: q('to'), mkt: q('mkt') !== '0', start: q('start') })); // mkt=0: statystyki nie liczą cech rynku (review G #6); start: [U] 30.10.2026 «Gap od ceny startu»
+      } catch (e) { return sendError(res, e); }
     }
     const dm = url.pathname.match(/^\/api\/drawings\/([0-9a-f-]{36})$/i);
     if (dm) {

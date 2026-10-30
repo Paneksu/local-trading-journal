@@ -23,5 +23,12 @@
   "Ważny jeszcze {n} min.": { "one": "Ważny jeszcze {n} min.", "few": "Ważny jeszcze {n} min.", "many": "Ważny jeszcze {n} min.", "other": "Ważny jeszcze {n} min." },
   "+{n} kolejnych": { "one": "+{n} kolejny", "few": "+{n} kolejne", "many": "+{n} kolejnych", "other": "+{n} kolejnego" },
   "{n} rysunek widoczny tylko w trybie edycji": { "one": "{n} rysunek widoczny tylko w trybie edycji", "few": "{n} rysunki widoczne tylko w trybie edycji", "many": "{n} rysunków widocznych tylko w trybie edycji", "other": "{n} rysunku widocznego tylko w trybie edycji" },
-  "Znaleziono {n} wyników": { "one": "Znaleziono {n} wynik", "few": "Znaleziono {n} wyniki", "many": "Znaleziono {n} wyników", "other": "Znaleziono {n} wyniku" }
+  "Znaleziono {n} wyników": { "one": "Znaleziono {n} wynik", "few": "Znaleziono {n} wyniki", "many": "Znaleziono {n} wyników", "other": "Znaleziono {n} wyniku" },
+  "{n} wygranych": { "one": "{n} wygrana", "few": "{n} wygrane", "many": "{n} wygranych", "other": "{n} wygranej" },
+  "{n} strat": { "one": "{n} strata", "few": "{n} straty", "many": "{n} strat", "other": "{n} straty" },
+  "Pominięto {n} sesji z powodu błędu odczytu. Liczby ich nie obejmują.": { "one": "Pominięto {n} sesję z powodu błędu odczytu. Liczby jej nie obejmują.", "few": "Pominięto {n} sesje z powodu błędu odczytu. Liczby ich nie obejmują.", "many": "Pominięto {n} sesji z powodu błędu odczytu. Liczby ich nie obejmują.", "other": "Pominięto {n} sesji z powodu błędu odczytu. Liczby ich nie obejmują." },
+  "Ukryto {n} trade'ów z dnia w toku (kolejność losowa: data zostaje ukryta do końca dnia).": { "one": "Ukryto {n} trade z dnia w toku (kolejność losowa: data zostaje ukryta do końca dnia).", "few": "Ukryto {n} trade'y z dnia w toku (kolejność losowa: data zostaje ukryta do końca dnia).", "many": "Ukryto {n} trade'ów z dnia w toku (kolejność losowa: data zostaje ukryta do końca dnia).", "other": "Ukryto {n} trade'a z dnia w toku (kolejność losowa: data zostaje ukryta do końca dnia)." },
+  "{n} ticków": { "one": "{n} tick", "few": "{n} ticki", "many": "{n} ticków", "other": "{n} ticka" },
+  "{n} kontraktów": { "one": "{n} kontrakt", "few": "{n} kontrakty", "many": "{n} kontraktów", "other": "{n} kontraktu" },
+  "Wejście z rysunku użyje ryzyka sesji: {n} kontraktów": { "one": "Wejście z rysunku użyje ryzyka sesji: {n} kontrakt", "few": "Wejście z rysunku użyje ryzyka sesji: {n} kontrakty", "many": "Wejście z rysunku użyje ryzyka sesji: {n} kontraktów", "other": "Wejście z rysunku użyje ryzyka sesji: {n} kontraktu" }
 }

@@ -10,6 +10,8 @@ import { sanitizeChart, resetChartGroup, chartContrast, fixChartColor, previewSv
 import { filterSupported } from './film.js';
 import { SESSION_IDS } from './podglad.js';
 import { newsSettingsHtml, earnSettingsHtml } from './newsy-karty.js';
+import { btDefaults, sanitizeBt, collisions, skrotOf, SKROT_ACTIONS, CEL_KINDS, BT_SPEEDS } from './bt-czas.js';
+import { SESSIONS } from './swiece.js';
 import { BROWSER_TZ, validTz, tzLabel, tzOptionLabel, allZones, tzGroupsHtml, loadStyleDock, saveStyleDock } from './podglad.js';
 
 const { esc } = F;
@@ -28,11 +30,12 @@ const svgI = (body, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 
 // onChart(chart): etap 14, zmiana settings.chart (app.js: stan bieżący, kolory świec, przerysowanie podglądu i miniatur)
 // onDatabentoKey(key): zapis klucza Databento do .env po bezpłatnym sprawdzeniu (POST /api/candles/key); loadDataSize(): rozmiar chart-data/ w bajtach (GET /api/candles/size)
 // onChartBadj(on): P38, „B-ADJ domyślnie włączony” (wartość początkowa przycisku B-ADJ na wykresie; przycisk przełącza chwilowo)
-export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {}, onChartTz = () => {}, onChartBadj = () => {}, onChart = () => {}, onDatabentoKey = async () => ({}), loadDataSize = async () => null, loadNewsStatus = async () => null, onNewsKey = async () => ({}), onEarnClass = async () => ({}) }) {
+export function createSettings({ settings, save, getTheme, applyAll, onBe, getMeta = () => ({}), onConfig = async () => {}, updateHtml = () => '', devicesHtml = () => '', onSyncToggle = () => {}, onTab = () => {}, onChartTz = () => {}, onChartBadj = () => {}, onChart = () => {}, onDatabentoKey = async () => ({}), loadDataSize = async () => null, loadNewsStatus = async () => null, onNewsKey = async () => ({}), onEarnClass = async () => ({}), onBt = () => {}, btCopyInfo = () => null }) {
   let pop = null, scrim = null;
   let tab = 'dane';
   let editTheme = getTheme();
   let picker = null; // klucz wiersza z otwartym wyborem koloru
+  let btDraft = null, btMsg = ''; // zakładka Backtest: szkic edycji; do settings.bt trafia tylko szkic bez kolizji skrótów
   const isSheet = () => window.matchMedia('(max-width: 1023px)').matches;
   const gear = () => document.getElementById('gear');
   const body = () => pop?.querySelector('#sp-body');
@@ -332,11 +335,113 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     <p class="note sp-foot">${L('Zmiana przelicza widok od razu. Sumy R i $, profit factor i krzywa zostają na surowych wartościach.')}</p>`;
   }
 
+  // ---------- zakładka: Backtest (1.5.0, pakiet C2) ----------
+  // Skoki (nazwa, cel, skrót), skróty akcji replayu, domyślna godzina startu, ryzyko i szybkość. Skrót wpisuje się naciśnięciem klawisza w polu (Backspace czyści).
+  // Kolizja skrótów (z zarezerwowanym, między skokami i akcjami) blokuje zapis: pola się podświetlają, w ustawieniach zostaje ostatni poprawny stan.
+  const btClone = (x) => JSON.parse(JSON.stringify(x));
+  const btActionLabel = () => ({
+    play: t('Odtwarzaj / pauza'), stepFwd: t('Krok w przód'), stepBack: t('Krok wstecz'), jump: t('Skok wybrany na liście'), speedUp: t('Szybciej'), speedDown: t('Wolniej'),
+    buy: t('Kup rynkowo'), sell: t('Sprzedaj rynkowo'), closeAll: t('Zamknij pozycję'), endDay: t('Zakończ dzień'), drawEntry: t('Wejdź według rysunku'),
+  });
+  const btCelLabel = () => ({ time: t('Godzina NY'), session: t('Początek sesji'), news: t('Następny news'), offset: t('Przesunięcie (min)'), nextDay: t('Następny dzień z puli') });
+  const btSessionName = (id) => ({ asia: t('Azja'), london: t('Londyn'), ny: 'NY' }[id] || id);
+  function btCelParam(j, i) {
+    const c = j.cel;
+    if (c.kind === 'time') return `<input class="sp-in" type="time" data-btf="cel.at" data-i="${i}" data-fk="btj-${i}-at" value="${esc(c.at)}" aria-label="${L('Godzina NY')}">`;
+    if (c.kind === 'session') return `<select class="sp-in sp-sel" data-btf="cel.id" data-i="${i}" data-fk="btj-${i}-id" aria-label="${L('Początek sesji')}">${SESSIONS.map((x) => `<option value="${x.id}"${x.id === c.id ? ' selected' : ''}>${esc(btSessionName(x.id))}</option>`).join('')}</select>`;
+    if (c.kind === 'news') return `<select class="sp-in sp-sel" data-btf="cel.minImp" data-i="${i}" data-fk="btj-${i}-imp" aria-label="${L('Waga newsa')}"><option value="high"${c.minImp === 'high' ? ' selected' : ''}>${L('wysoka')}</option><option value="medium"${c.minImp === 'medium' ? ' selected' : ''}>${L('średnia i wysoka')}</option></select>`;
+    if (c.kind === 'offset') return `<input class="sp-in" type="number" min="1" max="600" step="1" data-btf="cel.min" data-i="${i}" data-fk="btj-${i}-min" value="${Math.round(c.sec / 60)}" aria-label="${L('Przesunięcie (min)')}">`;
+    return '';
+  }
+  function btHtml() {
+    btDraft ||= btClone(sanitizeBt(settings.bt));
+    const d = btDraft, cols = collisions(d.skroty, d.jumps), bad = new Set(cols.flatMap((c) => [c.a, c.b]));
+    const inv = (id) => (bad.has(id) ? ' aria-invalid="true"' : '');
+    const kinds = btCelLabel(), acts = btActionLabel();
+    const rows = d.jumps.map((j, i) => `<div class="bt-sj" data-i="${i}">
+        <input class="sp-in" type="text" maxlength="60" data-btf="name" data-i="${i}" data-fk="btj-${i}-name" value="${esc(j.name)}" aria-label="${L('Nazwa skoku')}">
+        <select class="sp-in sp-sel" data-btf="cel.kind" data-i="${i}" data-fk="btj-${i}-kind" aria-label="${L('Cel skoku')}">${CEL_KINDS.map((k) => `<option value="${k}"${k === j.cel.kind ? ' selected' : ''}>${esc(kinds[k])}</option>`).join('')}</select>
+        ${btCelParam(j, i)}
+        <span class="note bt-sjk" aria-hidden="true">${L('Skrót')}</span><input class="sp-in bt-skrot" type="text" readonly title="${esc(j.skrot)}" data-bts="jump:${esc(j.id)}" data-i="${i}" data-fk="btj-${i}-skrot" value="${esc(j.skrot)}" placeholder="${L('skrót')}" aria-label="${L('Skrót skoku')}"${inv('jump:' + j.id)}>
+        <button type="button" class="icon-btn" data-act="bt-del" data-v="${i}" data-fk="btj-${i}-del" aria-label="${L('Usuń skok')}">${svgI('<path d="M6 6l12 12M18 6 6 18"/>')}</button></div>`).join('');
+    const actRows = SKROT_ACTIONS.map((a) => `<label class="bt-sa"><span>${esc(acts[a] || a)}</span><input class="sp-in bt-skrot" type="text" readonly title="${esc(d.skroty[a])}" data-bts="skroty:${a}" data-fk="bta-${a}" value="${esc(d.skroty[a])}" placeholder="${L('skrót')}" aria-label="${esc(acts[a] || a)}"${inv(a)}></label>`).join('');
+    const mode = (m, l) => `<button type="button" data-act="bt-risk-mode" data-v="${m}" data-fk="btd-mode-${m}" aria-pressed="${d.risk.mode === m}">${esc(l)}</button>`;
+    return `<div class="sp-f"><span class="lbl">${L('Skoki')}</span>
+        <div class="bt-sjl">${rows || `<p class="note">${L('Brak skoków.')}</p>`}</div>
+        <div class="bt-sjb"><button type="button" class="btn ghost sm" data-act="bt-add" data-fk="bt-add">${L('Dodaj skok')}</button><button type="button" class="btn ghost sm" data-act="bt-reset" data-fk="bt-reset">${L('Przywróć domyślne')}</button></div>
+        <p class="note">${L('Skok jest pod przyciskiem „Skocz” przy pasku replayu i pod własnym skrótem. Skrót wpisujesz, naciskając klawisze w polu; Backspace czyści.')}</p></div>
+      <div class="rule-x"></div>
+      <div class="sp-f"><span class="lbl">${L('Skróty akcji')}</span><div class="bt-sal">${actRows}</div></div>
+      <p class="note bt-serr" role="alert"${cols.length ? '' : ' hidden'}>${L('Skróty kolidują ze sobą albo z klawiszami wykresu (Escape, strzałki, Ctrl+Z, +, −, Enter). Zmiana nie została zapisana.')}</p>
+      <div class="rule-x"></div>
+      <div class="sp-f"><span class="lbl">${L('Szablony filtra dni')}</span>${btTemplatesHtml()}</div>
+      <div class="rule-x"></div>
+      <div class="sp-f"><span class="lbl">${L('Domyślne wartości nowej sesji')}</span>
+        <div class="bt-sdef"><label class="bt-sa"><span>${L('Godzina startu (NY)')}</span><input class="sp-in" type="time" data-btd="startTime" data-fk="btd-start" value="${esc(d.startTime)}"></label>
+        <div class="bt-sa"><span>${L('Ryzyko na trade')}</span><div class="bt-row"><div class="seg sm" role="group" aria-label="${L('Rodzaj ryzyka')}">${mode('usd', 'USD')}${mode('pct', t('% salda'))}</div><input class="sp-in" type="number" min="0" step="any" data-btd="risk" data-fk="btd-risk" value="${d.risk.value}" aria-label="${L('Wartość ryzyka')}"></div></div>
+        <label class="bt-sa"><span>${L('Szybkość odtwarzania')}</span><select class="sp-in sp-sel" data-btd="speed" data-fk="btd-speed">${BT_SPEEDS.map((v) => `<option value="${v}"${v === d.speed ? ' selected' : ''}>${v}×</option>`).join('')}</select></label></div>
+        <p class="note bt-smsg" role="status">${esc(btMsg)}</p></div>${btCopyNote()}`;
+  }
+  // F2: szablony filtra dni zapisane w kreatorze (bt.templates = [{ name, filterJ }]); tu tylko zmiana nazwy i usunięcie, bez szkicu (kreator też je zapisuje)
+  function btTemplatesHtml() {
+    const list = sanitizeBt(settings.bt).templates;
+    if (!list.length) return `<p class="note">${L('Szablony zapisujesz w kreatorze sesji, w sekcji Filtr dni (zaawansowane).')}</p>`;
+    return `<div class="bt-tpl">${list.map((e, i) => `<div class="bt-tpl-r"><input class="sp-in" type="text" maxlength="60" data-btt="${i}" data-fk="btt-${i}" value="${esc(e.name)}" aria-label="${L('Nazwa szablonu')}"><button type="button" class="icon-btn" data-act="bt-tdel" data-v="${i}" data-fk="btt-${i}-del" aria-label="${L('Usuń szablon')}">${svgI('<path d="M6 6l12 12M18 6 6 18"/>')}</button></div>`).join('')}</div>`;
+  }
+  function btTplSet(list) { settings.bt = sanitizeBt({ ...settings.bt, templates: list }); save(); onBt(settings.bt); rerender(); }
+  // E2: część sesji nie mieści się w kopii definicji w bloku ustawień: te sesje zostają tylko na tym komputerze
+  function btCopyNote() {
+    const c = btCopyInfo();
+    return c?.skipped ? `<div class="rule-x"></div><p class="note bt-scopy">${esc(t('Sesje backtestu poza kopią w synchronizacji ustawień (limit 30 000 znaków): {n}. Te sesje są zapisane tylko na tym komputerze.', { n: c.skipped }))}</p>` : '';
+  }
+  // Zapis szkicu: tylko bez kolizji skrótów. settings.bt przechodzi sanitizeBt (zły skok odpada), potem zapis i synchronizacja.
+  function btCommit() {
+    if (collisions(btDraft.skroty, btDraft.jumps).length) { rerender(); return false; }
+    settings.bt = sanitizeBt({ ...btClone(btDraft), sessionsCopy: settings.bt?.sessionsCopy || [], templates: settings.bt?.templates || [] }); // E2: kopię definicji sesji prowadzi app.js, szkic jej nie cofa; F2: szablony filtra też (zapisuje je kreator)
+    save(); onBt(settings.bt);
+    rerender();
+    return true;
+  }
+  function btField(el) {
+    const d = btDraft, f = el.dataset.btf, i = Number(el.dataset.i), j = d.jumps[i];
+    if (!j) return;
+    btMsg = '';
+    if (f === 'name') j.name = el.value.trim().slice(0, 60) || j.name;
+    else if (f === 'cel.kind') j.cel = ({ time: { kind: 'time', at: '09:30' }, session: { kind: 'session', id: 'ny' }, news: { kind: 'news', minImp: 'high' }, offset: { kind: 'offset', sec: 900 }, nextDay: { kind: 'nextDay' } })[el.value] || j.cel;
+    else if (f === 'cel.at') { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(el.value)) j.cel.at = el.value; else btMsg = t('Podaj godzinę w formacie GG:MM.'); }
+    else if (f === 'cel.id') j.cel.id = el.value;
+    else if (f === 'cel.minImp') j.cel.minImp = el.value === 'medium' ? 'medium' : 'high';
+    else if (f === 'cel.min') { const m = Math.round(Number(el.value)); if (m >= 1 && m <= 600) j.cel.sec = m * 60; else btMsg = t('Przesunięcie: od 1 do 600 minut.'); }
+    btCommit();
+  }
+  function btDefault(el) {
+    const d = btDraft, k = el.dataset.btd;
+    btMsg = '';
+    if (k === 'startTime') { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(el.value) && el.value < '16:00') d.startTime = el.value; else btMsg = t('Godzina startu: od 00:00 do 15:59 NY.'); }
+    else if (k === 'risk') { const v = Number(el.value); if (v > 0 && !(d.risk.mode === 'pct' && v > 100)) d.risk.value = v; else btMsg = d.risk.mode === 'pct' ? t('Ryzyko w % salda: od 0 do 100.') : t('Ryzyko musi być większe od zera.'); }
+    else if (k === 'speed') d.speed = Number(el.value);
+    btCommit();
+  }
+  // Pole skrótu: naciśnięty klawisz zamienia się w tekst skrótu (skrotOf). Tab i Escape zostają (nawigacja i zamknięcie okna).
+  function onBtKey(ev) {
+    const el = ev.target;
+    if (!el?.matches?.('[data-bts]') || !btDraft) return;
+    if (ev.key === 'Tab' || ev.key === 'Escape') return;
+    ev.preventDefault();
+    const [grp, id] = el.dataset.bts.split(':');
+    const value = ev.key === 'Backspace' || ev.key === 'Delete' ? '' : skrotOf(ev);
+    if (value === '' && ev.key !== 'Backspace' && ev.key !== 'Delete') return; // sam modyfikator
+    if (grp === 'skroty') btDraft.skroty[id] = value;
+    else { const j = btDraft.jumps.find((x) => x.id === id); if (j) j.skrot = value; }
+    btMsg = '';
+    btCommit();
+  }
+
   function html() {
     const tabBtn = (v, label) => `<button type="button" role="tab" data-act="sp-tab" data-v="${v}" data-fk="tab-${v}" aria-selected="${tab === v}">${L(label)}</button>`;
     return `<div class="sp-h"><h2 id="sp-t">${L('Ustawienia')}</h2><button type="button" class="icon-btn" data-act="settings" aria-label="${L('Zamknij ustawienia')}">${svgI('<path d="M6 6l12 12M18 6 6 18"/>')}</button></div>
-      <div class="seg full sp-tabs" role="tablist" aria-label="${L('Sekcje ustawień')}">${tabBtn('dane', 'Kolory')}${tabBtn('be', 'Wynik BE')}${tabBtn('wykresy', 'Wykresy')}${tabBtn('ogolne', 'Ogólne')}${tabBtn('urzadzenia', 'Urządzenia')}</div>
-      <div id="sp-body" role="tabpanel">${tab === 'dane' ? daneHtml() : tab === 'be' ? beHtml() : tab === 'wykresy' ? wykresyHtml() : tab === 'urzadzenia' ? devicesHtml() : ogolneHtml()}</div>`;
+      <div class="seg full sp-tabs" role="tablist" aria-label="${L('Sekcje ustawień')}">${tabBtn('dane', 'Kolory')}${tabBtn('be', 'Wynik BE')}${tabBtn('wykresy', 'Wykresy')}${tabBtn('backtest', 'Backtest')}${tabBtn('ogolne', 'Ogólne')}${tabBtn('urzadzenia', 'Urządzenia')}</div>
+      <div id="sp-body" role="tabpanel">${tab === 'dane' ? daneHtml() : tab === 'be' ? beHtml() : tab === 'wykresy' ? wykresyHtml() : tab === 'backtest' ? btHtml() : tab === 'urzadzenia' ? devicesHtml() : ogolneHtml()}</div>`;
   }
 
   // odświeża zawartość, zachowując fokus (po kluczu data-fk)
@@ -367,13 +472,14 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     scrim.addEventListener('click', () => close());
     document.body.append(scrim, pop);
     gear().setAttribute('aria-expanded', 'true');
+    pop.addEventListener('keydown', onBtKey);
     pop.querySelector(`[data-fk="tab-${tab}"]`).focus();
     if (tab === 'wykresy') { loadSize(); loadNews(); }
   }
   function close({ restore = true } = {}) {
     if (!pop) return;
     pop.remove(); scrim.remove();
-    pop = null; scrim = null; picker = null;
+    pop = null; scrim = null; picker = null; btDraft = null; btMsg = '';
     gear().setAttribute('aria-expanded', 'false');
     if (restore) gear().focus();
   }
@@ -408,7 +514,12 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
   function handle(act, v, el) {
     switch (act) {
       case 'settings': toggle(); return true;
-      case 'sp-tab': tab = v; picker = null; rerender(); if (v === 'urzadzenia') onTab(v); if (v === 'wykresy') { loadSize(); loadNews(); } return true;
+      case 'sp-tab': tab = v; picker = null; btDraft = null; btMsg = ''; rerender(); pop.querySelector(`[data-fk="tab-${v}"]`)?.focus(); /* H2 #28: fokus idzie z zakładką (bez obwódki na poprzedniej) */ if (v === 'urzadzenia') onTab(v); if (v === 'wykresy') { loadSize(); loadNews(); } return true;
+      case 'bt-add': btDraft.jumps.push({ id: 'j' + Date.now().toString(36), name: t('Nowy skok'), cel: { kind: 'offset', sec: 300 }, skrot: '' }); btCommit(); pop.querySelector('[data-fk="bt-add"]')?.focus(); return true;
+      case 'bt-tdel': { const list = sanitizeBt(settings.bt).templates; list.splice(Number(v), 1); btTplSet(list); return true; }
+      case 'bt-del': btDraft.jumps.splice(Number(v), 1); btCommit(); return true;
+      case 'bt-reset': { const dflt = btDefaults(); btDraft.jumps = dflt.jumps; btCommit(); return true; }
+      case 'bt-risk-mode': if (btDraft.risk.mode !== v) { btDraft.risk.mode = v === 'pct' ? 'pct' : 'usd'; if (v === 'pct' && btDraft.risk.value > 100) btDraft.risk.value = 1; } btCommit(); return true;
       case 'ch-style': setChart({ style: v }, { render: true }); return true;
       case 'ch-colors': setChart({ colorMode: v }, { render: true }); return true;
       case 'ch-share-style': setChart({ shareStyle: v }, { render: true }); return true;
@@ -525,6 +636,13 @@ export function createSettings({ settings, save, getTheme, applyAll, onBe, getMe
     }
     if (ev.target.matches('[data-range="filmDim"]')) { setChart({ filmDim: Math.round(Number(ev.target.value) * 10) / 10 }); return true; }
     if (ev.target.matches('[data-ovt]')) { const [id, which] = ev.target.dataset.ovt.split('.'); setOverlays((o) => { o.sess[id][which] = ev.target.value; }); rerender(); return true; }
+    if (ev.target.matches('[data-btt]')) {
+      const list = sanitizeBt(settings.bt).templates, i = Number(ev.target.dataset.btt), name = ev.target.value.trim().slice(0, 60);
+      if (list[i] && name && !list.some((e, k) => k !== i && e.name === name)) { list[i].name = name; btTplSet(list); } else rerender();
+      return true;
+    }
+    if (ev.target.matches('[data-btf]')) { btField(ev.target); return true; }
+    if (ev.target.matches('[data-btd]')) { btDefault(ev.target); return true; }
     if (ev.target.matches('#sp-badj')) { settings.chartBadj = ev.target.checked; save(); onChartBadj(settings.chartBadj); return true; }
     if (ev.target.matches('#sp-tz')) { settings.chartTz = validTz(ev.target.value) ? ev.target.value : ''; save(); onChartTz(settings.chartTz); return true; }
     if (!ev.target.matches('[data-act="sp-upd"]')) return false;

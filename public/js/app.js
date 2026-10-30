@@ -21,6 +21,8 @@ import { createPodglad, setChartTzDefault, setBadjDefault, validTz, observeMinis
 import { sanitizeChart, setChartSettings, applyChartVars, migrateLegacyOverlays } from './styl-wykresu.js';
 import { createNewsCards } from './newsy-karty.js';
 import { createCalendar } from './kalendarz.js';
+import { createBacktestView } from './bt-widok.js';
+import { sanitizeBt, sessionsCopyOf } from './bt-czas.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -34,7 +36,7 @@ const DEFAULTS = {
   preset: '30d', from: '', to: '', typ: 'Live', konta: null, setups: null, unit: 'R', metric: 'sum', allAccounts: false, skipped: false,
   view: 'stats', res: 'all', eqPaper: false, heatYear: '', rStep: 'auto', sortK: 'date', sortD: 'desc',
 };
-const VIEWS = ['stats', 'trades', 'prop', 'gallery', 'calendar'];
+const VIEWS = ['stats', 'trades', 'prop', 'gallery', 'calendar', 'backtest']; // backtest: 1.5.0, pakiet C1
 const STORE_KEY = 'thq.filters.v1';
 const THEME_KEY = 'thq.theme';
 const SETTINGS_KEY = 'thq.settings.v1';
@@ -73,7 +75,7 @@ const isClosed = (key) => (key in state.ui.closed ? !!state.ui.closed[key] : CLO
 // ustawienia (ikona koła zębatego): paleta danych (gotowa albo własna, osobno dla Onyx i Platinum) i marginesy BE
 let overlaysMigrated = null; // czas migracji starych nakładek (przegląd HIJ, pkt 2); zapis po utworzeniu sync
 function loadSettings() {
-  const out = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), chartTz: '', chartBadj: true, chart: sanitizeChart(null), ...S.BE_DEFAULTS };
+  const out = { palette: 'color', custom: defaultCustom(), customSeeded: false, share: sanitizeShare(), chartTz: '', chartBadj: true, chart: sanitizeChart(null), bt: sanitizeBt(null), ...S.BE_DEFAULTS };
   try {
     const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (PALETTE_IDS.includes(o.palette)) out.palette = o.palette; // stare „color” i „mono” zostają bez zmian
@@ -85,6 +87,7 @@ function loadSettings() {
     if (validTz(o.chartTz)) out.chartTz = o.chartTz; // P26: stała strefa osi wykresu ('' = strefa przeglądarki)
     if (typeof o.chartBadj === 'boolean') out.chartBadj = o.chartBadj; // P38: B-ADJ domyślnie włączony
     out.chart = sanitizeChart(o.chart); // etap 14: Ustawienia → Wykresy (biała lista)
+    out.bt = sanitizeBt(o.bt); // C2 (1.5.0): Ustawienia → Backtest (skoki, skróty, godzina startu, ryzyko, szybkość)
     // P42 (28.10.2026, słowa użytkownika: «Tak, synchronizować»): nakładki przeszły z localStorage do settings.chart.overlays. Stary zapis jest czytany RAZ
     // (migrateLegacyOverlays: tylko gdy ustawienia nie mają nakładek, potem znacznik „przeniesione”); wynik zapisuje się od razu, niżej (po utworzeniu sync).
     // Przegląd HIJ, pkt 2 (29.10.2026), decyzja sesji głównej: po migracji wygrywa zwykła reguła synchronizacji (nowsze updatedAt); migracja daje lokalnym
@@ -138,6 +141,7 @@ const ICON = {
   wallet: (s) => svg('<path d="M4 7a2 2 0 0 1 2-2h12v4M4 7v10a2 2 0 0 0 2 2h14V9H6a2 2 0 0 1-2-2zM16 14h.01"/>', s),
   filter: (s) => svg('<path d="M3 5h18M6 12h12M10 19h4"/>', s),
   calendar: (s) => svg('<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>', s),
+  replay: (s) => svg('<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/><path d="m10 9 5 3-5 3z"/>', s),
   panel: (s) => svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/>', s),
   refresh: (s) => svg('<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>', s),
   chev: (s) => svg('<path d="m6 9 6 6 6-6"/>', s, 2),
@@ -788,7 +792,8 @@ function renderTabs() {
     <button type="button" class="nav-tab" role="tab" data-act="view" data-v="trades" aria-selected="${sel('trades')}">${ICON.list(15)}${L("Trade'y")} ${cnt(nT)}</button>
     <button type="button" class="nav-tab" role="tab" data-act="view" data-v="prop" aria-selected="${sel('prop')}">${ICON.wallet(15)}${L('Prop')}</button>
     <button type="button" class="nav-tab" role="tab" data-act="view" data-v="gallery" aria-selected="${sel('gallery')}">${ICON.image(15)}${L('Galeria')} ${cnt(nG)}</button>
-    <button type="button" class="nav-tab" role="tab" data-act="view" data-v="calendar" aria-selected="${sel('calendar')}">${ICON.calendar(15)}${L('Kalendarz')}</button>`;
+    <button type="button" class="nav-tab" role="tab" data-act="view" data-v="calendar" aria-selected="${sel('calendar')}">${ICON.calendar(15)}${L('Kalendarz')}</button>
+    <button type="button" class="nav-tab" role="tab" data-act="view" data-v="backtest" aria-selected="${sel('backtest')}">${ICON.replay(15)}${L('Backtest')}</button>`;
   $('#tabs').setAttribute('aria-label', t('Widok'));
   const item = (act, v, ico, label, attr) => `<button type="button" class="tb-item" data-act="${act}" data-v="${v}" ${attr}>${ico(24)}<span class="t">${label}</span></button>`;
   $('#tabbar').innerHTML =
@@ -797,6 +802,7 @@ function renderTabs() {
     item('view', 'prop', ICON.wallet, L('Prop'), `aria-selected="${sel('prop') && !state.ui.sheet}"`) +
     item('view', 'gallery', ICON.image, L('Galeria'), `aria-selected="${sel('gallery') && !state.ui.sheet}"`) +
     item('view', 'calendar', ICON.calendar, L('Kalendarz'), `aria-selected="${sel('calendar') && !state.ui.sheet}"`) +
+    item('view', 'backtest', ICON.replay, L('Backtest'), `aria-selected="${sel('backtest') && !state.ui.sheet}"`) +
     item('sheet', 'desk', ICON.filter, L('Filtry'), `aria-pressed="${state.ui.sheet === 'desk'}"`) +
     item('sheet', 'side', ICON.panel, L('Panel'), `aria-pressed="${state.ui.sheet === 'side'}"`);
 }
@@ -816,11 +822,11 @@ function renderDesk() {
     <div class="field" style="padding-top:4px"><label class="lbl" for="q">${L('Szukaj')}</label>
       <div class="srch"><input id="q" type="search" value="${esc(state.q)}" placeholder="${L('Nazwa lub notatka')}" autocomplete="off" spellcheck="false" aria-label="${L("Szukaj po nazwie i notatkach trade'a")}">${state.q ? `<button type="button" class="icon-btn clr" data-act="q-clear" aria-label="${L('Wyczyść wyszukiwanie')}">${ICON.close(14)}</button>` : ''}</div></div>
     <div class="rule-x"></div>
-    <div class="field"><span class="lbl" id="l-typ">${L('Typ')}</span>
+    <div class="field" data-dash-only><span class="lbl" id="l-typ">${L('Typ')}</span>
       <div class="seg full" role="group" aria-labelledby="l-typ">${TYPES.map(([v, l]) => `<button type="button" data-act="typ" data-v="${v}" aria-pressed="${state.typ === v}">${l}</button>`).join('')}</div></div>
-    <div class="rule-x"></div>
-    <div class="field"><span class="lbl" id="l-okres">${L('Okres')}</span><div id="period-slot"></div></div>
-    <div class="rule-x"></div>
+    <div class="rule-x" data-dash-only></div>
+    <div class="field" data-dash-only><span class="lbl" id="l-okres">${L('Okres')}</span><div id="period-slot"></div></div>
+    <div class="rule-x" data-dash-only></div>
     ${list('konta', t('Konta'), kontaOpts, state.konta, !isLive(), t("Filtr kont dotyczy tylko trade'ów Live"))}
     <div class="rule-x"></div>
     ${list('setups', t('Setup'), setupOpts, state.setups, false)}
@@ -869,7 +875,8 @@ function renderSide() {
         <span class="s">${esc([whenText(tr), tr.instrument, tr.dir, tr.setup].filter(Boolean).join(' · '))}${tr.pnl != null ? ` · ${fmtMoney(tr.pnl)}` : ''}</span>
         <span class="r ${cls(tr.r)}">${fmtR(tr.r)}${res(tr)}</span></li>`).join('')}</ul>` // P29 (28.10.2026), słowa użytkownika: «z ostatnich trade usunmy te miniaturki wykresow»
       : `<p class="note">${L('Brak trade\'ów w wybranym okresie.')}</p>`;
-    html += sideSection('recent', t("Ostatnie trade'y"), list + (rows.length ? `<p class="note" style="padding-top:6px">${L('10 najnowszych w wybranym okresie · klik pokazuje szczegóły')}</p>` : ''));
+    // [U] 30.10.2026 «Ukryj na Backtest»: na zakładce Backtest bez panelu „Ostatnie trade'y” (wraca na innych zakładkach, stan sekcji bez zmian)
+    if (state.view !== 'backtest') html += sideSection('recent', t("Ostatnie trade'y"), list + (rows.length ? `<p class="note" style="padding-top:6px">${L('10 najnowszych w wybranym okresie · klik pokazuje szczegóły')}</p>` : ''));
     // prop firmy (domyślnie zwinięte)
     const pd = propData(range);
     const money = (l, v, c, p) => `<div><span class="k">${L(l)}</span><span class="v ${c}">${v}</span></div>${pd.per ? `<div><span class="k" style="padding-left:8px">${L('w okresie')}</span><span class="v">${p}</span></div>` : ''}`;
@@ -931,9 +938,23 @@ async function saveConfig(patch) {
   }
 }
 
+// Kontekst widoku (okres, trade'y, statystyki) dla prawego panelu i paska statusu. H2 #24 (ocena wyglądu, runda 2): Kalendarz i Backtest wracały przed jego
+// policzeniem, więc po starcie aplikacji prosto na tej zakładce panel miał samo „Dziś”, a stopka samo „Wpisy: n” (Kalendarz od 1.4.0, Backtest powielił wzór).
+function viewCtx() {
+  if (!model) return (ctx = null);
+  const range = resolveRange();
+  const base = baseTrades();
+  const cur = inRange(base, range);
+  const ext = extendedSet(cur, range);
+  const c = cur.length ? S.calc(cur) : null;
+  return (ctx = { range, base, cur, ext, c, recent: [] });
+}
+
 // ---------- render centrum ----------
 function renderMain() {
   const view = $('#view');
+  // [U] 30.10.2026 «Ukryj na Backtest»: filtry dashboardu „Typ” i „Okres” (data-dash-only) ukryte na zakładce Backtest przez CSS; ich stan się nie zmienia
+  document.body.dataset.view = state.view;
   chartJobs = [];
   // Kalendarz działa bez Notion (dane z lokalnego serwera), więc stoi przed sprawdzeniem modelu i błędu. Ciche odświeżenie danych z Notion nie montuje go od nowa
   // (fokus w polu szukaj i przewinięcie zostają); zmianę strefy i ustawień obsługuje cal.refresh().
@@ -943,7 +964,17 @@ function renderMain() {
       view.innerHTML = `${pageHead(t('Kalendarz'), t('Newsy makro USD i wyniki spółek: dzień, tydzień, miesiąc i wyszukiwanie od 2010'))}<section class="sec ncal" aria-label="${L('Kalendarz newsów')}"></section>`;
       cal.mount(view.querySelector('.ncal'));
     }
-    renderSide(); renderStatus();
+    viewCtx(); renderSide(); renderStatus();
+    return;
+  }
+  // Backtest (1.5.0, pakiet C1): jak kalendarz, bez zależności od Notion (sesje i świece z lokalnego serwera); ciche odświeżenie danych nie montuje listy od nowa
+  if (state.view === 'backtest') {
+    const host = view.querySelector('.bt-view');
+    if (!btView.isMounted(host)) {
+      view.innerHTML = `${pageHead(t('Backtest'), t('Replay świeca po świecy na lokalnych świecach: sesje, dni i wynik w R'))}<section class="sec bt-view" aria-label="${L('Sesje backtestu')}"></section>`;
+      btView.mount(view.querySelector('.bt-view'));
+    }
+    viewCtx(); renderSide(); renderStatus();
     return;
   }
   if (loading && !model) return;
@@ -953,12 +984,7 @@ function renderMain() {
     renderSide(); renderStatus();
     return;
   }
-  const range = resolveRange();
-  const base = baseTrades();
-  const cur = inRange(base, range);
-  const ext = extendedSet(cur, range);
-  const c = cur.length ? S.calc(cur) : null;
-  ctx = { range, base, cur, ext, c, recent: [] };
+  const { range, base, cur, ext, c } = viewCtx();
   if (state.view === 'gallery') {
     view.innerHTML = renderGallery(range) + footLine();
     bindGallery();
@@ -1576,6 +1602,19 @@ const cal = createCalendar({
   getTradeCount: (day) => (model ? baseTrades(state.typ, true).filter((x) => x.date === day).length : 0),
   onTrades: (day) => { Object.assign(state, { preset: 'custom', from: day, to: day, view: 'trades' }); save(); renderAll(); },
 });
+// Zakładka Backtest (C1): konta z Notion tylko jako opcjonalny wybór w kreatorze sesji
+// E2: kopia definicji sesji backtestu w bloku ustawień (bt.sessionsCopy, bez puli, trade'ów i rysunków) do odtworzenia sesji na innym urządzeniu.
+// Wpisy z innych urządzeń zostają, lokalna sesja wygrywa; kopia ponad 30 000 znaków jest pominięta z notką w Ustawieniach → Backtest.
+let btCopy = null;
+function updateBtCopy(sessions) {
+  btCopy = sessionsCopyOf(sessions, settings.bt.sessionsCopy);
+  if (JSON.stringify(btCopy.copy) === JSON.stringify(settings.bt.sessionsCopy || [])) return;
+  settings.bt = { ...settings.bt, sessionsCopy: btCopy.copy };
+  saveSettings();
+}
+const btView = createBacktestView({ onList: updateBtCopy, getTrades: () => (model ? model.trades : []), // G: trade'y z Notion do statystyk backtestu
+     getSettings: () => settings.bt, onTemplates: (list) => { settings.bt = { ...settings.bt, templates: list }; saveSettings(); }, // F2: szablony filtra dni z kreatora
+     getSetups: () => (model ? [...new Set(model.trades.map((x) => x.setup).filter(Boolean))].sort((a, b) => a.localeCompare(b, getLang())) : []), getAccounts: () => (model ? model.konta.map((k) => ({ id: k.id, name: k.name })) : []) });
 function openCalendar(mode, earnCls) { cal.goTo(null, mode); if (earnCls) cal.applyEarn(earnCls); state.view = 'calendar'; state.ui.sheet = ''; save(); renderTabs(); applySheetAttr(); const h = $('#view .ncal'); if (h && cal.isMounted(h)) { cal.unmount(); h.remove(); } renderMain(); $('#main').scrollTo({ top: 0 }); }
 // „+N więcej” z karty „Dzisiaj”: dzisiejszy dzień (dzień liczony w strefie z Ustawień); z karty „Wyniki spółek”: tydzień z klasami z karty
 const openCalendarToday = () => openCalendar('day');
@@ -1588,7 +1627,7 @@ async function postJson(url, body) {
 async function refreshMeta() { try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ } }
 
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
-const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c),
+const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
   onDatabentoKey: saveDatabentoKey, loadDataSize: async () => { const r = await fetch('/api/candles/size', { cache: 'no-store' }); return r.ok ? (await r.json()).bytes : null; },
   loadNewsStatus: async () => {
     const get = async (u) => { try { const r = await fetch(u, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; } };
@@ -1855,6 +1894,7 @@ async function applyRemoteSettings(r = {}) {
   if (typeof r.beUsd === 'number') settings.beUsd = Math.max(0, r.beUsd);
   if (r.share) Object.assign(settings.share, sanitizeShare(r.share));
   if (typeof r.chartBadj === 'boolean') { settings.chartBadj = r.chartBadj; setBadjDefault(settings.chartBadj); }
+  if (r.bt && typeof r.bt === 'object') settings.bt = sanitizeBt(r.bt);
   if (r.chart && typeof r.chart === 'object') { settings.chart = sanitizeChart(r.chart); setChartSettings(settings.chart); notifyOverlays(); lb.pv?.redraw(); }
   if (r.chartTz === '' || validTz(r.chartTz)) { if (r.chartTz !== settings.chartTz) { settings.chartTz = r.chartTz; setChartTzDefault(settings.chartTz); lb.pv?.redraw(); } }
   S.setBeMargins(settings.beR, settings.beUsd);
@@ -1873,7 +1913,7 @@ async function applyRemoteSettings(r = {}) {
 }
 sync = createSync({
   getMeta: () => meta,
-  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, share: settings.share, chartTz: settings.chartTz, chartBadj: settings.chartBadj, chart: settings.chart, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false }),
+  collect: () => ({ palette: settings.palette, custom: settings.custom, customSeeded: settings.customSeeded, beR: settings.beR, beUsd: settings.beUsd, share: settings.share, chartTz: settings.chartTz, chartBadj: settings.chartBadj, chart: settings.chart, theme: getTheme(), lang: langOverride || getLang(), updateCheck: meta.updateCheck !== false, bt: settings.bt }),
   apply: (r) => applyRemoteSettings(r),
 });
 // przegląd HIJ, pkt 2: wynik migracji starych nakładek zapisany od razu, z lokalnym znacznikiem czasu synchronizacji = chwila migracji (idzie do Notion jak każda zmiana)

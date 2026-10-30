@@ -43,6 +43,10 @@ export function normalizeTrades(rows) {
       tp: numOrNull(r.tp),
       be: numOrNull(r.be),
       contract: typeof r.contract === 'string' ? r.contract.trim().toUpperCase() : '', // migracja 005 (P35)
+      // migracja 006 (Backtest 1.5.0): znacznik sesji backtestu (pusty u starych wpisów i Live) oraz MAE/MFE w R (null, gdy brak pola albo wartości)
+      btSession: typeof r.btSession === 'string' ? r.btSession.trim() : '',
+      btMae: numOrNull(r.btMae),
+      btMfe: numOrNull(r.btMfe),
       manual: manualOf(r.manual),
       reason: r.reason?.name || null,
       notes: r.notes || '',
@@ -54,6 +58,14 @@ export function normalizeTrades(rows) {
     // wpisy bez daty nie istnieją; dni bez trade'u (NO TRADE) i puste wiersze bez R, P&L i wyniku
     // nie są trade'ami do statystyk (counted = false), ale ich zrzuty zostają w Galerii
     .map((t) => ({ ...t, counted: t.dir !== 'NO TRADE' && (t.r != null || t.pnl != null || !!t.manual) }));
+}
+
+// Pole „Sesja backtestu” = „<nazwa sesji> [<sessionId>/<tradeId>]” (lib/backtest-sync.mjs, ta sama reguła znacznika co MARKER_RE tam).
+// Brak znacznika (stary wpis Backtest, wpis ręczny) → null, w statystykach „Bez sesji”.
+const BT_MARKER_RE = /^(.*?)\s*\[(bt-[a-z0-9]{6,20})\/(t\d{1,9})\]\s*$/s;
+export function parseBtSession(s) {
+  const m = typeof s === 'string' ? BT_MARKER_RE.exec(s) : null;
+  return m ? { name: m[1].trim(), sessionId: m[2], tradeId: m[3] } : null;
 }
 
 export function normalizeKonta(rows) {

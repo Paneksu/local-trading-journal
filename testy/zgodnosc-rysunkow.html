@@ -54,7 +54,7 @@ try {
   const xs = G.indexScale({ lastIndex: last, right, spacing });
   const pA = 5790, pB = 5810;
   const ys = G.priceScaleFrom(pA, series.priceToCoordinate(pA), pB, series.priceToCoordinate(pB));
-  const s = G.chartScales({ candles, xs, ys, box: { left: 0, right: W, top: 0, bottom: H }, pip: 0.25 });
+  const s = G.chartScales({ candles, xs, ys, box: { left: 0, right: W, top: 0, bottom: H }, pip: 0.25, measure: G.canvasMeasure });
 
   // punkty: dokładne czasy świec, wnętrze świecy, luka nocna, brakująca minuta, przyszłość, przeszłość
   const tAt = (i) => candles[i][0];
@@ -83,6 +83,9 @@ try {
     { id: 'f2', kind: 'fib-retracement', points: [P(tAt(8), 5790), P(tAt(44), 5809)], style: st('fib-retracement', { fillBackground: true, transparency: 85, levels: [0, 0.25, 0.5, 0.886, 1, 1.272].map((coeff) => ({ coeff, color: '#808080', visible: true })) }) },
     { id: 'rt', kind: 'rectangle', points: [P(tAt(30), 5805), P(tAt(50), 5795)], style: st('rectangle', { width: 3, text: 'OB', horzLabelsAlign: 'left', vertLabelsAlign: 'bottom', transparency: 60 }) },
     { id: 'tt', kind: 'trend-line', points: [P(tAt(15), 5794), P(tAt(45), 5808)], style: st('trend-line', { text: 'BOS', lineStyle: 'dashed', width: 2 }) },
+    // D2 (30.10.2026): callout z paczki (punkt 0 = grot, punkt 1 = środek dymku); położenie grota i środka dymku sprawdzane niżej (≤ 2 px)
+    { id: 'co', kind: 'callout', text: 'BOS', points: [P(tAt(30), 5796), P(tAt(50), 5806)], style: st('callout', { text: 'BOS' }) },
+    { id: 'cm', kind: 'callout', text: 'Sweep\nHTF low', points: [P(tAt(70), 5810), P(tAt(60), 5800)], style: st('callout', { text: 'Sweep\nHTF low', bold: true, fontSize: 16 }) },
     { id: 'lb', kind: 'long-position', points: [P(tAt(85), 5801), P(tAt(110), 5801)], style: st('long-position', { stopLevel: 2.5, profitLevel: 7.5, beLevel: 1, exitLevel: 4.25 }) }, // P28: z wyjściem
   ];
   const pxOf = (d) => d.points.map((q) => ({ x: coords.timeToX(q.time), y: coords.priceToY(q.price) }));
@@ -115,6 +118,24 @@ try {
         if (!sx) errors.push(`${d.id}: brak tekstu w scenie`); else { near(part.x, sx.x, `${d.id}: tekst x`); near(part.y + part.size / 2 + 0.05 * part.size, sx.y, `${d.id}: tekst y`); }
       }
     }
+  }
+  // D2: callout: grot SVG w punkcie 0, środek dymku w punkcie 1 i tekst tam, gdzie rysuje go paczka (≤ 2 px)
+  const near2 = (a, b, what) => { checks++; if (!(Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 2)) errors.push(`${what}: geometria ${a} vs paczka ${b}`); };
+  for (const id of ['co', 'cm']) {
+    const d = drawings.find((x) => x.id === id), mine = G.shapes(d, s), px = pxOf(d);
+    const sc = flat(sceneOf(d, px, { w: W, h: H, coords, selected: false }) || []);
+    const pth = sc.find((x) => x.t === 'path'), pp = mine.parts.find((x) => x.t === 'path');
+    if (!pth || !pp) { errors.push(`${id}: brak ścieżki dymku (paczka ${!!pth}, geometria ${!!pp})`); continue; }
+    near2(pp.tip.x, px[0].x, `callout ${id}: grot x vs punkt 0`); near2(pp.tip.y, px[0].y, `callout ${id}: grot y vs punkt 0`);
+    near2(pp.box.x + pp.box.w / 2, px[1].x, `callout ${id}: środek dymku x vs punkt 1`); near2(pp.box.y + pp.box.h / 2, px[1].y, `callout ${id}: środek dymku y vs punkt 1`);
+    // ścieżka paczki: pierwszy punkt M = (lewa krawędź + 8, góra); grot jest jej punktem L
+    const m = /^M ([\d.-]+) ([\d.-]+)/.exec(pth.d);
+    near2(pp.box.x + 8, Number(m[1]), `callout ${id}: lewa krawędź dymku`); near2(pp.box.y, Number(m[2]), `callout ${id}: górna krawędź dymku`);
+    const ls = [...pth.d.matchAll(/L ([\d.-]+) ([\d.-]+)/g)].map((x) => [Number(x[1]), Number(x[2])]);
+    checks++; if (!ls.some(([x, y]) => Math.abs(x - px[0].x) <= 2 && Math.abs(y - px[0].y) <= 2)) errors.push(`callout ${id}: ścieżka paczki nie przechodzi przez grot`);
+    const tx = sc.filter((x) => x.t === 'text'), mt = mine.parts.filter((x) => x.t === 'text');
+    checks++; if (tx.length !== mt.length) errors.push(`callout ${id}: wierszy ${mt.length} vs paczka ${tx.length}`);
+    mt.forEach((p, k) => { if (!tx[k]) return; near2(p.x, tx[k].x, `callout ${id}: tekst ${k} x`); near2(p.y + p.size / 2, tx[k].y, `callout ${id}: tekst ${k} y`); });
   }
   // P32 (28.10.2026): pole tekstu do edycji w miejscu i dwukliku (G.textSlot) stoi tam, gdzie paczka rysuje tekst linii i prostokąta, także gdy tekstu nie ma
   // (porównanie z tekstem „M” w tym samym rysunku); prostokąt z grubością 0 nie ma ramki w paczce (strokeWidth 0) ani w podglądzie (width 0)

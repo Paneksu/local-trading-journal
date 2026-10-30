@@ -82,6 +82,12 @@ export function weekdayIdx(k) {
   return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
 }
 // „25 paź” / „Oct 25”
+// H2 (ocena wyglądu #7): data i godzina jak w reszcie dashboardu, w języku aplikacji: „30 paź, 15:24” / „Oct 30, 15:24”; rok tylko spoza bieżącego roku.
+export function dateTimeShort(d, now = new Date()) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return DASH;
+  const k = toKey(d), yr = d.getFullYear() !== now.getFullYear() ? ` ${d.getFullYear()}` : '';
+  return `${shortDate(k)}${yr}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 export function shortDate(k) { const { m, d } = parseKey(k); return EN ? `${MON_SHORT[m - 1]}${NBSP}${d}` : `${d}${NBSP}${MON_SHORT[m - 1]}`; }
 // „25 października 2026” / „October 25, 2026”
 export function longDate(k) { const { y, m, d } = parseKey(k); return EN ? `${MONTHS[m - 1]}${NBSP}${d}, ${y}` : `${d}${NBSP}${MONTHS_GEN[m - 1]} ${y}`; }

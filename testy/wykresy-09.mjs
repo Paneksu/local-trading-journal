@@ -105,7 +105,7 @@ export default ({ test, H, assert, ROOT }) => {
     assert.deepEqual(styleFor('fib-retracement', c).levels.map((l) => l.coeff), FIB_LEVELS);
     const lp = styleFor('long-position', c);
     assert.equal(lp.stopColor, 'l'); assert.equal(lp.targetColor, 'p'); assert.equal(lp.showPriceLabels, false);
-    assert.equal(TOOLS.length, 9, 'P27: 8 rodzajów (z Gann boxem) + preset FVG');
+    assert.equal(TOOLS.length, 10, 'P27: 8 rodzajów (z Gann boxem) + preset FVG; D2: + callout');
   });
 
   test('wykresy-09: zapis dzieli JSON na kawałki po 2 000 znaków jednym PATCH, odczyt zwraca ten sam dokument także po restarcie serwera i skasowaniu cache', async () => {

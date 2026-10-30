@@ -130,7 +130,7 @@ export function applyPalette(settings, theme) {
   }
   root.setAttribute('data-palette', settings.palette);
   const r = resolve(settings, theme);
-  const dark = resolve(settings, 'onyx'); // podgląd zrzutów jest zawsze ciemny, więc używa wartości Onyx
+  const dark = r; // H2 (30.10.2026): podgląd trade'a idzie za motywem (słowa użytkownika: «Cały podgląd trade'a»), więc te same wartości co reszta
   root.style.setProperty('--profit', r.profit); root.style.setProperty('--loss', r.loss); root.style.setProperty('--be', r.be);
   root.style.setProperty('--cellmix', String(r.cellmix));
   root.style.setProperty('--lb-profit', dark.profit); root.style.setProperty('--lb-loss', dark.loss); root.style.setProperty('--lb-be', dark.be);

@@ -2,6 +2,38 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.5.0] · 2026-10-30
+
+### PL
+- Dodane: zakładka Backtest. Przechodzisz dzień handlowy świeca po świecy i nie widzisz przyszłości: świeca w budowie stoi, a krok wstecz blokuje handel do powrotu do chwili bieżącej. NQ ma prawdziwe świece 1s z okna 9:30-11:00 czasu NY, ES działa na świecach 1m. Dni bez pełnych danych kreator wyklucza i podaje powód. Dni skrócone oraz przejścia czasu letniego i zimowego są liczone w strefie NY.
+- Dodane: zlecenia w replayu (market, limit, stop, SL, TP, BE, zamknięcie części pozycji) z wypełnieniami liczonymi na świecach, wielkością z ryzyka sesji oraz wynikiem w R i w USD. Zlecenie możesz też złożyć według narysowanego rysunku pozycji przyciskiem „Wejdź według rysunku” albo skrótem (domyślnie D). Cena rysunku bliska rynkowej daje zlecenie market, inaczej limit lub stop. Rysunek znika po złożeniu zlecenia, a Ctrl+Z w rysunkach go przywraca.
+- Dodane: journaling po zamknięciu trade'a w kilka sekund (setup, notatki), lista „do uzupełnienia” i migawka rysunków. „Zakończ dzień” wysyła trade'y do bazy Trade'y w Notion jako typ Backtest. Wysyłka ma kolejkę i nie dubluje stron po ponownej próbie. Sesja zapisuje się lokalnie, więc zamknięcie karty niczego nie gubi.
+- Dodane: sesje z filtrem dni. Dni dobierasz po cechach rynku (gap od ceny o godzinie startu sesji, zakres nocy, dzień tygodnia, newsy i earningsy), z licznikiem na żywo i szablonami filtrów. Cechy liczą się wyłącznie z danych sprzed godziny startu, więc nie zdradzają dalszego przebiegu dnia.
+- Dodane: kilka wykresów w jednym replayu (różne interwały i instrumenty) ze wspólnym zegarem i krzyżykiem, rysunkami zapisywanymi osobno dla sesji i instrumentu oraz skrótami klawiszowymi do ustawienia w Ustawieniach, zakładka Backtest.
+- Dodane: statystyki sesji i widok „Gdzie mam przewagę”: wyniki rozbite po setupach, dniach tygodnia, godzinach, typie dnia i kierunku, a do tego kafle wykonania z MAE i MFE w R oraz porównanie Backtestu z Live. Wnioski pojawiają się dopiero od 20 trade'ów w wierszu.
+- Dodane: rysunek callout (dymek z tekstem) na wszystkich wykresach, także w replayu.
+- Zmienione: rysunek pozycji long/short działa i wygląda jak w TradingView, a nasze różnice zostają. Panel ma zakładki Wejścia (konto, ryzyko w USD lub procentach, ilość, cel i stop w tickach i cenie, BE, R:R), Styl i Podpisy. Podpisy ze statystykami (P&L, ilość, R:R, ceny na osi) pokazują się po zaznaczeniu lub najechaniu, a „Zawsze pokazuj” włączasz w panelu. Wielkości lota i dźwigni z TradingView nie ma, bo kontrakty futures mają całkowitą ilość i mnożnik z instrumentu.
+- Zmienione: podgląd trade'a i edytor wykresu idą za motywem. W Platinum podgląd jest jasny (tło #e0e0e0), wcześniej był zawsze ciemny. Rysunki z kolorem domyślnym (linie, tekst, callout, strefy, pozycje, Fibonacci) rysują się kolorami bieżącego motywu i przełączają się na żywo. Kolor wybrany ręcznie zostaje bez zmian, a starsza wersja aplikacji otwiera te rysunki jak dotąd.
+- Zmienione: na zakładce Backtest nie ma filtrów „Typ” i „Okres” ani listy „Ostatnie trade'y”, bo jej nie dotyczą. Na pozostałych zakładkach zostały.
+- Poprawione: prawy panel i stopka były niepełne, gdy aplikacja startowała od razu na zakładce Kalendarz (od 1.4.0) albo Backtest. Teraz mają pełną zawartość, tak samo jak po przełączeniu zakładek.
+- Notion: migracja 006 dodaje w bazie Trade'y trzy pola: „Sesja backtestu”, „MAE (R)” i „MFE (R)”. Migracja tylko dodaje pola, niczego nie zmienia ani nie usuwa. Aktualizacja robi wcześniej kopię baz, a `node update.mjs --migrate-only --dry-run` pokazuje plan bez zapisu.
+- Dane: świece CME służą do własnego użytku i zostają na tym komputerze. ES w Backteście działa na świecach 1m, bo sekundowych danych ES nie ma.
+
+### EN
+- Added: a Backtest tab. You step through a trading day candle by candle and never see the future: the forming candle stays put, and stepping back blocks trading until you return to the present. NQ has real 1s candles from the 9:30-11:00 New York window, ES runs on 1m candles. The wizard excludes days without complete data and tells you why. Shortened days and daylight saving changes are handled in New York time.
+- Added: orders in replay (market, limit, stop, SL, TP, BE, closing part of a position) with fills computed on candles, size from the session risk, and the result in R and USD. You can also place an order from a drawn position with the "Enter from drawing" button or a shortcut (D by default). A drawing price close to the market gives a market order, otherwise a limit or stop. The drawing disappears once the order is placed, and Ctrl+Z in drawings brings it back.
+- Added: journaling a few seconds after a trade closes (setup, notes), a "to complete" list and a snapshot of drawings. "End day" sends the trades to the Trades database in Notion with the Backtest type. Sending uses a queue and does not duplicate pages on a retry. The session is saved locally, so closing the tab loses nothing.
+- Added: sessions with a day filter. You pick days by market features (gap from the price at the session start time, overnight range, weekday, news and earnings), with a live counter and filter templates. The features use only data from before the start time, so they never reveal how the day went on.
+- Added: several charts in one replay (different timeframes and instruments) with a shared clock and crosshair, drawings stored separately per session and instrument, and keyboard shortcuts you set in Settings, Backtest tab.
+- Added: session statistics and a "Where is my edge" view: results broken down by setup, weekday, hour, day type and direction, plus execution tiles with MAE and MFE in R and a Backtest versus Live comparison. A row gives a conclusion only from 20 trades.
+- Added: a callout drawing (a text bubble) on all charts, replay included.
+- Changed: the long/short position drawing works and looks like TradingView, and our own differences stay. The panel has Inputs (account, risk in USD or percent, quantity, target and stop in ticks and price, BE, R:R), Style and Labels tabs. Labels with statistics (P&L, quantity, R:R, axis prices) show when the drawing is selected or hovered, and "Always show" is a switch in the panel. TradingView's lot size and leverage are not there, because futures contracts have a whole quantity and a multiplier from the instrument.
+- Changed: the trade preview and the chart editor follow the theme. In Platinum the preview is light (background #e0e0e0), where it used to be always dark. Drawings with a default colour (lines, text, callout, zones, positions, Fibonacci) are drawn in the colours of the current theme and switch live. A colour you picked by hand stays as it is, and an older version of the app opens these drawings as before.
+- Changed: the Backtest tab has no "Type" and "Period" filters and no "Recent trades" list, because they do not apply to it. They stay on the other tabs.
+- Fixed: the right panel and the footer were incomplete when the app started straight on the Calendar tab (since 1.4.0) or the Backtest tab. They now have the full content, the same as after switching tabs.
+- Notion: migration 006 adds three fields to the Trades database: "Backtest session", "MAE (R)" and "MFE (R)". The migration only adds fields and changes or removes nothing. The update makes a backup of your databases first, and `node update.mjs --migrate-only --dry-run` shows the plan without writing.
+- Data: CME candles are for your own use and stay on this computer. ES in Backtest runs on 1m candles, because there is no 1s data for ES.
+
 ## [1.4.1] · 2026-10-30
 
 ### PL

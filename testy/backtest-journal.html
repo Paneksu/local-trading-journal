@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: journaling i kończenie dnia w backtescie E1 (strona robocza)</title>
+<!-- Strona robocza testów backtest-E1 (testy/backtest-E1-journal.mjs), Chrome/Edge headless przez CDP, podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Serwer testowy ma w THQ_CONFIG_DIR wyłącznie świece syntetyczne (testy/bt-dane-syntetyczne.mjs). Prawdziwe moduły: bt-replay.js, bt-journal.js, bt-zlecenia.js, bt-wykres.js,
+     prawdziwy styles.css i features.css. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. ?part=shot zostawia otwarty panel (zrzuty), ?theme=platinum zmienia motyw. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'journal';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+
+try {
+  localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.jump.v1');
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { createBacktestView } = await import('/js/bt-widok.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const { mergeBase, visibleCount } = await import('/js/bt-swieca.js');
+  const { roundTick } = await import('/js/rysunki.js');
+  const client = createSessionClient();
+  const DAY1 = '2024-03-12', DAY2 = '2024-03-13';
+  const day0 = await getJson(`/api/backtest/day?instruments=NQ&day=${DAY1}&ctx=2`);
+  const cutAt = nyAt(DAY1, '12:00');
+  const shortDay = { ...day0, inst: { ...day0.inst, NQ: { ...day0.inst.NQ, m1: day0.inst.NQ.m1.filter((b) => b[0] < cutAt) } } }; // dzień skrócony: dane kończą się o 12:00 NY
+  const loadDay = async ({ day }) => (day === DAY1 ? day0 : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+  const loadShort = async ({ day }) => (day === DAY1 ? shortDay : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+  const st = mergeBase(day0.inst.NQ.m1, day0.inst.NQ.s1, day0.inst.NQ.real1s);
+  const c0 = nyAt(DAY1, '09:00');
+  const mk = async (name, { order = 'chrono' } = {}) => {
+    const doc = newSessionDoc({
+      id: newSessionId(), name,
+      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order, seed: 1, accountId: null, filter: null, excluded: [] },
+      pool: [DAY1, DAY2], now: Date.now(),
+    });
+    await client.create(doc);
+    return doc;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const btn = (b) => scr().querySelector(`[data-bt="${b}"]`);
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P(`[name="${name}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  const clickO = (o) => P(`[data-o="${o}"]`).click();
+  const lastClose = (c) => st.bars[visibleCount(st, c) - 1][4];
+  const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+  const panel = () => scr().querySelector('.bt-jr');
+  const sessionOnDisk = (id) => getJson(`/api/backtest/session/${id}`);
+  // Otwiera pozycję 1 szt. z bardzo dalekim SL (żeby krok replayu jej nie zamknął), bez TP
+  const buy = () => { setF('sl', '300'); setF('tp', ''); setF('qty', '1'); clickO('buy'); };
+  // Odpowiada na okno potwierdzenia „Zakończ dzień”
+  const answer = async (yes) => { const b = await until(() => document.querySelector(`.scrim [data-cd="${yes ? 'yes' : 'no'}"]`)); if (b) b.click(); await sleep(60); return !!b; };
+  const cursorGap = (el) => {
+    // odległość poziomą prostokąta panelu od pionu świecy przy kursorze (px); ujemna = przecina
+    const R = window.__R, c = R.charts()[0], bs = c.bars(), lb = bs[bs.length - 1];
+    const x = c.chart.timeScale().timeToCoordinate(lb[0]);
+    const sr = el.closest('.bt-stage').getBoundingClientRect(), pr = el.getBoundingClientRect();
+    const ax = sr.left + x;
+    return Math.max(pr.left - ax, ax - pr.right);
+  };
+
+  if (part === 'shot') {
+    const doc = await mk('Sesja E1 zrzut');
+    const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, getSetups: () => ['Breakout', 'Reversal'] });
+    await R.ready;
+    setF('sl', '20'); setF('tp', '40'); clickO('buy');
+    for (let i = 0; i < 30; i++) R.step(1);
+    clickO('close');
+    await sleep(300);
+    const p = panel();
+    p.querySelector('[name="setup"]').value = 'Breakout';
+    p.querySelector('[name="notes"]').value = 'Wejście po cofnięciu do strefy.';
+    rec('zrzut', !!p, 'panel otwarty do zrzutu');
+    out.textContent = JSON.stringify({ checks });
+  }
+
+  if (part === 'journal') {
+    await section('panel', async () => {
+      const doc = await mk('Sesja E1 panel');
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, getSetups: () => ['Breakout', 'Reversal'] });
+      window.__R = R;
+      await R.ready;
+      // dwie sztuki: zamknięcie części nie otwiera panelu, pełne tak
+      setF('sl', '300'); setF('tp', ''); setF('qty', '2'); clickO('buy');
+      setF('part', '1'); clickO('partial');
+      await sleep(80);
+      rec('panel', !panel() && (R.doc().trades || []).length === 0, 'częściowe zamknięcie: bez panelu i bez trade\'a');
+      clickO('close');
+      rec('panel', !!panel() && R.doc().trades.length === 1, 'pełne zamknięcie otwiera panel i dopisuje trade');
+      rec('panel', panel()?.closest('.bt-stage') === scr().querySelector('.bt-cell .bt-stage'), 'panel w scenie wykresu instrumentu');
+      const t1 = R.doc().trades[0];
+      // toTrade: kształt i wartości
+      rec('toTrade', t1.id === 't1' && t1.day === DAY1 && t1.instrument === 'NQ' && t1.dir === 'Long' && t1.qty === 2, `podstawowe pola: ${JSON.stringify([t1.id, t1.day, t1.instrument, t1.dir, t1.qty])}`);
+      rec('toTrade', t1.exits.length === 2 && t1.exits[0].reason === 'partial' && t1.exits[1].reason === 'manual', `wyjścia: ${JSON.stringify(t1.exits.map((x) => x.reason))}`);
+      const wavg = (t1.exits[0].price * t1.exits[0].qty + t1.exits[1].price * t1.exits[1].qty) / 2;
+      rec('toTrade', Math.abs(t1.exitPrice - wavg) < 1e-6, `exitPrice to średnia ważona: ${t1.exitPrice} vs ${wavg}`);
+      rec('toTrade', Number.isFinite(t1.r) && Number.isFinite(t1.pnl) && t1.maeR <= 0 && t1.mfeR >= 0 && t1.be === false, `r ${t1.r}, pnl ${t1.pnl}, MAE ${t1.maeR}, MFE ${t1.mfeR}`);
+      rec('toTrade', t1.journal === 'todo' && t1.notion.state === 'pending' && t1.notion.id === null && t1.setup === '' && t1.notes === '', 'journal todo, notion pending');
+      rec('toTrade', t1.drawings && t1.drawings.v === 1 && Array.isArray(t1.drawings.d), `migawka rysunków: ${JSON.stringify(t1.drawings).slice(0, 60)}`);
+      // zapis przed otwarciem panelu: trade już w pliku sesji
+      const d1 = await until(async () => { const x = await sessionOnDisk(doc.id); return x.trades?.length === 1 ? x : null; }, 1500);
+      rec('zapis', d1 && d1.trades[0].journal === 'todo' && d1.book.positions.NQ === null, 'trade i pusty book w pliku sesji, panel nadal otwarty bez zapisu');
+      // położenie: nie zasłania świecy przy kursorze
+      const gap = cursorGap(panel());
+      rec('panel', gap >= 40, `prostokąt panelu poza pionem kursora ± 40 px: odstęp ${Math.round(gap)} px, róg ${panel().dataset.corner}`);
+      rec('panel', panel().getBoundingClientRect().bottom <= panel().closest('.bt-stage').getBoundingClientRect().bottom, 'panel mieści się w scenie');
+      // brak oceny wykonania i innych pól
+      const fields = [...panel().querySelectorAll('input, textarea, select')].map((e) => e.name);
+      rec('brak oceny', fields.length === 2 && fields.includes('setup') && fields.includes('notes'), `pola panelu: ${fields.join(',')}`);
+      rec('brak oceny', !/ocen|wykonan|execution|rating/i.test(panel().innerHTML.replace(/<datalist[\s\S]*?<\/datalist>/, '')), 'brak oceny wykonania w panelu');
+      // podpowiedzi
+      const opts = [...panel().querySelectorAll('datalist option')].map((o) => o.value);
+      rec('setup', JSON.stringify(opts) === JSON.stringify(['Breakout', 'Reversal']), `podpowiedzi z Notion: ${opts.join(',')}`);
+      // Enter bez setupu nie zapisuje
+      const inp = () => panel().querySelector('[name="setup"]'), nts = () => panel().querySelector('[name="notes"]');
+      const e0 = key('Enter', {}, inp());
+      rec('enter', !!panel() && R.doc().trades[0].journal === 'todo' && inp().getAttribute('aria-invalid') === 'true' && e0.defaultPrevented, 'Enter bez setupu: panel zostaje, pole oznaczone');
+      // Shift+Enter w notatce: nowa linia (zdarzenie nieprzechwycone), panel zostaje
+      nts().value = 'a';
+      const e1 = key('Enter', { shiftKey: true }, nts());
+      rec('enter', !!panel() && !e1.defaultPrevented, 'Shift+Enter w notatce nie zapisuje i zostawia domyślną nową linię');
+      // skróty replayu: w polu panelu nie sterują, poza nim tak
+      const c1 = R.cursor();
+      key('ArrowRight', { shiftKey: true }, inp());
+      rec('skroty', R.cursor() === c1, 'Shift+→ w polu setupu nie rusza replayu');
+      key('ArrowRight', { shiftKey: true });
+      rec('skroty', R.cursor() > c1 && !!panel(), 'Shift+→ poza polem krok w przód przy otwartym panelu');
+      // zapis Enterem: setup i notatka
+      inp().value = 'Breakout'; nts().value = 'Cofnięcie do strefy.';
+      key('Enter', {}, nts());
+      await sleep(60);
+      const s1 = R.doc().trades[0];
+      rec('enter', !panel() && s1.setup === 'Breakout' && s1.notes === 'Cofnięcie do strefy.' && s1.journal === 'done', `Enter zapisuje: ${JSON.stringify([s1.setup, s1.notes, s1.journal])}`);
+      const d2 = await until(async () => { const x = await sessionOnDisk(doc.id); return x.trades?.[0]?.journal === 'done' ? x : null; }, 1500);
+      rec('enter', d2 && d2.trades[0].setup === 'Breakout', 'opis trzymany w pliku sesji od razu');
+
+      // drugi trade: Esc zostawia do uzupełnienia
+      buy(); clickO('close');
+      const t2 = R.doc().trades[1];
+      rec('esc', !!panel() && t2.id === 't2', 'drugi trade: panel');
+      key('Escape', {}, inp());
+      await sleep(60);
+      rec('esc', !panel() && t2.journal === 'todo' && t2.setup === '', 'Esc zostawia trade bez opisu na liście „do uzupełnienia”');
+      rec('lista', /Do uzupełnienia: 1|To complete: 1/.test(scr().querySelector('.bt-todo').textContent) && !scr().querySelector('.bt-todo').hidden, `licznik w pasku: «${scr().querySelector('.bt-todo').textContent}»`);
+
+      // nowy setup z podpowiedzią z innych trade'ów sesji
+      buy(); clickO('close');
+      inp().value = 'Mój nowy setup'; key('Enter', {}, inp());
+      await sleep(60);
+      rec('setup', R.doc().trades[2].setup === 'Mój nowy setup' && R.doc().trades[2].journal === 'done', `nowa nazwa zapisana w trade'cie: ${R.doc().trades[2].setup}`);
+      buy(); clickO('close');
+      const opts2 = [...panel().querySelectorAll('datalist option')].map((o) => o.value);
+      rec('setup', opts2.includes('Mój nowy setup') && opts2.includes('Breakout') && opts2.length === 3, `podpowiedzi po trade'ach sesji: ${opts2.join(',')}`);
+
+      // replay nie czeka: odtwarzanie przy otwartym panelu
+      const cA = R.cursor();
+      R.play();
+      await sleep(400);
+      R.pause();
+      rec('replay', R.cursor() > cA && !!panel(), `odtwarzanie przy otwartym panelu: +${Math.round(R.cursor() - cA)} s`);
+      // drugi zamknięty trade podczas otwartego panelu: poprzedni zostaje na liście, nowy panel
+      const idOpen = R.journal().tradeId;
+      buy(); clickO('close');
+      const idNew = R.journal().tradeId;
+      rec('replay', document.querySelectorAll('.bt-jr').length === 1 && idNew !== idOpen && R.doc().trades.find((x) => x.id === idOpen).journal === 'todo', `poprzedni panel (${idOpen}) → lista, nowy (${idNew}) otwarty`);
+
+      // lista „do uzupełnienia”: kliknięcie otwiera ten sam panel
+      const todoN = R.doc().trades.filter((x) => x.journal === 'todo').length;
+      const tb = scr().querySelector('.bt-todo');
+      tb.click();
+      const items = [...scr().querySelectorAll('.bt-todo-l [data-todo]')];
+      rec('lista', items.length === todoN && todoN >= 2, `pozycje listy: ${items.length} (todo ${todoN})`);
+      const target = items.find((x) => x.dataset.todo === 't2');
+      target.click();
+      rec('lista', R.journal()?.tradeId === 't2' && document.querySelectorAll('.bt-jr').length === 1, 'kliknięcie pozycji otwiera panel tego trade\'a');
+      inp().value = 'Reversal'; key('Enter', {}, inp());
+      await sleep(60);
+      rec('lista', R.doc().trades[1].journal === 'done' && R.doc().trades.filter((x) => x.journal === 'todo').length === todoN - 1, 'uzupełniony trade znika z listy');
+      R.close();
+    });
+
+    await section('zamkniecie karty', async () => {
+      const doc = await mk('Sesja E1 zamknięcie karty');
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      await R.ready;
+      buy(); clickO('close');
+      rec('karta', !!panel(), 'panel otwarty');
+      R.close(); // zamknięcie ekranu z otwartym panelem
+      const d = await until(async () => { const x = await sessionOnDisk(doc.id); return x.trades?.length === 1 ? x : null; }, 1500);
+      rec('karta', d && d.trades[0].journal === 'todo', 'trade nie zginął z pliku sesji');
+      const R2 = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      await R2.ready;
+      rec('karta', !panel() && !scr().querySelector('.bt-todo').hidden && /1/.test(scr().querySelector('.bt-todo').textContent), 'po ponownym otwarciu trade na liście, bez panelu');
+      // lista sesji pokazuje licznik
+      R2.close();
+      const host = document.createElement('div'); document.body.appendChild(host);
+      const view = createBacktestView({ client, replayRoot: () => document.body, storage: null });
+      view.mount(host);
+      const badge = await until(() => host.querySelector('.bt-l-todo'));
+      rec('karta', badge && /1/.test(badge.textContent), `lista sesji: licznik „do uzupełnienia”: ${badge?.textContent}`);
+      view.unmount(); host.remove();
+    });
+
+    await section('zakoncz dzien', async () => {
+      const doc = await mk('Sesja E1 zakończ dzień');
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      window.__R = R;
+      await R.ready;
+      // panel otwarty z wcześniejszego trade'a nie blokuje przejścia
+      buy(); clickO('close');
+      rec('dzien', !!panel(), 'panel poprzedniego trade\'a otwarty');
+      buy();
+      const lc = roundTick(lastClose(R.cursor()), 0.25);
+      btn('end-day').click();
+      rec('dzien', await until(() => document.querySelector('.scrim')) && /Zamknąć po bieżącej cenie|Close it at the current price/.test(document.querySelector('.scrim').textContent), 'pytanie „Zamknąć po bieżącej cenie?”');
+      await answer(false);
+      rec('dzien', !!R.book().positions.NQ && R.doc().days[DAY1].status !== 'done', '„nie”: dzień się nie kończy, pozycja otwarta');
+      btn('end-day').click();
+      await answer(true);
+      await until(() => R.doc().days[DAY1].status === 'done');
+      const tr = R.doc().trades;
+      const last = tr[tr.length - 1];
+      rec('dzien', R.doc().days[DAY1].status === 'done' && !R.book().positions.NQ, '„tak”: dzień zakończony, pozycja zamknięta');
+      rec('dzien', last.exits[last.exits.length - 1].reason === 'eod' && last.exitPrice === lc && last.exitT <= R.cursor() && last.journal === 'todo', `zamknięcie 'eod' po cenie kursora: ${last.exitPrice} vs ${lc}, ${last.exits[last.exits.length - 1].reason}`);
+      rec('dzien', !panel() && R.doc().trades[0].journal === 'todo', 'panel journalingu nie blokuje przejścia, trade zostaje „do uzupełnienia”');
+      const d = await until(async () => { const x = await sessionOnDisk(doc.id); return x.days?.[DAY1]?.status === 'done' && x.trades?.length === 2 ? x : null; }, 1500);
+      rec('dzien', d, 'stan końca dnia w pliku sesji od razu');
+      rec('dzien', P('[data-o="buy"]').disabled, 'w zakończonym dniu handel zablokowany');
+      R.close();
+    });
+
+    await section('zlecenia', async () => {
+      const doc = await mk('Sesja E1 zlecenia');
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      await R.ready;
+      P('[data-ot="limit"]').click();
+      setF('price', String(roundTick(lastClose(R.cursor()) - 150, 0.25))); setF('sl', '300'); setF('tp', ''); setF('qty', '1');
+      clickO('buy');
+      rec('zlecenia', R.book().orders.length === 1 && !R.book().positions.NQ, 'oczekujące zlecenie złożone');
+      btn('end-day').click();
+      await sleep(80);
+      rec('zlecenia', !document.querySelector('.scrim'), 'bez otwartej pozycji pytania nie ma');
+      rec('zlecenia', R.book().orders.length === 0 && R.doc().days[DAY1].status === 'done', 'oczekujące zlecenia anulowane, dzień zakończony');
+      R.close();
+    });
+
+    await section('koniec danych', async () => {
+      const doc = await mk('Sesja E1 koniec danych');
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay: loadShort });
+      await R.ready;
+      buy();
+      let n = 0;
+      while (R.cursor() < cutAt && n++ < 400 && !document.querySelector('.scrim')) R.step(1);
+      rec('koniec', R.cursor() === cutAt, `kursor staje na końcu danych dnia skróconego: ${R.cursor() - cutAt} s od 12:00 NY po ${n} krokach`);
+      rec('koniec', await until(() => document.querySelector('.scrim')) && /Zamknąć po bieżącej cenie|Close it at the current price/.test(document.querySelector('.scrim').textContent), 'to samo pytanie co przy „Zakończ dzień”');
+      R.step(1);
+      rec('koniec', R.cursor() === cutAt, 'kursor nie wychodzi poza koniec danych');
+      await answer(true);
+      await until(() => R.doc().days[DAY1].status === 'done');
+      const tr = R.doc().trades[0];
+      rec('koniec', tr && tr.exits[tr.exits.length - 1].reason === 'eod' && tr.exitT <= cutAt && R.doc().days[DAY1].status === 'done', 'ta sama ścieżka: zamknięcie eod, dzień zakończony');
+      R.close();
+    });
+
+    await section('nastepny dzien', async () => {
+      const doc = await mk('Sesja E1 następny dzień', { order: 'random' });
+      const stats = [];
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, onStats: (id) => stats.push(id) });
+      await R.ready;
+      rec('nastepny', scr().querySelector('.bt-date').hidden, 'kolejność losowa: data ukryta w trakcie dnia');
+      btn('end-day').click();
+      await until(() => R.doc().days[DAY1].status === 'done');
+      rec('nastepny', R.doc().days[DAY1].status === 'done' && !scr().querySelector('.bt-date').hidden && /2024/.test(scr().querySelector('.bt-date').textContent), 'dzień zakończony: data odsłonięta');
+      btn('end-day').click();
+      await until(() => R.doc().dayIdx === 1 && R.chart());
+      rec('nastepny', R.doc().dayIdx === 1 && R.cursor() === nyAt(DAY2, '09:00') && R.doc().days[DAY1].status === 'done', `następny dzień od godziny startu: idx ${R.doc().dayIdx}`);
+      rec('nastepny', scr().querySelector('.bt-fin').hidden, 'ekran „Sesja ukończona” jeszcze niewidoczny');
+      btn('end-day').click();
+      await until(() => R.doc().days[DAY2]?.status === 'done');
+      const fin = scr().querySelector('.bt-fin');
+      rec('nastepny', !fin.hidden && /Sesja ukończona|Session complete/.test(fin.textContent), 'ostatni dzień puli: ekran „Sesja ukończona”');
+      const sb = fin.querySelector('[data-bt="stats"]');
+      rec('nastepny', !sb.disabled, 'wejście do statystyk dostępne');
+      sb.click();
+      rec('nastepny', stats.length === 1 && stats[0] === doc.id, 'wejście do statystyk woła onStats z id sesji');
+      rec('nastepny', btn('end-day').disabled, 'przycisk dnia wyłączony po ostatnim dniu');
+      R.close();
+    });
+
+    await section('pagehide', async () => {
+      const doc = await mk('Sesja E1 pagehide');
+      const R = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      await R.ready;
+      buy();
+      for (let i = 0; i < 5; i++) R.step(1);
+      const c = R.charts()[0], b = c.bars();
+      c.manager().add({ kind: 'trend-line', points: [{ time: b[b.length - 6][0], price: b[b.length - 6][4] }, { time: b[b.length - 2][0], price: b[b.length - 2][4] }], style: { color: '#cccccc', width: 1 } });
+      await c.rysunki().flush();
+      const cur = R.cursor(), ent = R.book().positions.NQ.entryPrice;
+      window.dispatchEvent(new Event('pagehide')); // zamknięcie karty w trakcie dnia (bez close())
+      const d = await until(async () => { const x = await sessionOnDisk(doc.id); return x.cursor === cur && x.book?.positions?.NQ ? x : null; }, 3000);
+      rec('pagehide', d && d.book.positions.NQ.entryPrice === ent && (d.drawings?.NQ?.[DAY1]?.d || []).length === 1, `plik sesji po pagehide: kursor ${d?.cursor}, wejście ${d?.book?.positions?.NQ?.entryPrice}`);
+      const R2 = openReplay(document.body, { sessionId: doc.id, client: createSessionClient(), loadDay });
+      await R2.ready;
+      rec('pagehide', R2.cursor() === cur && R2.book().positions.NQ?.entryPrice === ent, `po ponownym otwarciu ten sam kursor i pozycja: ${R2.cursor()} vs ${cur}`);
+      const lines = R2.charts()[0].manager().drawings().filter((x) => x.kind === 'trend-line');
+      rec('pagehide', lines.length === 1, 'rysunek z dnia wrócił na wykres');
+      R2.close();
+      clickO('close'); // zamknięcie pozycji: do trade'a trafia migawka rysunków instrumentu z dnia
+      const tr = R.doc().trades[0];
+      rec('toTrade', tr && tr.drawings.d.length === 1 && tr.drawings.d[0].kind === 'trend-line', `migawka rysunków w trade'cie: ${tr?.drawings?.d?.length} rysunek`);
+      R.close();
+    });
+    out.textContent = JSON.stringify({ checks });
+  }
+  if (!out.textContent || out.textContent === '…') out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

@@ -124,13 +124,14 @@ function fromTwo(p1, y1, p2, y2, extra) {
 // Komplet skal dla kształtów: { x, y, idx(t), left, right, top, bottom, pip }.
 // candles: świece osi (indeksy liczone od 0 w tej tablicy); xs: indexScale; ys: priceScale; box: krawędzie pola wykresu.
 // decimal: separator dziesiętny podpisów (R:R pozycji), domyślnie kropka.
-export function chartScales({ candles, xs, ys, box, pip = 0.01, step, decimal = '.' }) {
+export function chartScales({ candles, xs, ys, box, pip = 0.01, step, decimal = '.', measure = null }) {
   const st = step ?? medianStep(candles);
-  return { x: xs.x, y: ys.y, idx: (t) => timeToIndex(candles, Number(t), st), pip, step: st, spacing: xs.spacing, decimal, ...box };
+  return { x: xs.x, y: ys.y, idx: (t) => timeToIndex(candles, Number(t), st), pip, step: st, spacing: xs.spacing, decimal, measure, ...box };
 }
 
 // ---- kształty rysunków (8 narzędzi: 7 z etapu 9 + Gann box z P27) ----
-export const KINDS = ['horizontal-line', 'trend-line', 'rectangle', 'fib-retracement', 'gann-box', 'text', 'long-position', 'short-position'];
+// D2 (30.10.2026): callout (dymek z ogonem) z paczki 0.6.2, punkt 0 = grot, punkt 1 = środek dymku.
+export const KINDS = ['horizontal-line', 'trend-line', 'rectangle', 'fib-retracement', 'gann-box', 'text', 'callout', 'long-position', 'short-position'];
 // P7: domyślne poziomy Fibonacciego, gdy rysunek nie ma własnych.
 export const FIB_DEFAULT = [0, 0.5, 0.618, 0.705, 0.79, 1];
 // P27: domyślne poziomy Gann boxa (ceny i czasu), jak w TradingView.
@@ -164,6 +165,57 @@ export function textPart({ x, y, text, size = 12, horz = 'center', vert = 'middl
   return { t: 'text', x: tx, y: top + pad, text, cls, anchor: horz === 'left' ? 'start' : horz === 'right' ? 'end' : 'middle', baseline: 'hanging', size, angle, ax: x, ay: y, color };
 }
 const textOf = (d) => (typeof d.style?.text === 'string' && d.style.text ? d.style.text : typeof d.text === 'string' ? d.text : '');
+
+
+// D2: pomiar szerokości tekstu na kanwie w kroju ciała strony (tak mierzy paczka); poza przeglądarką 0,6 × rozmiar na znak.
+let measureCtx = null;
+export function canvasMeasure(txt, size, bold) {
+  try {
+    measureCtx ||= document.createElement('canvas').getContext('2d');
+    measureCtx.font = `${bold ? 'bold ' : ''}${size}px ${getComputedStyle(document.body).fontFamily}`;
+    return measureCtx.measureText(txt).width;
+  } catch { return String(txt).length * size * 0.6; }
+}
+
+// ---- D2: callout (jak paczka 0.6.2: Ti = ramka, Ml = ścieżka z ogonem) ----
+// Szerokość tekstu: s.measure(tekst, rozmiar, pogrubiony) (przeglądarka: kanwa w kroju strony), bez niej 0,6 × rozmiar na znak (testy w Node).
+const textWidth = (s, txt, size, bold) => (typeof s.measure === 'function' ? s.measure(txt, size, !!bold) : txt.length * size * 0.6);
+// Wiersze: podział po znaku nowej linii; zawijanie po słowach do wordWrapWidth tylko przy style.wordWrap (jak paczka).
+function calloutLines(s, txt, size, bold, wrap) {
+  const rows = String(txt).split(/\r\n|\r|\n/);
+  if (!(wrap > 0)) return rows;
+  const out = [];
+  for (const row of rows) {
+    let cur = '';
+    for (const w of row.split(' ')) {
+      const next = cur ? `${cur} ${w}` : w;
+      if (cur && textWidth(s, next, size, bold) > wrap) { out.push(cur); cur = w; } else cur = next;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+// Ścieżka dymku: zaokrąglenie 8 px, ogon wychodzi z krawędzi, do której grot jest najbliżej (x: 0/10/20 = lewo/środek/prawo, y: 0/1/2), podstawa ±8 px od osi grota
+// (gdy tekst jest za krótki na podstawę, ogon schodzi się w narożnik jak w paczce). Współrzędne: tip = grot, box = ramka.
+export function calloutPath(box, tip, textW, textH) {
+  const { x: o, y: i, w: r, h: l } = box, c = tip.x - o, f = tip.y - i;
+  let x = 0;
+  if (tip.x > o + r) x = 20; else if (tip.x > o) x = 10;
+  if (tip.y > i + l) x += 2; else if (tip.y > i) x += 1;
+  const wide = textW + 4 > 16, tall = textH + 4 > 16, h = c, u = f;
+  const y = (a, b) => `${r2(o + a)} ${r2(i + b)}`, m = (a, b) => `A 8 8 0 0 1 ${y(a, b)}`;
+  let b = `M ${y(8, 0)}`;
+  b += x === 10 ? (wide ? ` L ${y(h - 8, 0)} L ${y(c, f)} L ${y(h + 8, 0)} L ${y(r - 8, 0)}` : ` L ${y(c, f)} L ${y(r - 8, 0)}`) : ` L ${y(r - 8, 0)}`;
+  b += x === 20 ? ` L ${y(c, f)} L ${y(r, 8)}` : ` ${m(r, 8)}`;
+  b += x === 21 ? (tall ? ` L ${y(r, u - 8)} L ${y(c, f)} L ${y(r, u + 8)} L ${y(r, l - 8)}` : ` L ${y(c, f)} L ${y(r, l - 8)}`) : ` L ${y(r, l - 8)}`;
+  b += x === 22 ? ` L ${y(c, f)} L ${y(r - 8, l)}` : ` ${m(r - 8, l)}`;
+  b += x === 12 ? (wide ? ` L ${y(h + 8, l)} L ${y(c, f)} L ${y(h - 8, l)} L ${y(8, l)}` : ` L ${y(c, f)} L ${y(8, l)}`) : ` L ${y(8, l)}`;
+  b += x === 2 ? ` L ${y(c, f)} L ${y(0, l - 8)}` : ` ${m(0, l - 8)}`;
+  b += x === 1 ? (tall ? ` L ${y(0, u + 8)} L ${y(c, f)} L ${y(0, u - 8)} L ${y(0, 8)}` : ` L ${y(c, f)} L ${y(0, 8)}`) : ` L ${y(0, 8)}`;
+  b += x === 0 ? ` L ${y(c, f)} L ${y(8, 0)}` : ` ${m(8, 0)}`;
+  return `${b} Z`;
+}
+const r2 = (v) => Math.round(v * 100) / 100;
 
 // Kształty jednego rysunku: { kind, color, parts: [...] } albo null (nieznany rodzaj albo zły kształt).
 // Część: { t: 'line', x1, y1, x2, y2, cls, dash, color?, width? } | { t: 'rect', x, y, w, h, cls, fill, fillColor?, fillOpacity?, stroke?, width? }
@@ -278,6 +330,18 @@ export function shapes(drawing, s) {
       parts.push({ t: 'text', x: P[0].x + pad, y: P[0].y + pad, text: txt, cls: 'drw-text', anchor: 'start', baseline: 'hanging', size: fs, angle: 0, ax: P[0].x, ay: P[0].y, color: tcol });
       break;
     }
+    case 'callout': {
+      // D2 (30.10.2026): jak paczka (Ti/ca): ramka wyśrodkowana na punkcie 1, tekst 10 px od krawędzi, ogon do punktu 0. Kolory ze stylu (tło z krytem 100 − transparency).
+      if (P.length < 2) return null;
+      const fs = Number.isFinite(st.fontSize) ? st.fontSize : 14, bold = !!st.bold, wrap = st.wordWrap ? (st.wordWrapWidth ?? 200) : null;
+      const rows = calloutLines(s, txt, fs, bold, wrap);
+      const tw = wrap ?? Math.max(0, ...rows.map((r) => textWidth(s, r, fs, bold))), th = fs * rows.length;
+      const box = { x: P[1].x - (tw + 20) / 2, y: P[1].y - (th + 20) / 2, w: tw + 20, h: th + 20 };
+      const bg = colorOf(st.backgroundColor) || color;
+      parts.push({ t: 'path', d: calloutPath(box, P[0], tw, th), cls: 'drw-callout', fill: true, fillColor: bg, fillOpacity: opacityOf(st.transparency, 50), color: colorOf(st.borderColor) || color, width: Number.isFinite(st.width) ? st.width : 2, tip: { x: P[0].x, y: P[0].y }, box });
+      if (txt) rows.forEach((row, k) => parts.push({ t: 'text', x: box.x + 10, y: box.y + 10 + k * fs, text: row, cls: 'drw-text', anchor: 'start', baseline: 'hanging', size: fs, angle: 0, ax: box.x + 10, ay: box.y + 10 + k * fs, color: tcol, fontWeight: bold ? 700 : undefined }));
+      break;
+    }
     case 'long-position':
     case 'short-position': {
       if (P.length < 2) return null;
@@ -328,7 +392,7 @@ export function positionExtras(drawing, s, g) {
 // P32 (28.10.2026), słowa użytkownika: «rysunki powinny miec pole do kliknieca, gdzie maja ustawione pole tekstowe i jak sie je kliknie podwojnie to zaczynac pisac
 // tam»: miejsce tekstu rysunku (linia pozioma, linia trendu, prostokąt, tekst) z tych samych reguł co rysowanie, także gdy tekstu jeszcze nie ma (wtedy w miejscu,
 // w którym by się pojawił). Część tekstu jak w shapes(): { x, y (góra wiersza, 'hanging'), anchor, size, angle, ax, ay, empty }.
-export const TEXT_KINDS = ['horizontal-line', 'trend-line', 'rectangle', 'text'];
+export const TEXT_KINDS = ['horizontal-line', 'trend-line', 'rectangle', 'text', 'callout'];
 export function textSlot(drawing, s) {
   if (!drawing || !TEXT_KINDS.includes(drawing.kind)) return null;
   const has = !!textOf(drawing), ph = ' ';

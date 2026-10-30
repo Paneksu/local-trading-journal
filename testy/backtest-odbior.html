@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: scenariusz odbioru backtestu H1 (strona robocza)</title>
+<!-- Strona robocza odbioru H1 (testy/backtest-e2e.mjs, uruchamiany osobno od run.mjs), Chrome/Edge headless przez CDP, czas rzeczywisty, podawana tylko przez dashboard
+     testowy (THQ_TEST_PAGES=1) pod /__testy/. Serwer testowy czyta KOPIĘ prawdziwych świec (TEST_CONFIG_DIR) i atrapę Notion po migracji 006 (nigdy prawdziwe Notion).
+     Scenariusz §16: kreator „CPI 2024” z filtrem, trzy dni (krok, odtwarzanie, skoki), trzy trade'y z ręcznym wyliczeniem z cen świec 1s, linia i callout, journaling,
+     Zakończ dzień → Notion, statystyki; dodatkowo zgodność interwałów sekundowych i „brak przyszłości” po każdej akcji. Prawdziwe moduły: bt-widok.js (lista, kreator,
+     replay, statystyki), bt-replay.js, bt-zlecenia.js, bt-journal.js, bt-wykres.js z paczką rysowania. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], info }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; max-height: 30vh; overflow: auto; }
+</style>
+</head>
+<body>
+<div id="host" class="bt-view"></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const host = document.getElementById('host');
+const checks = [], info = { trades: [], days: [] };
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 10000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(30); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+const ev = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
+const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+const hms = (s) => new Date(s * 1000).toISOString().slice(11, 19);
+const r2 = (x) => Math.round(x * 100) / 100;
+
+// 2024: publikacje CPI (BLS), 8:30 NY
+const CPI_2024 = ['2024-01-11', '2024-02-13', '2024-03-12', '2024-04-10', '2024-05-15', '2024-06-12', '2024-07-11', '2024-08-14', '2024-09-11', '2024-10-10', '2024-11-13', '2024-12-11'];
+try {
+  for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k);
+  const { createBacktestView } = await import('/js/bt-widok.js');
+  const { createSessionClient } = await import('/js/bt-klient.js');
+  const { sanitizeBt, nyAt, DEFAULT_JUMPS } = await import('/js/bt-czas.js');
+  const { normalizeTrades } = await import('/js/stats.js');
+  const { MULT } = await import('/js/bt-wypelnienia.js');
+  const client = createSessionClient();
+  let model = await getJson('/api/data');
+  let liveTrades = normalizeTrades(model.data.trades);
+  const known = [...new Set(liveTrades.filter((x) => x.typ !== 'Backtest').map((x) => x.setup).filter(Boolean))].sort();
+  info.liveSetups = known;
+  // skok pomocniczy o N sekund (offset): sterowanie kursorem do wyliczonych chwil; reszta skoków domyślna
+  const settings = { ...sanitizeBt(null), speed: 300, jumps: [...DEFAULT_JUMPS.map((j) => ({ ...j })), { id: 'h1go', name: 'H1', cel: { kind: 'offset', sec: 1 }, skrot: '' }] };
+  const view = createBacktestView({ client, getSettings: () => settings, getSetups: () => known, getTrades: () => liveTrades, getAccounts: () => [], replayRoot: () => document.body });
+  view.mount(host);
+  let R = null, rd = null;
+  const days = {};
+  const loadRd = async (d) => (days[d] ||= await getJson(`/api/backtest/day?instruments=NQ,ES&day=${d}&ctx=2`));
+  const day = () => { const d = R.doc(); return d.pool[d.dayIdx]; };
+  const scr = () => document.querySelector('.bt-screen');
+  const goto = (t) => {
+    const sec = Math.round(t - R.cursor());
+    if (sec <= 0) throw new Error(`goto wstecz: ${hms(t)} przy kursorze ${hms(R.cursor())}`);
+    settings.jumps.find((j) => j.id === 'h1go').cel.sec = sec;
+    return R.runJump('h1go');
+  };
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P(`[name="${name}"]`); i.value = v; ev(i, 'input'); };
+  const notionLabel = () => scr().querySelector('.bt-notion').textContent;
+
+  // ---- niezależne odczyty z surowych świec dnia (bez modułów replayu) ----
+  const inR = (ranges, t) => ranges.some(([a, b]) => t >= a && t < b);
+  const overlapsR = (ranges, a, b) => ranges.some(([x, y]) => a < y && b > x);
+  // świece bazowe widoczne przy kursorze c: 1s z okna 1s (t + 1 ≤ c), 1m poza oknem (minuta nie zachodzi na okno, t + 60 ≤ c)
+  const basesAt = (q, c) => {
+    const s = q.s1.filter((b) => inR(q.real1s, b[0]) && b[0] + 1 <= c).map((b) => [...b, 1]);
+    const m = q.m1.filter((b) => !overlapsR(q.real1s, b[0], b[0] + 60) && b[0] + 60 <= c).map((b) => [...b, 60]);
+    return [...m, ...s].sort((a, b) => a[0] - b[0]);
+  };
+  const aggOf = (bars) => bars.length ? [bars[0][0], bars[0][1], Math.max(...bars.map((b) => b[2])), Math.min(...bars.map((b) => b[3])), bars[bars.length - 1][4]] : null;
+  const TFS = { '1s': 1, '5s': 5, '10s': 10, '15s': 15, '30s': 30, '1m': 60, '2m': 120, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600 };
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  const sameOhlc = (a, b) => !!a && !!b && a[0] === b[0] && [1, 2, 3, 4].every((i) => near(a[i], b[i]));
+
+  // ---- „brak przyszłości” po każdej akcji: każdy wykres, nakładki (sesje, PDH/PDL) i pasek ----
+  let futureChecks = 0;
+  async function noFuture(label) {
+    const c = R.cursor(), dd = await loadRd(day());
+    const pdBefore = dd.times.open - 15.5 * 3600; // PDH/PDL: sesje dzienne zamknięte przed otwarciem sesji CME dnia (18:00 NY dzień wcześniej)
+    for (const [i, ch] of R.charts().entries()) {
+      const inst = R.doc().layout.charts[i]?.instrument || 'NQ', q = dd.inst[inst], bases = basesAt(q, c); // H2: wykres ES liczy z własnych świec 1m
+      const bars = ch.bars(), tf = R.doc().layout.charts[i]?.tf, T = TFS[tf];
+      const late = bars.filter((b) => b[0] > c);
+      if (late.length) { rec('przyszlosc', false, `${label}: wykres ${i} (${tf}) ma świecę po kursorze ${hms(late[0][0])} > ${hms(c)}`); continue; }
+      // ostatnie 20 świec = agregat widocznych świec bazowych w ich kubełkach (niezależnie od bt-swieca.js)
+      const tail = bars.slice(-20);
+      const aggAt = (t0) => { const a = aggOf(bases.filter((x) => Math.floor(x[0] / T) * T === t0)); return a && [t0, ...a.slice(1)]; };
+      const bad = tail.filter((b) => !sameOhlc(b, aggAt(b[0])));
+      if (bad.length) rec('przyszlosc', false, `${label}: wykres ${i} (${tf}) świeca ${hms(bad[0][0])} = ${JSON.stringify(bad[0].slice(0, 5))}, oczekiwane ${JSON.stringify(aggAt(bad[0][0]))}`);
+      // nakładki: indeksy w obrębie widocznych świec, poziomy sesji z widocznych świec, PDH/PDL z sesji przed dniem
+      const ov = ch.overlays?.();
+      if (ov) {
+        const n = bars.length;
+        const okBox = ov.boxes.every((x) => x.b < n && near(x.hi, Math.max(...bars.slice(x.a, x.b + 1).map((b) => b[2]))) && near(x.lo, Math.min(...bars.slice(x.a, x.b + 1).map((b) => b[3]))));
+        const okLines = ov.lines.every((l) => l.x1 <= n - 0.5 + 1e-9 && (l.kind !== 'pd' || q.m1.some((b) => b[0] < pdBefore && (near(b[2], l.price) || near(b[3], l.price)))));
+        if (!okBox || !okLines) rec('przyszlosc', false, `${label}: wykres ${i} nakładki poza widocznymi świecami`);
+      }
+    }
+    futureChecks++;
+  }
+
+  // ---- symulacja wypełnień z surowych świec 1s (ręczne wyliczenie, niezależne od bt-wypelnienia.js) ----
+  // Wejście rynkowe przy kursorze c: cena = zamknięcie ostatniej widocznej świecy 1s, wejście t = jej koniec. Dalej każda świeca 1s: najpierw SL (dotknięty: low ≤ SL
+  // dla Long; cena = min(SL, open) przy luce), potem TP (high ≥ TP, cena = TP). Ceny w punktach, krok 0,25.
+  const s1In = (q) => q.s1.filter((b) => inR(q.real1s, b[0]));
+  function lastClose(q, c) { const s = s1In(q).filter((b) => b[0] + 1 <= c); return s.length ? s[s.length - 1] : null; }
+  function walk(q, from, to, pos, onBar = () => false) {
+    for (const b of s1In(q)) {
+      if (b[0] < from || b[0] >= to) continue;
+      const L = pos.dir === 'Long';
+      if (pos.sl != null && (L ? b[3] <= pos.sl : b[2] >= pos.sl)) return { reason: 'sl', t: b[0], price: L ? Math.min(pos.sl, b[1]) : Math.max(pos.sl, b[1]), bar: b };
+      if (pos.tp != null && (L ? b[2] >= pos.tp : b[3] <= pos.tp)) return { reason: 'tp', t: b[0], price: pos.tp, bar: b };
+      if (onBar(b)) return { reason: 'hook', t: b[0], bar: b };
+    }
+    return null;
+  }
+  function findLongTp(q, from, to, slPts, tpPts) {
+    for (const b of s1In(q)) {
+      if (b[0] < from || b[0] + 1 >= to) continue;
+      const c = b[0] + 1, e = b[4], pos = { dir: 'Long', sl: e - slPts, tp: e + tpPts };
+      const x = walk(q, c, to, pos);
+      if (x && x.reason === 'tp') return { c, entry: e, entryBar: b, exit: x, sl: pos.sl, tp: pos.tp };
+    }
+    return null;
+  }
+  function findShortBe(q, from, to, slPts, tpPts, bePts) {
+    for (const b of s1In(q)) {
+      if (b[0] < from || b[0] + 1 >= to) continue;
+      const c = b[0] + 1, e = b[4], pos = { dir: 'Short', sl: e + slPts, tp: e - tpPts };
+      const be = walk(q, c, to, pos, (x) => x[3] <= e - bePts && x[4] < e - 0.25);
+      if (!be || be.reason !== 'hook') continue;
+      const after = walk(q, be.t + 1, to, { ...pos, sl: e });
+      if (after && after.reason === 'sl') return { c, entry: e, entryBar: b, beT: be.t + 1, beBar: be.bar, exit: after, sl0: pos.sl, tp: pos.tp };
+    }
+    return null;
+  }
+  function findLongHold(q, from, to, slPts, hold) {
+    for (const b of s1In(q)) {
+      if (b[0] < from || b[0] + 1 + hold >= to) continue;
+      const c = b[0] + 1, e = b[4];
+      if (walk(q, c, c + hold, { dir: 'Long', sl: e - slPts, tp: null })) continue;
+      return { c, entry: e, entryBar: b, sl: e - slPts };
+    }
+    return null;
+  }
+  const lastTrade = () => { const tr = R.doc().trades || []; return tr[tr.length - 1] || null; };
+  async function journalSave(setup, notes) {
+    const jr = await until(() => document.querySelector('.bt-jr'));
+    if (!jr) return false;
+    const s = jr.querySelector('[name="setup"]'), n = jr.querySelector('[name="notes"]');
+    s.value = setup; ev(s, 'input'); n.value = notes; ev(n, 'input');
+    key(s, 'Enter');
+    await sleep(50);
+    return !document.querySelector('.bt-jr');
+  }
+  function handTrade(t, { entry, qty, sl0, exits, inst = 'NQ' }) {
+    const s = t.dir === 'Long' ? 1 : -1;
+    const pts = exits.reduce((a, x) => a + x.qty * (x.price - entry) * s, 0);
+    return { r: r2(pts / (qty * Math.abs(entry - sl0))), pnl: r2(pts * MULT[inst]) };
+  }
+  function recordTrade(tag, label, t, hand, extra = {}) {
+    info.trades.push({ label, id: t.id, day: t.day, dir: t.dir, qty: t.qty, entryT: hms(t.entryT), entry: t.entryPrice, sl0: t.sl0, tp: t.tp, exits: t.exits.map((x) => ({ t: hms(x.t), price: x.price, qty: x.qty, reason: x.reason })), r: t.r, pnl: t.pnl, maeR: t.maeR, mfeR: t.mfeR, hand, ...extra });
+    rec(tag, near(t.r, hand.r) && near(t.pnl, hand.pnl), `${label}: R ${t.r} (ręcznie ${hand.r}), USD ${t.pnl} (ręcznie ${hand.pnl})`);
+  }
+
+  // ======== 1. kreator „CPI 2024” ========
+  await section('kreator', async () => {
+    await until(() => host.querySelector('[data-bt="new"]'));
+    host.querySelector('[data-bt="new"]').click();
+    const form = await until(() => host.querySelector('form.bt-form'));
+    const setv = (n, v) => { const i = form.querySelector(`[name="${n}"]`); i.value = v; ev(i, 'input'); ev(i, 'change'); };
+    setv('name', 'CPI 2024'); setv('from', '2024-01-01'); setv('to', '2024-12-31'); setv('startTime', '08:00');
+    const esBox = form.querySelector('[name="inst"][value="ES"]'); esBox.checked = true; ev(esBox, 'change');
+    rec('kreator', [...form.querySelectorAll('[name="inst"]')].filter((x) => x.checked).map((x) => x.value).join() === 'NQ,ES', 'instrumenty: NQ i ES (H2: trade ES obok NQ)');
+    const adv = form.querySelector('details.bt-adv');
+    adv.open = true;
+    const add = await until(() => form.querySelector('.bt-fadd'));
+    await until(() => /Pasujące dni: [1-9]/.test(form.querySelector('.bt-fcount')?.textContent || '') && form.querySelector('.bt-fload')?.hidden !== false, 30000);
+    const all = form.querySelector('.bt-fcount').textContent;
+    add.value = 'event'; ev(add, 'change');
+    const nm = await until(() => form.querySelector('.bt-fcond[data-kind="event"] [data-p="name"]'));
+    nm.value = 'CPI'; ev(nm, 'input'); ev(nm, 'change');
+    await until(() => form.querySelector('.bt-fcount').textContent !== all);
+    const cnt = form.querySelector('.bt-fcount').textContent;
+    rec('kreator', /Pasujące dni: 12\b/.test(cnt), `licznik na żywo: przed filtrem „${all}”, po filtrze „${cnt}”`);
+    form.querySelector('[data-bt="create"]').click();
+    R = await until(() => view.replay(), 20000);
+    await R.ready;
+    window.__btCharts = R.charts();
+    const doc = R.doc();
+    info.sessionId = doc.id; info.pool = doc.pool;
+    rec('kreator', doc.name === 'CPI 2024' && doc.def.instruments.join() === 'NQ,ES' && doc.def.order === 'chrono' && doc.def.filter?.items?.[0]?.k === 'event', `sesja: ${doc.name}, ${doc.def.instruments}, ${doc.def.order}, filtr ${JSON.stringify(doc.def.filter)}`);
+    rec('kreator', JSON.stringify(doc.pool) === JSON.stringify(CPI_2024), `pula = dni CPI 2024 z 1s (${doc.pool.length}): ${doc.pool.join(', ')}`);
+    // każdy dzień puli: prawdziwe 1s 9:30–11:00 i CPI w newsach dnia (trasa dnia, niezależnie od indeksu)
+    for (const d of doc.pool) {
+      const x = await loadRd(d);
+      const cpi = (x.news || []).some((e) => /CPI|Consumer Price/i.test(e.name || '') && e.day === d);
+      if (!x.inst.NQ.has1s || !cpi) rec('kreator', false, `${d}: has1s ${x.inst.NQ.has1s}, CPI w newsach ${cpi}`);
+    }
+    rec('kreator', true, 'każdy dzień puli ma pełne 1s 9:30–11:00 i CPI w newsach dnia (trasa /api/backtest/day)');
+  });
+
+  // ======== 2–5. dzień 1: krok, odtwarzanie, skok do newsa i do 9:30, rysunki, trade Long z TP ========
+  await section('dni', async () => {
+    const d = day(); rd = await loadRd(d);
+    rec('dni', d === '2024-01-11' && R.cursor() === nyAt(d, '08:00'), `dzień 1 ${d}, start ${hms(R.cursor())} UTC (8:00 NY)`);
+    // układ 2h: NQ 15s (aktywny) + NQ 1m
+    R.setLayout('2h'); R.setCell(1, { instrument: 'NQ' }); R.setCell(1, { tf: '1m' }); R.setCell(0, { tf: '15s' }); R.activate(0);
+    window.__btCharts = R.charts();
+    rec('dni', R.charts().length === 2 && R.doc().layout.charts.map((c) => c.instrument + ' ' + c.tf).join() === 'NQ 15s,NQ 1m', `układ: ${R.doc().layout.charts.map((c) => c.instrument + ' ' + c.tf).join(', ')}`);
+    await noFuture('start dnia 1');
+    const c0 = R.cursor();
+    for (let i = 0; i < 4; i++) R.step(1);
+    rec('dni', R.cursor() === c0 + 4 * 60, `4 kroki przed 9:30 (poza oknem 1s krok 15s = 1 min): +${R.cursor() - c0} s`);
+    await noFuture('po krokach');
+    R.setSpeed(300); R.play(); await sleep(1500); R.pause();
+    rec('dni', R.cursor() > c0 + 240 + 60, `odtwarzanie 300× przez 1,5 s: kursor ${hms(R.cursor())}`);
+    await noFuture('po odtwarzaniu');
+    const cNews = R.cursor();
+    await R.runJump('news');
+    const cpiT = nyAt(d, '08:30');
+    rec('dni', cNews < cpiT ? R.cursor() === cpiT : true, `skok do newsa: ${hms(R.cursor())} (CPI 8:30 NY = ${hms(cpiT)})`);
+    await noFuture('po skoku do newsa');
+    await R.runJump('open');
+    rec('dni', R.cursor() === nyAt(d, '09:30'), `skok do 9:30: ${hms(R.cursor())}`);
+    await noFuture('po skoku do 9:30');
+  });
+
+  await section('rysunki', async () => {
+    await goto(nyAt(day(), '09:34'));
+    await sleep(200);
+    const cs = R.charts(), ch = cs[0], mgr = ch.manager();
+    const b = ch.bars();
+    mgr.add({ kind: 'trend-line', points: [{ time: b[b.length - 12][0], price: b[b.length - 12][4] }, { time: b[b.length - 2][0], price: b[b.length - 2][4] }], style: { color: '#cccccc', width: 1 } });
+    // callout narzędziem z paska (dwa kliknięcia, tekst, Enter), jak użytkownik
+    const cell = scr().querySelectorAll('.bt-cell')[0], plot = cell.querySelector('.bt-plot'), el = ch.chart.chartElement();
+    const xy = (t, p) => { const r = el.getBoundingClientRect(); return { x: r.left + ch.chart.timeScale().timeToCoordinate(t), y: r.top + ch.series.priceToCoordinate(p) }; };
+    const ptr = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 9, pointerType: 'mouse', bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+    const click = async (x, y) => { ptr('pointerdown', x, y); await sleep(40); ptr('pointerup', x, y); window.dispatchEvent(new PointerEvent('pointerup')); await sleep(80); };
+    cell.querySelector('.swc-tools [data-tool="callout"]').click();
+    const tip = xy(b[b.length - 6][0], b[b.length - 6][4]), ctr = xy(b[b.length - 3][0], b[b.length - 6][4] + 8);
+    await click(tip.x, tip.y); await click(ctr.x, ctr.y);
+    const f = await until(() => plot.querySelector('input.swc-text'), 2000);
+    if (f) { f.value = 'CPI'; ev(f, 'input'); key(f, 'Enter'); }
+    await ch.rysunki().flush();
+    await sleep(400);
+    const kinds = (c) => c.manager().drawings().map((x) => x.kind).sort().join(',');
+    rec('rysunki', kinds(cs[0]) === 'callout,trend-line', `NQ 15s: ${kinds(cs[0])}`);
+    rec('rysunki', kinds(cs[1]) === 'callout,trend-line', `NQ 1m (ten sam instrument): ${kinds(cs[1])}`);
+    const co = cs[1].manager().drawings().find((x) => x.kind === 'callout');
+    rec('rysunki', co && co.points.length === 2 && (co.text === 'CPI' || co.style?.text === 'CPI'), `callout na 1m z tekstem „${co?.text ?? co?.style?.text}”`);
+    const disk = await until(async () => { const s = await getJson(`/api/backtest/session/${R.doc().id}`); const dd = s.drawings?.NQ?.[day()]; return dd && dd.d?.length === 2 ? dd : null; }, 4000);
+    rec('rysunki', !!disk, `rysunki w pliku sesji (NQ/${day()}): ${disk?.d?.map((x) => x.kind).join(',')}`);
+    await noFuture('po rysunkach');
+  });
+
+  await section('trade', async () => {
+    const d = day(), q = (await loadRd(d)).inst.NQ;
+    const plan = findLongTp(q, nyAt(d, '09:35'), nyAt(d, '10:55'), 20, 20);
+    if (!plan) { rec('trade', false, 'brak chwili na Long z TP w danych dnia 1'); return; }
+    await goto(plan.c);
+    const lc = lastClose(q, R.cursor());
+    rec('trade', R.cursor() === plan.c && near(lc[4], plan.entry), `Long: kursor ${hms(plan.c)} UTC, ostatnia świeca 1s ${hms(lc[0])} close ${lc[4]}`);
+    scr().querySelector('.bt-ord [data-ot="market"]').click();
+    setF('qty', ''); setF('sl', '20'); setF('tp', '20');
+    rec('trade', P('[name="qty"]').value === '1', `wielkość z ryzyka 500 USD przy SL 20 pkt: ${P('[name="qty"]').value} (500 / (20 × 20 USD) = 1,25 → 1)`);
+    P('[data-o="buy"]').click();
+    const pos = R.book().positions.NQ;
+    rec('trade', pos && near(pos.entryPrice, plan.entry) && near(pos.sl, plan.sl) && near(pos.tp, plan.tp), `pozycja Long 1 @ ${pos?.entryPrice} SL ${pos?.sl} TP ${pos?.tp}`);
+    await noFuture('po wejściu Long');
+    await goto(plan.exit.t + 1);
+    const t1 = lastTrade();
+    rec('trade', t1 && t1.exits.length === 1 && t1.exits[0].reason === 'tp' && near(t1.exits[0].price, plan.tp) && t1.exits[0].t === plan.exit.t, `wyjście TP ${t1?.exits?.[0]?.price} o ${hms(t1?.exits?.[0]?.t ?? 0)} (świeca 1s ${hms(plan.exit.t)} high ${plan.exit.bar[2]})`);
+    recordTrade('trade', 'T1 Long SL+TP', t1, handTrade(t1, { entry: plan.entry, qty: 1, sl0: plan.sl, exits: [{ qty: 1, price: plan.tp }] }), { candle: { entryBar: plan.entryBar, exitBar: plan.exit.bar } });
+    await noFuture('po wyjściu TP');
+    // journaling: Enter z setupem i notatką
+    const setup1 = known[0] || 'Breakout';
+    info.setup1 = setup1;
+    const ok = await journalSave(setup1, 'H1 odbiór: wejście po CPI, wyjście TP');
+    const j1 = R.doc().trades.find((x) => x.id === t1.id);
+    rec('journal', ok && j1.journal === 'done' && j1.setup === setup1 && /CPI/.test(j1.notes), `Enter zapisuje: setup „${j1.setup}”, notatka „${j1.notes}”, journal ${j1.journal}`);
+  });
+
+  // ---- koniec dnia 1: Zakończ dzień → wysyłka do Notion, potem „Następny dzień” ----
+  await section('notion', async () => {
+    scr().querySelector('[data-bt="end-day"]').click();
+    await until(() => R.doc().days[day()]?.status === 'done');
+    const n0 = await until(() => /: 0$/.test(notionLabel()) && R.doc().trades.every((x) => x.notion?.state === 'sent'), 15000);
+    rec('notion', !!n0, `dzień 1 zakończony, licznik: „${notionLabel()}”, stan: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state).join(', ')}`);
+    rec('notion', /2024/.test(scr().querySelector('.bt-date').textContent) || !scr().querySelector('.bt-date').hidden, 'data dnia widoczna po zakończeniu');
+    scr().querySelector('[data-bt="end-day"]').click(); // „Następny dzień”
+    await until(() => day() === '2024-02-13' && R.charts().length === 2 && R.charts()[0].bars().length > 0, 15000);
+    rd = await loadRd(day());
+    rec('dni', day() === '2024-02-13', `dzień 2 przez „Następny dzień”: ${day()}, ${hms(R.cursor())} UTC`);
+    await noFuture('start dnia 2');
+  });
+
+  // ======== dzień 2: Short z BE (wyjście po BE), Esc → „do uzupełnienia”, uzupełnienie z listy ========
+  await section('trade', async () => {
+    const d = day(), q = (await loadRd(d)).inst.NQ;
+    await R.runJump('open');
+    const plan = findShortBe(q, nyAt(d, '09:32'), nyAt(d, '10:58'), 30, 120, 10);
+    if (!plan) { rec('trade', false, 'brak chwili na Short z BE w danych dnia 2'); return; }
+    await goto(plan.c);
+    scr().querySelector('.bt-ord [data-ot="market"]').click();
+    setF('sl', '30'); setF('tp', '120'); setF('qty', '1');
+    P('[data-o="sell"]').click();
+    const pos = R.book().positions.NQ;
+    rec('trade', pos && pos.dir === 'Short' && near(pos.entryPrice, plan.entry) && pos.qty === 1, `Short 1 @ ${pos?.entryPrice} SL ${pos?.sl} TP ${pos?.tp} (ręczna wielkość: ryzyko 500 USD < 30 pkt × 20 USD)`);
+    await goto(plan.beT);
+    P('[data-o="be"]').click();
+    const pb = R.book().positions.NQ;
+    rec('trade', pb && pb.be === true && near(pb.sl, plan.entry), `BE o ${hms(plan.beT)} UTC (świeca 1s ${hms(plan.beBar[0])} low ${plan.beBar[3]}, close ${plan.beBar[4]}): SL ${pb?.sl}`);
+    await noFuture('po BE');
+    await goto(plan.exit.t + 1);
+    const t2 = lastTrade();
+    rec('trade', t2 && t2.exits[0].reason === 'sl' && near(t2.exits[0].price, plan.exit.price) && t2.exits[0].t === plan.exit.t, `wyjście po BE: ${t2?.exits?.[0]?.reason} ${t2?.exits?.[0]?.price} o ${hms(t2?.exits?.[0]?.t ?? 0)} (świeca ${hms(plan.exit.t)} open ${plan.exit.bar[1]} high ${plan.exit.bar[2]})`);
+    recordTrade('trade', 'T2 Short BE', t2, handTrade(t2, { entry: plan.entry, qty: 1, sl0: plan.sl0, exits: [{ qty: 1, price: plan.exit.price }] }), { candle: { entryBar: plan.entryBar, beBar: plan.beBar, exitBar: plan.exit.bar } });
+    // Esc: trade zostaje „do uzupełnienia”
+    const jr = await until(() => document.querySelector('.bt-jr'));
+    key(jr.querySelector('[name="setup"]'), 'Escape');
+    await sleep(80);
+    const todoBtn = scr().querySelector('.bt-todo');
+    rec('journal', !document.querySelector('.bt-jr') && R.doc().trades.find((x) => x.id === t2.id).journal === 'todo' && !todoBtn.hidden && /1/.test(todoBtn.textContent), `Esc: panel zamknięty, „${todoBtn.textContent}”`);
+    todoBtn.click();
+    const item = await until(() => scr().querySelector(`.bt-todo-l [data-todo="${t2.id}"]`));
+    item.click();
+    const ok = await journalSave('H1 Retest', 'po BE, uzupełnione z listy');
+    const j2 = R.doc().trades.find((x) => x.id === t2.id);
+    rec('journal', ok && j2.journal === 'done' && j2.setup === 'H1 Retest' && scr().querySelector('.bt-todo').hidden, `uzupełnienie z listy: setup „${j2.setup}”, lista ${scr().querySelector('.bt-todo').hidden ? 'pusta' : 'niepusta'}`);
+    await noFuture('po journalingu');
+  });
+
+  // ---- przejście do dnia 3 skokiem „Następny dzień z filtra” (kończy dzień 2 i wysyła jego trade'y) ----
+  await section('dni', async () => {
+    const sel = scr().querySelector('.bt-jump'); sel.value = 'nextDay'; ev(sel, 'change');
+    scr().querySelector('[data-bt="jump"]').click();
+    await until(() => day() === '2024-03-12' && R.charts().length === 2 && R.charts()[0].bars().length > 0, 15000);
+    rd = await loadRd(day());
+    rec('dni', day() === '2024-03-12' && R.doc().days['2024-02-13']?.status === 'done', `dzień 3 przez skok „Następny dzień z filtra”: ${day()}, dzień 2 zakończony`);
+    const sent = await until(() => R.doc().trades.every((x) => x.notion?.state === 'sent'), 15000);
+    rec('notion', !!sent, `po zakończeniu dnia 2 skokiem: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state).join(', ')}`);
+    await noFuture('start dnia 3');
+  });
+
+  // ======== dzień 3 (2024-03-12): zgodność interwałów sekundowych o 10:07:23, potem Long z częściowym zamknięciem i wyjściem ręcznym ========
+  await section('tf', async () => {
+    const d = day(), q = (await loadRd(d)).inst.NQ;
+    R.setLayout('4');
+    const want = ['1s', '5s', '15s', '1m'];
+    want.forEach((tf, i) => { R.setCell(i, { instrument: 'NQ' }); R.setCell(i, { tf }); });
+    R.activate(0);
+    window.__btCharts = R.charts();
+    await goto(nyAt(d, '10:07') + 23);
+    const c = R.cursor();
+    rec('tf', c === nyAt(d, '10:07') + 23 && R.doc().layout.charts.map((x) => x.tf).join() === want.join() && R.doc().layout.charts.every((x) => x.instrument === 'NQ'), `kursor ${hms(c)} UTC (10:07:23 NY), wykresy ${R.doc().layout.charts.map((x) => x.tf).join(', ')}`);
+    const by = Object.fromEntries(R.charts().map((ch, i) => [R.doc().layout.charts[i].tf, ch.bars()]));
+    const win = (bars, a) => bars.filter((b) => b[0] >= a);
+    const from = nyAt(d, '09:30');
+    // wyższy = agregat niższego w każdym kubełku od 9:30 do kursora (także świeca w budowie)
+    const consistent = (lo, hi) => {
+      const T = TFS[hi], bad = [];
+      for (const b of win(by[hi], from)) { const a = aggOf(win(by[lo], from).filter((x) => Math.floor(x[0] / T) * T === b[0])); if (!sameOhlc(b, a)) bad.push(hms(b[0])); }
+      return bad;
+    };
+    for (const [lo, hi] of [['1s', '5s'], ['5s', '15s'], ['15s', '1m'], ['1s', '1m']]) {
+      const bad = consistent(lo, hi);
+      rec('tf', !bad.length, `${hi} = agregat ${lo} od 9:30 do kursora (${win(by[hi], from).length} świec${bad.length ? ', różnice: ' + bad.slice(0, 5).join(' ') : ''})`);
+    }
+    // 1s wykres = surowe 1s (niezależnie od modułów replayu)
+    const raw = s1In(q).filter((b) => b[0] >= from && b[0] + 1 <= c);
+    const ch1 = win(by['1s'], from);
+    rec('tf', raw.length === ch1.length && raw.every((b, i) => sameOhlc(ch1[i], b)), `1s = surowe świece 1s (${raw.length} / ${ch1.length})`);
+    const last = (tf) => by[tf][by[tf].length - 1];
+    const lr = raw[raw.length - 1][0], fl = (x, T) => Math.floor(x / T) * T;
+    rec('tf', last('1s')[0] === lr && last('5s')[0] === fl(lr, 5) && last('15s')[0] === fl(lr, 15) && last('1m')[0] === fl(lr, 60) && lr <= c - 1, `świece w budowie: 1s ${hms(last('1s')[0])}, 5s ${hms(last('5s')[0])}, 15s ${hms(last('15s')[0])}, 1m ${hms(last('1m')[0])}`);
+    // 5m: przełączenie 4. wykresu i porównanie z 1m
+    R.setCell(3, { tf: '5m' });
+    const m5 = R.charts()[3].bars(), m1 = by['1m'];
+    const bad5 = win(m5, from).filter((b) => !sameOhlc(b, aggOf(win(m1, from).filter((x) => Math.floor(x[0] / 300) * 300 === b[0])))).map((b) => hms(b[0]));
+    rec('tf', !bad5.length, `5m = agregat 1m od 9:30 (${win(m5, from).length} świec${bad5.length ? ', różnice: ' + bad5.join(' ') : ''}); 5m w budowie ${hms(m5[m5.length - 1][0])}`);
+    // 9:29 → 9:30 na 15s: 9:29 to jedna świeca z 1m (sekund przed 9:30 nie ma), potem 9:30:00, 9:30:15 … bez dziury
+    const s15 = by['15s'], i930 = s15.findIndex((b) => b[0] === from);
+    const prev = s15[i930 - 1], m929 = q.m1.find((b) => b[0] === from - 60);
+    const gaps = []; for (let i = i930 + 1; i < s15.length; i++) if (s15[i][0] - s15[i - 1][0] !== 15 && s1In(q).some((b) => b[0] >= s15[i - 1][0] + 15 && b[0] < s15[i][0])) gaps.push(hms(s15[i][0]));
+    rec('tf', i930 > 0 && prev[0] === from - 60 && sameOhlc(prev, m929) && Math.abs(s15[i930][1] - prev[4]) < 15 && !gaps.length, `15s: 9:29 = świeca 1m (close ${prev?.[4]}), 9:30:00 open ${s15[i930]?.[1]}, kolejne co 15 s bez dziur (${gaps.length ? 'dziury ' + gaps.join(' ') : 'brak dziur'})`);
+    info.tf = { cursor: hms(c), last: { '1s': last('1s'), '5s': last('5s'), '15s': last('15s'), '1m': last('1m'), '5m': m5[m5.length - 1] } };
+    await noFuture('TF 10:07:23');
+    // wracamy do układu 2h: NQ 15s + NQ 1m
+    R.setLayout('2h'); R.setCell(0, { tf: '15s' }); R.setCell(1, { instrument: 'NQ' }); R.setCell(1, { tf: '1m' }); R.activate(0);
+    window.__btCharts = R.charts();
+  });
+
+  await section('trade', async () => {
+    const d = day(), q = (await loadRd(d)).inst.NQ;
+    const plan = findLongHold(q, nyAt(d, '10:10'), nyAt(d, '10:58'), 25, 300);
+    if (!plan) { rec('trade', false, 'brak chwili na Long bez SL przez 5 min w dniu 3'); return; }
+    await goto(plan.c);
+    scr().querySelector('.bt-ord [data-ot="market"]').click();
+    setF('sl', '25'); setF('tp', ''); setF('qty', '2');
+    P('[data-o="buy"]').click();
+    const pos = R.book().positions.NQ;
+    rec('trade', pos && pos.qty === 2 && near(pos.entryPrice, plan.entry) && pos.tp == null, `Long 2 @ ${pos?.entryPrice} SL ${pos?.sl}, bez TP`);
+    await goto(plan.c + 120);
+    const p1 = lastClose(q, R.cursor());
+    setF('part', '1');
+    P('[data-o="partial"]').click();
+    const pp = R.book().positions.NQ;
+    rec('trade', pp && pp.openQty === 1, `częściowe zamknięcie 1 z 2 @ ${p1[4]} (close świecy 1s ${hms(p1[0])})`);
+    await noFuture('po częściowym zamknięciu');
+    await goto(plan.c + 300);
+    const p2 = lastClose(q, R.cursor());
+    P('[data-o="close"]').click();
+    const t3 = lastTrade();
+    rec('trade', t3 && t3.exits.length === 2 && t3.exits[0].reason === 'partial' && t3.exits[1].reason === 'manual' && near(t3.exits[0].price, p1[4]) && near(t3.exits[1].price, p2[4]), `wyjścia: ${t3?.exits?.map((x) => `${x.reason} ${x.qty}@${x.price}`).join(', ')}`);
+    recordTrade('trade', 'T3 Long część + ręcznie', t3, handTrade(t3, { entry: plan.entry, qty: 2, sl0: plan.sl, exits: [{ qty: 1, price: p1[4] }, { qty: 1, price: p2[4] }] }), { candle: { entryBar: plan.entryBar, partBar: p1, closeBar: p2 } });
+    const ok = await journalSave(info.setup1, 'częściowe zamknięcie i wyjście ręczne');
+    rec('journal', ok && R.doc().trades.find((x) => x.id === t3.id).journal === 'done', 'T3: Enter zapisuje opis');
+    await noFuture('po wyjściu ręcznym');
+  });
+
+  // ======== H2 (przegląd kodu #1): trade ES 1m obok NQ 15s, kursor na :30 w oknie sekundowym (NQ wyznacza znak wodny w środku minuty) ========
+  await section('trade', async () => {
+    const d = day(), dd = await loadRd(d), q = dd.inst.ES;
+    R.setLayout('2h'); R.setCell(0, { tf: '15s' }); R.setCell(1, { instrument: 'ES' }); R.setCell(1, { tf: '1m' }); R.activate(0);
+    window.__btCharts = R.charts();
+    rec('trade', R.doc().layout.charts.map((c) => c.instrument + ' ' + c.tf).join() === 'NQ 15s,ES 1m', `układ ES: ${R.doc().layout.charts.map((c) => c.instrument + ' ' + c.tf).join(', ')}`);
+    // wejście o MM:30, wyjście 3 minuty później (też :30); ręcznie: cena = zamknięcie ostatniej pełnej minuty ES, SL 10 pkt nie może być dotknięty po drodze
+    const esClose = (c) => { const v = q.m1.filter((b) => b[0] + 60 <= c); return v[v.length - 1]; };
+    let plan = null;
+    for (let m = nyAt(d, '10:20'); m < nyAt(d, '10:50') && !plan; m += 60) {
+      const c = m + 30, e = esClose(c), x = esClose(c + 180);
+      const path = q.m1.filter((b) => b[0] >= e[0] + 60 && b[0] + 60 <= c + 180);
+      if (e && x && path.every((b) => b[3] > e[4] - 10)) plan = { c, entryBar: e, exitBar: x };
+    }
+    if (!plan) { rec('trade', false, 'brak chwili na trade ES bez dotknięcia SL'); return; }
+    await goto(plan.c);
+    rec('trade', R.cursor() === plan.c && R.book().hw === plan.c, `kursor ${hms(plan.c)} UTC (:30, znak wodny NQ w środku minuty)`);
+    R.activate(1);
+    scr().querySelector('.bt-ord [data-ot="market"]').click();
+    setF('sl', '10'); setF('tp', ''); setF('qty', '1');
+    P('[data-o="buy"]').click();
+    const pos = R.book().positions.ES;
+    rec('trade', pos && near(pos.entryPrice, plan.entryBar[4]), `Kup ES przy NQ na :30: ${pos ? 'Long 1 @ ' + pos.entryPrice : 'odrzucone: ' + P('.bt-ord-note').textContent} (zamknięcie ES ${hms(plan.entryBar[0])} = ${plan.entryBar[4]})`);
+    R.activate(0);
+    await goto(plan.c + 180);
+    R.activate(1);
+    P('[data-o="close"]').click();
+    const t4 = lastTrade();
+    rec('trade', t4 && t4.instrument === 'ES' && t4.exits[0].reason === 'manual' && near(t4.exits[0].price, plan.exitBar[4]), `ES zamknięte ręcznie na :30: ${t4?.exits?.[0]?.price} (zamknięcie ES ${hms(plan.exitBar[0])} = ${plan.exitBar[4]})`);
+    if (t4) recordTrade('trade', 'T4 ES Long ręcznie (1m)', t4, handTrade(t4, { inst: 'ES', entry: plan.entryBar[4], qty: 1, sl0: plan.entryBar[4] - 10, exits: [{ qty: 1, price: plan.exitBar[4] }] }), { candle: { entryBar: plan.entryBar, exitBar: plan.exitBar } });
+    const ok = await journalSave(info.setup1, 'ES obok NQ, wejście i wyjście w środku minuty NQ');
+    rec('journal', ok, 'T4 (ES): Enter zapisuje opis');
+    await noFuture('po trade ES');
+    R.activate(0);
+  });
+
+  // ---- Zakończ dzień 3 → Notion, drugi „Zapisz do Notion” bez dubli, licznik 0, ekran „Sesja ukończona” ----
+  await section('notion', async () => {
+    scr().querySelector('[data-bt="end-day"]').click();
+    await until(() => R.doc().days[day()]?.status === 'done');
+    const ok = await until(() => R.doc().trades.every((x) => x.notion?.state === 'sent') && /: 0$/.test(notionLabel()), 20000);
+    rec('notion', !!ok, `dzień 3: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state + ' ' + (x.notion?.id || '').slice(0, 8)).join(', ')}; licznik „${notionLabel()}”`);
+    const ids = R.doc().trades.map((x) => x.notion.id);
+    const again = await R.sendNotion({ all: true });
+    rec('notion', again && again.sent === 0 && !(again.failed || []).length && JSON.stringify(R.doc().trades.map((x) => x.notion.id)) === JSON.stringify(ids), `drugi „Zapisz do Notion”: wysłano ${again?.sent}, pominięto ${again?.skipped}, błędów ${(again?.failed || []).length}, id stron bez zmian`);
+    rec('notion', /: 0$/.test(notionLabel()) && scr().querySelector('[data-bt="notion"]').disabled, `licznik po drugim zapisie: „${notionLabel()}”, przycisk wyłączony`);
+    info.sentIds = R.doc().trades.map((x) => x.id);
+    info.notionIds = ids;
+    // dzień 3 to nie ostatni dzień puli (12 dni): ekran „Sesja ukończona” dopiero po ostatnim, więc statystyki z listy sesji
+  });
+
+  // ======== 7. statystyki: nagłówek, „Gdzie mam przewagę” (wszystkie wiersze „za mało danych”), wykonanie, porównanie z Live ========
+  await section('staty', async () => {
+    // świeże dane z Notion (trade'y Backtest wysłane przed chwilą): statystyki liczą je raz, nie dwa razy (sesja + kopia w Notion)
+    model = await getJson('/api/data?refresh=1');
+    liveTrades = normalizeTrades(model.data.trades);
+    info.notionBacktest = liveTrades.filter((x) => x.typ === 'Backtest').length;
+    scr().querySelector('[data-bt="close"]').click();
+    await until(() => !scr());
+    // lista odświeża się po zamknięciu replayu: czekamy na nowy wiersz, nie na ten sprzed otwarcia sesji (0 / 12)
+    const row = await until(() => { const r = host.querySelector(`tr[data-id="${info.sessionId}"]`); return r && /3 \/ 12/.test(r.textContent) ? r : null; }, 10000) || host.querySelector(`tr[data-id="${info.sessionId}"]`);
+    const sumTxt = r2(R.doc().trades.reduce((a, x) => a + x.r, 0)).toFixed(2).replace('.', ',');
+    rec('staty', row && /3 \/ 12/.test(row.textContent) && row.textContent.includes(sumTxt), `lista sesji: ${row.textContent.replace(/\s+/g, ' ').trim()}`);
+    row.querySelector('[data-bt="stats"]').click();
+    const st = await until(() => host.querySelector('.bt-st-tiles') && host, 15000);
+    await sleep(500);
+    const txt = host.textContent.replace(/\s+/g, ' ');
+    const sumR = r2(R.doc().trades.reduce((a, x) => a + x.r, 0));
+    info.statsText = txt.slice(0, 1500);
+    const nTr = R.doc().trades.length, tiles = host.querySelector('.bt-st-tiles').textContent.replace(/\s+/g, ' ');
+    const nTile = host.querySelector('.bt-st-tiles .tile .val')?.textContent.trim();
+    rec('staty', !!st && nTile === String(nTr), `nagłówek (${nTr} trade'y w sesji): ${host.querySelector('.bt-st-tiles').textContent.replace(/\s+/g, ' ').trim()} (suma R z sesji ${sumR})`);
+    const edgeRows = [...host.querySelectorAll('.bt-st-tab')][0]?.querySelectorAll('tbody tr') || [];
+    rec('staty', /Gdzie mam przewagę/.test(txt) && edgeRows.length > 0 && [...edgeRows].every((r) => r.classList.contains('bt-few') && /za mało danych/.test(r.textContent)), `„Gdzie mam przewagę”: ${edgeRows.length} wierszy, wszystkie „za mało danych”`);
+    rec('staty', /Wykonanie/.test(txt) && /MAE/.test(txt), 'sekcja „Wykonanie” z MAE');
+    rec('staty', /Backtest kontra Live/.test(txt), `sekcja „Backtest kontra Live” (setup T1/T3: „${info.setup1}”, w Live: ${known.includes(info.setup1)})`);
+    const trCount = host.querySelector('.bt-st-tiles').textContent;
+    rec('staty', nTile === String(nTr) && !!trCount, `trade'y z Notion (${info.notionBacktest} stron Backtest) nie dublują trade'ów sesji`);
+  });
+
+  rec('przyszlosc', futureChecks >= 15, `${futureChecks} sprawdzeń po akcjach (wszystkie wykresy, ostatnie 20 świec = agregat widocznych świec bazowych z surowych danych, nakładki sesji i PDH/PDL)`);
+  out.textContent = JSON.stringify({ checks, info: { ...info, futureChecks } });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks, info });
+}
+</script>
+</body>
+</html>

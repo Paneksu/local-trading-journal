@@ -125,7 +125,7 @@ export default ({ test, H, assert, ROOT }) => {
           if (k === 'Wyjście' || k === 'Exit') continue; // pole z migracji 001 (atrapa startuje bez niego)
           assert.equal(H.canon(sTr[k]), H.canon(v), `pole „${k}” nietknięte`);
         }
-        const added = Object.keys(sTr).filter((k) => !(k in before[H.IDS.DS_TRADES].schema) && !NEW3.includes(k) && k !== 'Wyjście' && k !== 'Exit' && k !== 'Kontrakt' && k !== 'Contract'); // Kontrakt: migracja 005 (P35)
+        const added = Object.keys(sTr).filter((k) => !(k in before[H.IDS.DS_TRADES].schema) && !NEW3.includes(k) && k !== 'Wyjście' && k !== 'Exit' && k !== 'Kontrakt' && k !== 'Contract' && !['Sesja backtestu', 'Backtest session', 'MAE (R)', 'MFE (R)'].includes(k)); // Kontrakt: migracja 005 (P35); pola Backtest: migracja 006 (E2)
         assert.deepEqual(added, ['BE'], 'migracja 004 dodaje tylko BE');
         assert.deepEqual(dumpPages(after), dumpPages(before), 'trade\'y bez zmian');
         assert.equal(json(path.join(dir, 'config.local.json')).schemaVersion, json(path.join(ROOT, 'schema/notion-schema.json')).schemaVersion); // P35: do najnowszej (005)

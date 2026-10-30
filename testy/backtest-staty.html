@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: statystyki backtestu G (strona robocza)</title>
+<!-- Strona robocza testów backtest-G (testy/backtest-G-staty.mjs), Chrome/Edge headless przez CDP, podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Dane w pełni syntetyczne: dwie sesje z ręcznie wygenerowanymi trade'ami, trade'y z Notion (duplikaty, stare wpisy, Live) i atrapa klienta (list/load/days). Bez sieci.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }. ?part=widok|mobile|shot, ?theme=platinum. -->
+<base href="/">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  #wynik.hid { display: none; }
+</style>
+</head>
+<body>
+<section class="sec bt-view" id="k"></section>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'widok';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+if (part === 'mobile') { document.body.style.width = '375px'; document.body.style.overflowX = 'visible'; }
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+
+// ---- dane syntetyczne ----
+const pad = (n) => String(n).padStart(2, '0');
+function weekdays(from, count) {
+  const out = []; let d = new Date(from + 'T00:00:00Z');
+  while (out.length < count) { if (d.getUTCDay() >= 1 && d.getUTCDay() <= 5) out.push(d.toISOString().slice(0, 10)); d = new Date(d.getTime() + 86400000); }
+  return out;
+}
+const DAYS = weekdays('2024-03-12', 40); // po 10.03.2024 NY ma czas letni (UTC−4)
+const R_CYCLE = [2, -1, 1.5, -1, 0, 3, -1, 1, -1, 2.5, -1, 0.5];
+const entryT = (day, mins) => Date.parse(`${day}T00:00:00Z`) / 1000 + (9 * 60 + 30 + mins + 240) * 60; // 9:30 NY + mins, UTC−4
+function mkTrade(i, day, o = {}) {
+  const r = R_CYCLE[i % R_CYCLE.length];
+  const win = r > 0.1, be = Math.abs(r) <= 0.1;
+  const mins = (i * 7) % 85; // 9:30–10:55
+  const reason = be ? 'sl' : win ? (i % 4 === 0 ? 'manual' : 'tp') : 'sl';
+  return {
+    id: `t${i + 1}`, day, instrument: 'NQ', contract: 'NQH4', dir: i % 3 ? 'Long' : 'Short', qty: 1,
+    entryT: entryT(day, mins), entryPrice: 18000, sl0: 17990, sl: be ? 18000 : 17990, tp: 18030, be,
+    exits: [{ t: entryT(day, mins) + 600, price: 18000, qty: 1, reason }], exitT: entryT(day, mins) + 600, exitPrice: 18000,
+    r, pnl: r * 200, maeR: be ? -0.2 : win ? -(0.05 + (i % 8) * 0.06) : -1, mfeR: be ? 1.1 : win ? r + (reason === 'manual' ? 1 : 0.2) : 0.25,
+    setup: i % 5 === 4 ? '' : i % 2 ? 'ORB' : 'FVG', notes: '', journal: 'done', notion: { id: null, state: 'pending', error: null }, ...o,
+  };
+}
+const sessA = { id: 'bt-aaaaaa', name: 'Marzec–kwiecień NQ', trades: DAYS.slice(0, 30).map((d, i) => mkTrade(i, d)) };
+const sessB = { id: 'bt-bbbbbb', name: 'Maj próbka', trades: DAYS.slice(30, 38).map((d, i) => mkTrade(i + 3, d)) };
+if (part === 'shot') sessA.trades = DAYS.flatMap((d, i) => [mkTrade(2 * i, d), mkTrade(2 * i + 1, d)]); // zrzut: dość trade'ów, żeby część wierszy przekroczyła 20
+const sessions = [sessA, sessB];
+const fixed = (n) => (n < 0 ? '-' : '') + Math.abs(n).toFixed(2);
+const notionOf = (s, tr, o = {}) => ({ typ: 'Backtest', counted: true, date: tr.day, at: tr.entryT * 1000, dir: tr.dir, instrument: 'NQ', setup: tr.setup || null, r: tr.r, pnl: tr.pnl, btMae: tr.maeR, btMfe: tr.mfeR, btSession: `${s.name} [${s.id}/${tr.id}]`, ...o });
+const notion = [
+  ...sessA.trades.slice(0, 5).map((tr) => notionOf(sessA, tr)), // te same trade'y, co lokalne: liczą się raz
+  { typ: 'Backtest', counted: true, date: '2023-05-02', at: Date.parse('2023-05-02T14:00:00Z'), dir: 'Long', instrument: 'NQ', setup: 'ORB', r: -1, btSession: '', btMae: null, btMfe: null }, // stary wpis: Bez sesji
+  ...DAYS.slice(0, 26).map((d, i) => ({ typ: 'Live', counted: true, date: d, at: Date.parse(`${d}T14:00:00Z`), dir: 'Long', instrument: 'NQ', setup: i < 24 ? 'ORB' : 'FVG', r: i % 3 === 0 ? -1 : 1.2, btSession: '' })),
+];
+const calls = [];
+const client = {
+  async statsSource({ ids } = {}) { calls.push({ src: ids ? ids.join(',') : '*' }); return { sessions: ids ? sessions.filter((s) => ids.includes(s.id)) : sessions, failed: [] }; },
+  async days({ instruments, from, to }) {
+    calls.push({ instruments, from, to });
+    return { version: 1, days: DAYS.filter((d) => d >= from && d <= to).map((d, i) => ({ day: d, news: i % 7 === 0 ? [{ name: 'CPI', imp: 'high', hm: '08:30' }] : [], opex: i % 15 === 0 ? 'monthly' : null, earnings: [] })) };
+  },
+};
+
+const host = document.getElementById('k');
+const { mountStats } = await import('/js/bt-staty-widok.js');
+const cssColor = (v) => { const p = document.createElement('span'); p.style.color = `var(${v})`; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; };
+const txt = () => host.textContent;
+const click = (sel) => host.querySelector(sel).click();
+const rows = () => [...host.querySelectorAll('.bt-st-tab')][0] ? [...host.querySelectorAll('.bt-st-tab')][0].querySelectorAll('tbody tr') : [];
+const tileVals = () => [...host.querySelectorAll('.bt-st-tiles .tile .val')].map((x) => x.textContent.trim());
+
+try {
+  if (part === 'widok' || part === 'mobile' || part === 'shot') {
+    const m = mountStats(host, { client, getTrades: () => notion, sessionId: part === 'shot' || part === 'mobile' ? null : 'bt-aaaaaa', onBack: () => {} });
+    await m.ready;
+    await sleep(60);
+
+    if (part === 'widok') await section('widok', async () => {
+      rec('widok', host.querySelectorAll('.bt-st-tiles .tile').length === 4, '4 kafle nagłówka');
+      rec('widok', m.state().scope === 'this' && tileVals()[0] === '30', `ta sesja: 30 trade'ów (kafel: ${tileVals()[0]})`);
+      rec('widok', host.querySelector('[data-eq] svg path.eq-line'), 'krzywa kapitału (drawEquity)');
+      rec('widok', host.querySelector('[data-eq] svg .axis') && /R/.test(host.querySelector('[data-eq] svg .axis').textContent), 'oś krzywej w R');
+      const segs = [...host.querySelectorAll('[data-st^="by:"]')];
+      rec('widok', segs.length === 5 && segs.every((b) => b.closest('.seg')), `przełącznik rozbicia w .seg: ${segs.map((b) => b.textContent).join(' / ')}`);
+      rec('widok', ['Setup', 'Dzień tygodnia', 'Godzina wejścia', 'Typ dnia', 'Kierunek'].every((l) => segs.some((b) => b.textContent === l)), 'etykiety rozbić');
+      // próg: 30 trade'ów w sesji; setup ORB 12, FVG 12, bez setupu 6: wszystkie < 20
+      const fewRows = [...rows()].filter((r) => r.classList.contains('bt-few'));
+      rec('widok', fewRows.length === rows().length && rows().length >= 2, `wszystkie wiersze setupu < 20 trade'ów są przygaszone (${fewRows.length}/${rows().length})`);
+      rec('widok', fewRows.every((r) => /za mało danych/.test(r.textContent)), 'dopisek „za mało danych”');
+      rec('widok', getComputedStyle(fewRows[0].cells[1]).color === cssColor('--fg-2'), 'kolor przygaszonego wiersza = --fg-2');
+      rec('widok', /Żaden wiersz nie ma jeszcze 20/.test(txt()), 'werdykt: żaden wiersz nie ma 20 trade\'ów (bez wniosków)');
+      // rozbicia: godzina w kubełkach co 15 min, typ dnia z cech (CPI)
+      click('[data-st="by:hour"]');
+      rec('widok', /9:30–9:45/.test(txt()), 'godziny w kubełkach 15 min');
+      click('[data-st="by:dayType"]');
+      rec('widok', /CPI/.test(rows()[0]?.parentElement.textContent || '') && /bez newsów/.test(txt()), 'typ dnia z indeksu cech (CPI, bez newsów)');
+      const dcalls = calls.filter((c) => c.instruments);
+      rec('widok', dcalls.length === 1 && dcalls[0].instruments.join() === 'NQ', 'cechy dni z /api/backtest/days jednym zapytaniem');
+      rec('widok', /liczy się w każdym typie dnia/.test(txt()), 'zdanie o trade\'ach w kilku typach dnia');
+      click('[data-st="by:wd"]');
+      rec('widok', /Poniedziałek|Monday/.test(txt()), 'dni tygodnia z nazwami');
+      click('[data-st="by:dir"]');
+      rec('widok', /Long/.test(txt()) && /Short/.test(txt()), 'kierunek');
+      // wykonanie
+      rec('widok', /Wykonanie/.test(txt()) && /Średnie MAE/.test(txt()) && /Najdłuższa seria strat/.test(txt()), 'sekcja Wykonanie');
+      rec('widok', host.querySelectorAll('[data-mae] rect.col-pos').length === 10, 'histogram MAE zwycięzców: 10 kubełków');
+      rec('widok', /zwycięzców nie spadło głębiej niż −\d[,.]\d R/.test(txt()), 'wniosek o MAE jako opis danych');
+      // kontra Live
+      rec('widok', /Backtest kontra Live/.test(txt()) && /ORB/.test(host.querySelectorAll('.bt-st-tab')[1]?.textContent || ''), 'sekcja Backtest kontra Live z setupem ORB');
+    });
+
+    if (part === 'widok') await section('widok', async () => {
+      // 26 live ORB 24 > 20; backtest ORB 12 < 20 → wiersz porównania przygaszony z dopiskiem
+      const cmp = host.querySelectorAll('.bt-st-tab')[1];
+      rec('widok', cmp && cmp.querySelector('tbody tr.bt-few') && /za mało danych/.test(cmp.textContent), 'porównanie: strona z < 20 trade\'ów przygaszona');
+    });
+
+    if (part === 'widok') await section('sesje', async () => {
+      const seg = () => [...host.querySelectorAll('[data-st^="scope:"]')];
+      rec('sesje', seg().length === 3 && seg().every((b) => b.closest('.seg')), 'przełącznik zakresu w .seg (ta / wybrane / wszystkie)');
+      rec('sesje', seg()[0].getAttribute('aria-pressed') === 'true', 'domyślnie ta sesja');
+      click('[data-st="scope:all"]');
+      await until(() => tileVals()[0] === '39', 3000);
+      // 30 + 8 lokalnych; z Notion: 5 duplikatów (nie liczą się), 1 stary wpis Bez sesji → 39
+      rec('sesje', tileVals()[0] === '39', `wszystkie Backtest: 39 trade'ów (30 + 8 + 1 stary, bez dubli); kafel: ${tileVals()[0]}`);
+      click('[data-st="scope:picked"]');
+      await sleep(40);
+      const boxes = [...host.querySelectorAll('[data-st-pick]')];
+      rec('sesje', boxes.length === 3, `lista sesji do wyboru (z „Bez sesji”): ${boxes.length}`);
+      const only = (ids) => { for (const id of ['bt-aaaaaa', 'bt-bbbbbb', '']) { const b = host.querySelector('[data-st-pick="' + id + '"]'); if (b && b.checked !== ids.includes(id)) b.click(); } };
+      only(['bt-bbbbbb']);
+      rec('sesje', tileVals()[0] === '8', `wybrana sesja B: 8 trade'ów (kafel: ${tileVals()[0]})`);
+      rec('sesje', /To dopiero 8 z 20/.test(txt()), 'ostrzeżenie przy N < 20 w nagłówku');
+      only(['bt-aaaaaa', 'bt-bbbbbb']);
+      rec('sesje', tileVals()[0] === '38', `A + B: 38 trade'ów (kafel: ${tileVals()[0]})`);
+      only([]);
+      rec('sesje', /Brak ukończonych trade/.test(txt()), 'pusty zakres: komunikat zamiast zer');
+      // bez sessionId „Ta sesja” jest wyłączona
+      const h2 = document.createElement('section'); document.body.append(h2);
+      const m2 = mountStats(h2, { client, getTrades: () => [] });
+      await m2.ready;
+      rec('sesje', h2.querySelector('[data-st="scope:this"]').disabled && m2.state().scope === 'all', 'bez sesji: „Ta sesja” wyłączona, zakres „Wszystkie”');
+      m2.destroy(); h2.remove();
+    });
+
+    if (part === 'widok') await section('bezmetryk', async () => {
+      click('[data-st="scope:all"]');
+      await sleep(40);
+      const all = txt();
+      rec('bezmetryk', !/sharpe|sortino|profit factor|współczynnik|calmar/i.test(all), 'brak Sharpe, Sortino, profit factor w DOM');
+      rec('bezmetryk', !/\bPF\b/.test(all), 'brak skrótu PF');
+      rec('bezmetryk', host.querySelectorAll('.bt-st-tiles .tile').length === 4, 'nagłówek ma 4 kafle');
+    });
+
+    if (part === 'mobile') await section('mobile', async () => {
+      await sleep(100);
+      rec('mobile', document.body.scrollWidth <= 375, `szerokość treści ${document.body.scrollWidth} px`);
+      const over = [...host.querySelectorAll('*')].filter((x) => { const r = x.getBoundingClientRect(); return r.width > 0 && r.right > 376 && !x.closest('.bt-st-tw'); }).slice(0, 4).map((x) => x.className || x.tagName);
+      rec('mobile', over.length === 0, `elementy poza oknem: ${over.join(', ')}`);
+    });
+  }
+  if (part === 'plural') await section('plural', async () => {
+    const sub = async (rs) => {
+      const h = document.createElement('section'); document.body.append(h);
+      const m = mountStats(h, { client: { statsSource: async () => ({ sessions: [], failed: [] }), days: async () => ({ days: [] }) }, getTrades: () => rs.map((r, i) => nt(i, r)) });
+      await m.ready; await sleep(30);
+      const s = h.querySelector('.bt-st-tiles .tile .sub')?.textContent || '';
+      m.destroy(); h.remove(); return s;
+    };
+    const nt = (i, r) => ({ typ: 'Backtest', counted: true, date: '2024-03-' + String(12 + i).padStart(2, '0'), at: Date.parse('2024-03-' + String(12 + i).padStart(2, '0') + 'T14:00:00Z'), dir: 'Long', instrument: 'NQ', setup: 'ORB', r, btSession: '' });
+    const a = await sub([2]); rec('plural', a === '1 wygrana · 0 strat · 0 BE', 'jedna wygrana: ' + a);
+    const b = await sub([2, 1, -1, -1]); rec('plural', b === '2 wygrane · 2 straty · 0 BE', 'dwie wygrane, dwie straty: ' + b);
+    const c = await sub([1, 1, 1, 1, 1, -1, -1, -1, -1, -1]); rec('plural', c === '5 wygranych · 5 strat · 0 BE', 'pięć i pięć: ' + c);
+    const d = await sub([1, -1]); rec('plural', d === '1 wygrana · 1 strata · 0 BE', 'jedna strata: ' + d);
+  });
+
+  if (part === 'zrodlo') await section('zrodlo', async () => {
+    const log = [];
+    const rnd = { id: 'bt-rand01', name: 'Los', def: { order: 'random' }, days: { '2024-03-12': { status: 'done' }, '2024-03-13': { status: 'active' } }, trades: [mkTrade(0, '2024-03-12', { id: 'a1' }), mkTrade(1, '2024-03-13', { id: 'a2' })] };
+    const pool = [sessA, sessB, rnd];
+    const c2 = {
+      async list() { log.push('list'); return []; }, async load() { log.push('load'); return null; },
+      async statsSource({ ids } = {}) { log.push('src:' + (ids ? ids.join(',') : '*')); return { sessions: ids ? pool.filter((s) => ids.includes(s.id)) : pool, failed: ids ? [] : ['bt-cccccc'] }; },
+      async days(q) { log.push('days:mkt=' + q.mkt); return { days: [] }; },
+    };
+    const h = document.createElement('section'); document.body.append(h);
+    const m = mountStats(h, { client: c2, getTrades: () => [], sessionId: 'bt-aaaaaa' });
+    await m.ready; await sleep(40);
+    rec('zrodlo', log.includes('src:bt-aaaaaa') && !log.includes('src:*') && !log.includes('list') && !log.includes('load'), 'Ta sesja: czytana tylko ta jedna sesja przez lekkie źródło: ' + log.join(' '));
+    rec('zrodlo', log.some((l) => l === 'days:mkt=false'), 'cechy dni bez cech rynku (mkt=false): ' + log.join(' '));
+    rec('zrodlo', h.querySelector('.bt-st-tiles .tile .val')?.textContent.trim() === '30', 'kafel: 30 trade\'ów tej sesji');
+    h.querySelector('[data-st="scope:all"]').click();
+    await until(() => log.includes('src:*'), 3000); await sleep(60);
+    rec('zrodlo', log.filter((l) => l === 'src:*').length === 1, 'pozostałe zakresy: jedno pobranie wszystkich sesji');
+    rec('zrodlo', /Pominięto 1 sesję z powodu błędu odczytu/.test(h.textContent), 'komunikat o pominiętej sesji: ' + (h.querySelector('.bt-st-notice')?.textContent || 'brak'));
+    rec('zrodlo', /Ukryto 1 trade z dnia w toku/.test(h.textContent), 'komunikat o ukrytym trade\'ie dnia w toku: ' + [...h.querySelectorAll('.bt-st-notice')].map((x) => x.textContent).join(' | '));
+    rec('zrodlo', h.querySelector('.bt-st-tiles .tile .val')?.textContent.trim() === '39', 'wszystkie: 30 + 8 + 1 (dzień w toku ukryty): ' + h.querySelector('.bt-st-tiles .tile .val')?.textContent);
+    h.querySelector('[data-st="scope:picked"]').click(); await sleep(30);
+    h.querySelectorAll('[data-st-pick]').forEach(() => {});
+    rec('zrodlo', log.filter((l) => l === 'src:*').length === 1, 'przełączanie zakresów nie pobiera drugi raz');
+    m.destroy(); h.remove();
+    // sesja losowa otwarta wprost: dzień w toku ukryty także w „Ta sesja”
+    const h2 = document.createElement('section'); document.body.append(h2);
+    const m2 = mountStats(h2, { client: c2, getTrades: () => [], sessionId: 'bt-rand01' });
+    await m2.ready; await sleep(40);
+    rec('zrodlo', h2.querySelector('.bt-st-tiles .tile .val')?.textContent.trim() === '1' && !/2024-03-13|13 mar/.test(h2.textContent), 'Ta sesja losowa: 1 trade, bez daty dnia w toku');
+    m2.destroy(); h2.remove();
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

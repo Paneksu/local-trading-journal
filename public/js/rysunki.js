@@ -10,6 +10,8 @@ import { t } from './i18n.js';
 import { esc } from './format.js';
 import { GANN_DEFAULT, snapTime, hitTextSlot } from './geometria.js';
 import { loadStyleDock, saveStyleDock } from './podglad.js';
+import { themed, canonical, markManual } from './rysunki-kolory.js';
+import { DEFAULT_STATS, STAT_KEYS, statsOf, positionStats } from './pozycja-staty.js';
 
 export const MAX_CHARS = 190_000; // jak serwer (lib/drawings.mjs)
 export const HIDE_FROM = 0.8;      // licznik zajętości widoczny od 80% limitu
@@ -74,6 +76,7 @@ const ICONS = {
   'fib-retracement': ic('<path d="M4 5h16M4 10h16M4 14h16M4 19h16M7 19 17 5"/>'),
   'gann-box': ic('<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 9h16M4 14h16M9 4v16M14 4v16"/>'),
   text: ic('<path d="M6 6h12M12 6v13M9 19h6"/>'),
+  callout: ic('<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 19 15h-6.5L8 20v-5H5a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 5 5Z"/>'),
   'long-position': ic('<path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/>'),
   'short-position': ic('<path d="M12 5v13M6.5 12.5 12 18l5.5-5.5"/>'),
   undo: ic('<path d="M9 14 4 9l5-5M4 9h9a6 6 0 0 1 0 12h-3"/>'),
@@ -84,15 +87,31 @@ const ICONS = {
 };
 const TOOL_LABEL = () => ({
   'horizontal-line': t('Linia pozioma'), 'trend-line': t('Linia trendu'), rectangle: t('Prostokąt'), fvg: t('FVG (luka wartości godziwej)'),
-  'fib-retracement': t('Fibonacci'), 'gann-box': t('Gann box'), text: t('Tekst'), 'long-position': t('Pozycja long'), 'short-position': t('Pozycja short'),
+  'fib-retracement': t('Fibonacci'), 'gann-box': t('Gann box'), text: t('Tekst'), callout: t('Callout'), 'long-position': t('Pozycja long'), 'short-position': t('Pozycja short'),
 });
-export const TOOLS = ['horizontal-line', 'trend-line', 'rectangle', 'fvg', 'fib-retracement', 'gann-box', 'text', 'long-position', 'short-position'];
+export const TOOLS = ['horizontal-line', 'trend-line', 'rectangle', 'fvg', 'fib-retracement', 'gann-box', 'text', 'callout', 'long-position', 'short-position'];
 
 // Domyślne style nowych rysunków z tokenów (c = kolory z wykres.js). FVG: prostokąt w kolorze --be, przerywana linia środka (CE 50%).
 // P27: Fibonacci bez wypełnienia (cichy terminal, jak dotąd w podglądzie), Gann box z wypełnieniem stref 8% w kolorach sesji (--n-*),
 // podpisy Gann boxa po lewej i u góry (dwie strony zamiast czterech: mniej szumu). Decyzje gustu, zapisane w raporcie P27.
 // P27: paczka po zaznaczeniu pozycji pokazuje pigułki z kwotami domyślnego konta (Amount, Qty, PnL): wszystkie wyłączone,
 // R:R i BE rysuje wykres.js bez podkładki (preferencja: bez zaokrąglonych podkładek pod tekstem).
+// J (30.10.2026): pigułki paczki dalej wyłączone (po angielsku, kwoty bez mnożnika kontraktu, kolory na sztywno), ale podpisy jak w TradingView są:
+// liczy je pozycja-staty.js, rysuje extrasPrimitive w wykres.js. Słowa użytkownika: «Domyślnie włączone jak TV» (zmienia P27, patrz styleFor niżej).
+export const NO_ACCOUNT = { accountSize: null, riskDisplayMode: 'money', riskAmount: null, riskPercent: null };
+// J: pozycja przy wczytaniu: zawsze bez pigułek paczki (rysunek bez positionStats dostałby angielskie pigułki z domyślnego konta paczki) i bez konta i ryzyka,
+// które podsunęła paczka (dokładnie 1000 / 25 / 'percents', bez kwoty ryzyka): nikt ich nie wpisał, a dałyby zmyśloną ilość.
+// Przegląd J P1-1: czyścimy WYŁĄCZNIE te dokładne wartości domyślne (nie „brak statsOn”), więc konto wpisane w rysunku sprzed J zostaje; edycja konta,
+// ryzyka albo jednostki i tak dopisuje statsOn (znacznik rysunku z ustawieniami J).
+export const PKG_ACCOUNT = { accountSize: 1000, riskPercent: 25, riskDisplayMode: 'percents' };
+export function cleanPosition(d) {
+  if (!d || (d.kind !== 'long-position' && d.kind !== 'short-position') || !d.style) return d;
+  const st = { ...d.style };
+  if (!st.positionStats) st.positionStats = NO_STATS;
+  const pkg = !st.statsOn && st.accountSize === PKG_ACCOUNT.accountSize && st.riskPercent === PKG_ACCOUNT.riskPercent && st.riskDisplayMode === PKG_ACCOUNT.riskDisplayMode && st.riskAmount == null;
+  if (pkg) Object.assign(st, NO_ACCOUNT);
+  return { ...d, style: st };
+}
 export const NO_STATS = Object.fromEntries(['tpPriceOffset', 'tpPercentOffset', 'tpTickOffset', 'tpAmount', 'tpPL', 'openClosePL', 'qty', 'riskRewardRatio', 'slPriceOffset', 'slPercentOffset', 'slTickOffset', 'slAmount', 'slPL'].map((k) => [k, false]));
 export function styleFor(kind, c, fvg = false) {
   const gc = [c.fg2, c.asia, c.london, c.ny, c.asia, c.london, c.fg2].map((x) => x || c.fg2);
@@ -102,9 +121,16 @@ export function styleFor(kind, c, fvg = false) {
         ? { color: c.be, width: 1, backgroundColor: c.be, fillBackground: true, transparency: 88, textColor: c.fg, fontSize: 12, rectMiddleLine: { visible: true, color: c.be, width: 1, style: 'dashed' }, fvg: true }
         : { color: c.fg, width: 1, backgroundColor: c.fg, fillBackground: true, transparency: 90, textColor: c.fg, fontSize: 12, fvg: false };
     case 'text': return { color: c.fg, textColor: c.fg, fontSize: 14 };
-    // bez podpisów kwot z domyślnego konta paczki (Amount, Qty): sam obszar zysku i straty, jak pozycja z pól trade'a w podglądzie; R:R rysuje wykres.js (P27)
+    // D2 (30.10.2026): callout z paczki; jej domyślne kolory (błękit, biały tekst) zastępują tokeny: ramka --fg, tło --fg przy 85% przezroczystości, tekst --fg (§14, styl jak inne rysunki z tekstem)
+    case 'callout': return { color: c.fg, width: 1, backgroundColor: c.fg, transparency: 85, textColor: c.fg, fontSize: 14, wordWrap: false };
+    // P27: bez podpisów kwot z domyślnego konta paczki (Amount, Qty); R:R rysuje wykres.js.
+    // [U] 30.10.2026 «Domyślnie włączone jak TV»: odstępstwo od P27 (podpisy kwot i ilości wyłączone). Nowe rysunki mają nasze podpisy jak TV (statsOn: cel i stop:
+    // cena, %, ticki, kwota; środek: P&L, ilość, R:R), widoczne po zaznaczeniu albo najechaniu (showStats = „zawsze pokazuj”, wyłączone jak w TV), i ceny na osi
+    // (priceLabels, nasze etykiety w kolorach tokenów). showPriceLabels i positionStats dotyczą paczki i zostają wyłączone.
     case 'long-position':
-    case 'short-position': return { color: c.fg, width: 1, textColor: c.fg, stopColor: c.loss, targetColor: c.profit, stopTransparency: 87, targetTransparency: 87, showPriceLabels: false, showRR: true, positionStats: NO_STATS };
+    // Konto i ryzyko jawnie puste (null): paczka podsuwa własne (konto 1000, ryzyko 25%), z których wyszłaby zmyślona ilość; puste = pola do wpisania.
+    case 'short-position': return { color: c.fg, width: 1, textColor: c.fg, stopColor: c.loss, targetColor: c.profit, stopTransparency: 87, targetTransparency: 87, showPriceLabels: false, showRR: true, positionStats: NO_STATS,
+      statsOn: { ...DEFAULT_STATS }, priceLabels: true, compactStats: false, showStats: false, fontSize: 12, ...NO_ACCOUNT };
     case 'fib-retracement': return { color: c.fg, width: 1, fillBackground: false, transparency: 90, showCoeffs: true, showPrices: true, levels: FIB_LEVELS.map((coeff) => ({ coeff, color: c.fg2, visible: true })) };
     case 'gann-box': {
       const lv = GANN_DEFAULT.map((coeff, k) => ({ coeff, color: gc[k], visible: true }));
@@ -121,7 +147,12 @@ export function styleFor(kind, c, fvg = false) {
 export const TOOL_STYLE_KEY = 'thq.chart.toolStyle.v1';
 export const STYLE_KEYS = ['color', 'width', 'lineStyle', 'textColor', 'fontSize', 'horzLabelsAlign', 'vertLabelsAlign', 'backgroundColor', 'fillBackground', 'transparency',
   'levels', 'vLevels', 'showCoeffs', 'showPrices', 'fibLevelsAsPercents', 'reverse', 'fillVertBackground', 'vertTransparency',
-  'showLeftLabels', 'showRightLabels', 'showTopLabels', 'showBottomLabels', 'showRR', 'beOn', 'rectMiddleLine'];
+  'showLeftLabels', 'showRightLabels', 'showTopLabels', 'showBottomLabels', 'showRR', 'beOn', 'rectMiddleLine', 'bold',
+  // H2 (30.10.2026): znacznik kolorów domyślnych (rysunki-kolory.js) idzie z pamięcią stylu, więc ręczny kolor zostaje ręczny, a domyślny idzie za motywem
+  'autoColor',
+  // J (30.10.2026): ustawienia pozycji jak w TradingView (Styl: kolory i krycie stref, podpisy; Wejścia: konto i ryzyko). Nazwy bez key/token/pin (sanitizeSettings).
+  'stopColor', 'targetColor', 'stopTransparency', 'targetTransparency', 'statsOn', 'priceLabels', 'compactStats', 'showStats',
+  'accountSize', 'riskDisplayMode', 'riskAmount', 'riskPercent'];
 export function pickStyle(st) {
   const out = {};
   for (const k of STYLE_KEYS) if (st && st[k] !== undefined) out[k] = JSON.parse(JSON.stringify(st[k]));
@@ -149,14 +180,18 @@ export function editLevels(levels, op) {
   if ('add' in op) {
     const last = l.length ? Math.max(...l.map((x) => x.coeff)) : 0;
     const coeff = Number.isFinite(op.add) ? op.add : Math.round((last + 0.5) * 1000) / 1000;
-    l.push({ coeff, color: op.color ?? l[l.length - 1]?.color, visible: true });
+    const prev = l[l.length - 1], nl = { coeff, color: op.color ?? prev?.color, visible: true };
+    // H2: nowy poziom z kolorem domyślnym idzie za motywem (op.auto albo znacznik poziomu, z którego wziął kolor)
+    const auto = 'auto' in op ? op.auto : op.color == null ? prev?.auto : undefined;
+    if (auto) nl.auto = auto;
+    l.push(nl);
   }
   if (op.remove != null) l = l.filter((_, k) => k !== op.remove);
   if (op.set != null && l[op.set]) {
     const v = op.value;
     if (op.field === 'coeff') { const n = Number(String(v).replace(',', '.')); if (Number.isFinite(n) && Math.abs(n) <= 100) l[op.set].coeff = n; }
     else if (op.field === 'visible') l[op.set].visible = !!v;
-    else if (op.field === 'color' && typeof v === 'string') l[op.set].color = v;
+    else if (op.field === 'color' && typeof v === 'string') { l[op.set].color = v; delete l[op.set].auto; } // H2: kolor z panelu = ręczny
   }
   return l.sort((a, b) => a.coeff - b.coeff);
 }
@@ -263,6 +298,7 @@ export function panelFor(kind) {
     case 'horizontal-line': case 'trend-line': return ['text', 'line'];
     case 'rectangle': return ['text', 'line', 'fill'];
     case 'text': return ['textOnly'];
+    case 'callout': return ['callout'];
     case 'fib-retracement': return ['line', 'levels', 'fill', 'fib'];
     case 'gann-box': return ['line', 'levels', 'vLevels', 'fill', 'gann'];
     case 'long-position': case 'short-position': return ['position'];
@@ -275,7 +311,8 @@ export function panelFor(kind) {
 //        extra() → rysunek pozycji trade'a (nie zapisywany) albo null, saveTrade(plan) → Promise<{ ok, error? }>, onTradeDraft(ceny|null),
 //        onChange(), onSaved(), confirm({ title, text, ok }) → Promise<bool>,
 //        P28: planTrade(rysunek) → planTradeSave(…), exitPoint(rysunek) → { x, y } kropki wyjścia w polu wykresu, pointAt({ x, y }) → { price, time },
-//        hold(bool) → wstrzymanie przesuwania wykresu w trakcie przeciągania }
+//        hold(bool) → wstrzymanie przesuwania wykresu w trakcie przeciągania,
+//        J: positionDefaults() → konto i ryzyko nowej pozycji (replay: z sesji), repaint() → odświeżenie podpisów, onSelect() → zmiana zaznaczenia }
 export function createRysunki(ctx) {
   const { D, chart, series, plot, bar, foot, tradeId } = ctx;
   const panel = ctx.panel || document.createElement('div');
@@ -283,7 +320,15 @@ export function createRysunki(ctx) {
   const gear = ctx.gear || document.createElement('button');
   const manager = new D.DrawingManager(chart, series, {});
   const fvg = { on: false };
-  D.setDefaultStyleOverride((kind) => styleForTool(kind, ctx.colors(), fvg.on));
+  // H2: nowy rysunek dostaje znacznik kolorów domyślnych (rysunki-kolory.js) i kolory bieżącego motywu
+  // J: pozycja w replayu dostaje konto i ryzyko z sesji (ctx.positionDefaults: def.balance, def.risk), które wygrywają z pamięcią stylu; w Live bez tej opcji
+  // zostaje pamięć stylu (ostatnio wpisane konto i ryzyko), a bez niej pola do wpisania (Live nie ma ustawienia salda konta)
+  const isPosKind = (k) => k === 'long-position' || k === 'short-position';
+  D.setDefaultStyleOverride((kind) => {
+    const c = ctx.colors(), st = styleForTool(kind, c, fvg.on);
+    if (isPosKind(kind)) Object.assign(st, ctx.positionDefaults?.() || {});
+    return themed({ kind, style: st }, c).style;
+  });
   const tick = tickOf(ctx.instrument);
   // pole koloru przyjmuje tylko 6 cyfr szesnastkowych: kolor z tokenów albo rgba() z sondy sprowadzony do tej postaci, w ostateczności --fg
   const hex6 = (v) => { try { const h = ctx.toHex ? ctx.toHex(v) : v; return /^#[0-9a-f]{6}$/i.test(h) ? h : null; } catch { return null; } };
@@ -291,12 +336,14 @@ export function createRysunki(ctx) {
 
   // pozycja trade'a: zablokowana (z pól), po odblokowaniu edytowalna (szkic); nigdy w zapisie rysunków
   let posId = null, posUnlocked = false, posDraft = null;
-  const items = () => JSON.parse(manager.exportJSON()).filter((d) => d.id !== posId);
+  // H2: zapis (i porównania, cofanie) w postaci kanonicznej: kolory domyślne jako znacznik + wartość z Onyx, niezależnie od bieżącego motywu
+  const items = () => JSON.parse(manager.exportJSON()).filter((d) => d.id !== posId).map(canonical);
   const addExtra = () => {
     const x = posUnlocked && posDraft ? { ...posDraft, locked: false } : ctx.extra?.();
     if (x) { const { id, ...rest } = x; posId = manager.add(rest); } else posId = null;
   };
-  const load = (list) => { manager.importJSON(JSON.stringify(list)); addExtra(); };
+  // J: pozycja zawsze bez pigułek paczki (rysunek bez positionStats dostałby angielskie pigułki z domyślnego konta paczki); podpisy rysuje wykres.js
+  const load = (list) => { const c = ctx.colors(); manager.importJSON(JSON.stringify(list.map((d) => themed(cleanPosition(d), c)))); addExtra(); };
   load(Array.isArray(ctx.doc?.d) ? ctx.doc.d : []);
 
   // ---- pasek ----
@@ -380,6 +427,14 @@ export function createRysunki(ctx) {
     }
     say(t('Zapisuję…'));
     try {
+      // D1: replay backtestu zapisuje rysunki w pliku sesji (ctx.saveDoc zastępuje POST /api/drawings/save); bez tej opcji zapis do Notion jak dotąd
+      if (typeof ctx.saveDoc === 'function') {
+        const sr = await ctx.saveDoc(doc);
+        if (!sr?.ok) throw new Error(sr?.error || t('Nie udało się zapisać rysunków.'));
+        lastError = '';
+        say(t('Zapisano.'), 'ok'); ctx.onSaved?.(sr);
+        return;
+      }
       const r = await fetch('/api/drawings/save', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ id: tradeId, doc }), keepalive: JSON.stringify(doc).length < 60_000 });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || t('Nie udało się połączyć z serwerem.'));
@@ -418,7 +473,7 @@ export function createRysunki(ctx) {
   const on = (ev, fn) => { try { const off = manager.on(ev, fn); if (typeof off === 'function') offs.push(off); } catch { /* brak zdarzenia */ } };
   on('change', () => changed());
   on('gestureEnd', () => { snap(); syncBtns(); });
-  on('selection', () => { syncBtns(); showPanel(); placeGear(); });
+  on('selection', () => { syncBtns(); showPanel(); placeGear(); ctx.repaint?.(); ctx.onSelect?.(); }); // J: podpisy pozycji po zaznaczeniu, przycisk wejścia w replayu
   meter(); syncBtns();
 
   // ---- tekst: edycja w miejscu (P32) ----
@@ -549,6 +604,16 @@ export function createRysunki(ctx) {
   }
   // P29, słowa użytkownika: «ustawienia boxa, nie ma przelacznika widocznosci polowy boxa, powinno byc»: prostokąt i FVG = linia środka (rectMiddleLine),
   // Gann box = poziom 0,5 ceny i czasu.
+  // J: zakładka panelu pozycji (Wejścia, Styl, Podpisy) i ilość z konta i ryzyka (kontrakty, jak sizeFromRisk w panelu zleceń)
+  let posTab = 'inputs';
+  const qtyText = (d) => { const s = positionStats(d, { instrument: ctx.instrument, tick }); return s?.qty != null ? t.p('{n} kontraktów', s.qty) : t('wpisz ryzyko, żeby policzyć'); };
+  // przegląd J P3-5: w replayu „Wejdź według rysunku” liczy ilość z ryzyka sesji ([U] 4); gdy różni się od ilości rysunku, panel to mówi
+  const sessionNote = (d) => {
+    const q = ctx.sessionQty?.(d);
+    if (q == null) return '';
+    const s = positionStats(d, { instrument: ctx.instrument, tick });
+    return s?.qty === q ? '' : t.p('Wejście z rysunku użyje ryzyka sesji: {n} kontraktów', q);
+  };
   const gannHalf = (st) => [...(st.levels || []), ...(st.vLevels || [])].some((l) => l.coeff === 0.5 && l.visible !== false);
   function groupsHtml(d) {
     const st = d.style || {}, k = d.kind;
@@ -574,6 +639,16 @@ export function createRysunki(ctx) {
       case 'horizontal-line': case 'trend-line': return lineGrp(t('Linia')) + textGrp(false);
       case 'rectangle': return lineGrp(t('Obramowanie'), { on: !!st.rectMiddleLine?.visible }) + fillGrp(true) + textGrp(false);
       case 'text': return textGrp(true);
+      case 'callout': {
+        // D2: tło (kolor i krycie), ramka (kolor, grubość), tekst (treść, rozmiar, kolor, pogrubienie)
+        const op = 100 - (st.transparency ?? 50);
+        return grp(t('Tło'), row(t('Kolor'), colorIn('backgroundColor', st.backgroundColor || st.color, t('Kolor tła')))
+          + row(t('Krycie'), `<input type="range" min="0" max="100" step="1" data-k="opacity" value="${op}" aria-label="${L('Krycie wypełnienia (%)')}"><span class="note swc-op">${op}%</span>`))
+          + grp(t('Obramowanie'), row(t('Kolor'), colorIn('color', st.color, t('Kolor obramowania'))) + row(t('Grubość'), selIn('width', st.width ?? 1, WIDTHS, t('Grubość'))))
+          + grp(t('Tekst'), row(t('Tekst'), `<input class="sp-in swc-ftext" data-k="text" value="${esc(st.text || d.text || '')}" maxlength="200" aria-label="${L('Tekst')}">`)
+            + row(t('Rozmiar'), selIn('fontSize', st.fontSize ?? 14, SIZES, t('Rozmiar')) + colorIn('textColor', st.textColor || st.color, t('Kolor tekstu')))
+            + row('', chk('bold', !!st.bold, t('Pogrubienie'))));
+      }
       case 'fib-retracement':
         return lineGrp(t('Linia')) + grp(t('Poziomy'), levelsHtml('levels', st)) + fillGrp(false)
           + grp(t('Podpisy'), row('', chk('showCoeffs', st.showCoeffs !== false, t('Współczynniki'))) + row('', chk('showPrices', st.showPrices !== false, t('Ceny')))
@@ -583,9 +658,42 @@ export function createRysunki(ctx) {
           + grp(t('Podpisy'), row('', chk('gannLabels', st.showLeftLabels !== false || st.showTopLabels !== false, t('Pokaż podpisy'))) + row('', chk('reverse', !!st.reverse, t('Odwróć'))));
       case 'long-position': case 'short-position': {
         const pr = positionPrices(d, tick);
-        return grp(t('Poziomy'), row('', chk('beOn', Number.isFinite(st.beLevel), t('Poziom BE')))
+        // P27/P29: poziom BE i R:R bez zaznaczenia (nasze różnice) zostają w grupie „Poziomy”
+        const levels = grp(t('Poziomy'), row('', chk('beOn', Number.isFinite(st.beLevel), t('Poziom BE')))
           + (Number.isFinite(st.beLevel) ? row(t('Cena BE'), `<input class="sp-in swc-num" data-k="bePrice" value="${pr?.be ?? ''}" inputmode="decimal" aria-label="${L('Cena BE')}">`) : '')
           + row('', chk('showRR', st.showRR !== false, t('Pokaż R:R'))));
+        // J (30.10.2026): ustawienia jak w TradingView w trzech zakładkach (Wejścia, Styl, Podpisy); wszystkie zakładki są w DOM, widoczna jedna
+        const numIn = (key, v, label, ph = '', cls = '') => `<input class="sp-in swc-num${cls}" data-k="${key}" value="${v ?? ''}" inputmode="decimal" aria-label="${esc(label)}"${ph ? ` placeholder="${esc(ph)}"` : ''}>`;
+        const pair = (a, b) => `<span class="swc-pair">${a}${b}</span>`;
+        const pct = st.riskDisplayMode === 'percents';
+        const op = (tr) => 100 - (Number.isFinite(tr) ? tr : 80);
+        const opIn = (key, tr, label) => `<input type="range" min="0" max="100" step="1" data-k="${key}" value="${op(tr)}" aria-label="${esc(label)}"><span class="note swc-op">${op(tr)}%</span>`;
+        const tk = (lvl) => (Number.isFinite(lvl) && lvl > 0 ? Math.round(lvl / tick) : '');
+        const inputs = grp(t('Konto i ryzyko'), row(t('Konto ($)'), numIn('accountSize', st.accountSize, t('Konto ($)'), t('np. 50000')))
+          + row(t('Ryzyko'), numIn('riskValue', pct ? st.riskPercent : st.riskAmount, pct ? t('Ryzyko (% konta)') : t('Ryzyko ($)'), '', ' swc-sm')
+            + segHtml('riskDisplayMode', pct ? 'percents' : 'money', [['money', '$', t('Ryzyko w dolarach')], ['percents', '%', t('Ryzyko w % konta')]], t('Jednostka ryzyka')))
+          + row(t('Ilość'), `<span class="note swc-qty" aria-live="polite">${esc(qtyText(d))}</span>`)
+          + (ctx.sessionQty ? `<p class="note swc-sqty" aria-live="polite">${esc(sessionNote(d))}</p>` : ''))
+          + grp(t('Ceny'), row('', pair(`<span class="note">${L('ticki')}</span>`, `<span class="note">${L('cena')}</span>`))
+            + row(t('Wejście'), pair('<span></span>', numIn('entryPrice', pr?.entryPrice, t('Cena wejścia'))))
+            + row(t('Cel'), pair(numIn('tpTicks', tk(st.profitLevel), t('Cel w tickach')), numIn('tpPrice', pr?.tp, t('Cena celu'))))
+            + row(t('Stop'), pair(numIn('slTicks', tk(st.stopLevel), t('Stop w tickach')), numIn('slPrice', pr?.sl, t('Cena stopu')))))
+          + levels;
+        const style = grp(t('Linie'), row(t('Kolor'), colorIn('color', st.color, t('Kolor linii'))) + row(t('Grubość'), selIn('width', st.width ?? 1, WIDTHS, t('Grubość'))))
+          + grp(t('Strefa zysku'), row(t('Kolor'), colorIn('targetColor', st.targetColor, t('Kolor strefy zysku'))) + row(t('Krycie'), opIn('tOpacity', st.targetTransparency, t('Krycie strefy zysku (%)'))))
+          + grp(t('Strefa straty'), row(t('Kolor'), colorIn('stopColor', st.stopColor, t('Kolor strefy straty'))) + row(t('Krycie'), opIn('sOpacity', st.stopTransparency, t('Krycie strefy straty (%)'))))
+          + grp(t('Tekst'), row(t('Rozmiar'), selIn('fontSize', st.fontSize ?? 12, SIZES, t('Rozmiar')) + colorIn('textColor', st.textColor || st.color, t('Kolor tekstu'))));
+        const so = statsOf(st);
+        const statChk = (key, label) => `<label class="check"><input type="checkbox" data-stat="${key}"${so[key] ? ' checked' : ''}> ${esc(label)}</label>`;
+        const sideRow = (p) => row('', `<span class="swc-chks">${statChk(`${p}Price`, t('Cena'))}${statChk(`${p}Pct`, '%')}${statChk(`${p}Ticks`, t('Ticki'))}${statChk(`${p}Amount`, t('Kwota'))}</span>`);
+        const labels = grp(t('Podpisy'), row('', chk('priceLabels', st.priceLabels !== false, t('Ceny na osi'))) + row('', chk('showStats', !!st.showStats, t('Zawsze pokazuj statystyki')))
+          + row('', chk('compactStats', !!st.compactStats, t('Tryb kompaktowy'))))
+          + grp(t('Statystyki celu'), sideRow('tp'))
+          + grp(t('Statystyki środka'), row('', `<span class="swc-chks">${statChk('pl', 'P&L')}${statChk('qty', t('Ilość'))}${statChk('rr', 'R:R')}</span>`))
+          + grp(t('Statystyki stopu'), sideRow('sl'));
+        const tabs = [['inputs', t('Wejścia')], ['style', t('Styl')], ['labels', t('Podpisy')]];
+        return `<div class="seg sm swc-ptabs" role="tablist" aria-label="${L('Ustawienia pozycji')}">${tabs.map(([v, lab]) => `<button type="button" role="tab" data-ptab="${v}" aria-selected="${posTab === v}" aria-pressed="${posTab === v}">${esc(lab)}</button>`).join('')}</div>`
+          + tabs.map(([v]) => `<div class="swc-pane" data-pane="${v}"${posTab === v ? '' : ' hidden'}>${{ inputs, style, labels }[v]}</div>`).join('');
       }
       default: return '';
     }
@@ -722,11 +830,12 @@ export function createRysunki(ctx) {
   }
   const onPlotMove = (ev) => {
     if (ev.buttons) return;
-    hoverId = manager.hoveredId?.() ?? null;
+    const h = manager.hoveredId?.() ?? null;
+    if (h !== hoverId) { hoverId = h; ctx.repaint?.(); } // J: podpisy pozycji po najechaniu (jak TV)
     placeGear();
   };
   plot.addEventListener('pointermove', onPlotMove);
-  stage.addEventListener('pointerleave', () => { hoverId = null; scheduleHide(); });
+  stage.addEventListener('pointerleave', () => { if (hoverId) { hoverId = null; ctx.repaint?.(); } scheduleHide(); });
   gear.addEventListener('click', () => {
     if (!gearId || !manager.get(gearId)) return;
     openId = gearId;
@@ -737,10 +846,20 @@ export function createRysunki(ctx) {
   offs.push(() => plot.removeEventListener('pointermove', onPlotMove));
 
   // pola panelu zsynchronizowane z rysunkiem po przeciągnięciu (BE pozycji rysowanej)
-  function syncStyleFields() {
+  function syncStyleFields(skip = null) {
     if (panel.dataset.mode !== 'style' || !panelId) return;
     const d = manager.get(panelId), el = panel.querySelector('[data-k="bePrice"]');
     if (d && el && document.activeElement !== el) el.value = positionPrices(d, tick)?.be ?? '';
+    // J: pola Wejść (ceny, ticki) i ilość idą za rysunkiem po przeciągnięciu i po zmianie drugiego pola
+    if (!d || !isPosKind(d.kind)) return;
+    const pr = positionPrices(d, tick) || {}, st = d.style || {};
+    const tk = (lvl) => (Number.isFinite(lvl) && lvl > 0 ? Math.round(lvl / tick) : '');
+    const vals = { entryPrice: pr.entryPrice, tpPrice: pr.tp, slPrice: pr.sl, tpTicks: tk(st.profitLevel), slTicks: tk(st.stopLevel) };
+    for (const [k, v] of Object.entries(vals)) { const f = panel.querySelector(`[data-k="${k}"]`); if (f && f !== skip && document.activeElement !== f) { f.value = v ?? ''; f.removeAttribute('aria-invalid'); } }
+    const q = panel.querySelector('.swc-qty');
+    if (q) q.textContent = qtyText(d);
+    const sq = panel.querySelector('.swc-sqty');
+    if (sq) sq.textContent = sessionNote(d);
   }
   function syncTradeFields() {
     if (!posUnlocked || panel.dataset.mode !== 'trade') return;
@@ -783,12 +902,13 @@ export function createRysunki(ctx) {
       if (d.kind === 'gann-box') {
         for (const key of ['levels', 'vLevels']) {
           let l = Array.isArray(st[key]) ? st[key] : [];
-          if (el.checked && !l.some((x) => x.coeff === 0.5)) l = editLevels(l, { add: 0.5, color: ctx.colors().fg2 });
+          if (el.checked && !l.some((x) => x.coeff === 0.5)) l = editLevels(l, { add: 0.5, color: ctx.colors().fg2, auto: 'fg2' });
           st[key] = l.map((x) => (x.coeff === 0.5 ? { ...x, visible: el.checked } : x));
         }
       } else {
         // prostokąt: linia połowy w kolorze obramowania; flaga fvg zostaje (FVG nie zamienia się w prostokąt i odwrotnie)
         st.rectMiddleLine = { color: st.color, width: 1, style: 'dashed', ...(st.rectMiddleLine || {}), visible: el.checked };
+        if (st.autoColor?.color && st.rectMiddleLine.color === st.color) st.autoColor = { ...st.autoColor, 'rectMiddleLine.color': st.autoColor.color }; // H2: linia połowy jak obramowanie
         if (st.fvg === undefined) st.fvg = toolKeyOf(d) === 'fvg';
       }
       next = { ...d, style: st }; manager.update(next); remember(next); showPanel(); return;
@@ -802,9 +922,34 @@ export function createRysunki(ctx) {
       el.toggleAttribute('aria-invalid', !(v > 0));
       if (!(v > 0)) return;
       next = withPositionPrice(d, 'be', roundTick(v, tick)); manager.update(next); return;
-    } else if (['showCoeffs', 'showPrices', 'fibLevelsAsPercents', 'reverse', 'showRR'].includes(k)) st[k] = el.checked;
-    else if (k === 'color') { st.color = el.value; if (d.kind === 'rectangle' && st.rectMiddleLine) st.rectMiddleLine = { ...st.rectMiddleLine, color: el.value }; }
-    else if (k) st[k] = el.value;
+    } else if (el.dataset.stat) {
+      // J: podpis statystyki włączany pojedynczo (statsOn)
+      st.statsOn = { ...statsOf(st), [el.dataset.stat]: el.checked };
+    } else if (k === 'accountSize' || k === 'riskValue') {
+      // J: konto i ryzyko (kwota albo % konta); puste pole czyści wartość, zła liczba podświetla pole
+      const v = numOf(el.value);
+      const bad = Number.isNaN(v) || (k === 'riskValue' && st.riskDisplayMode === 'percents' && v > 100);
+      el.toggleAttribute('aria-invalid', bad);
+      if (bad) return;
+      const f = k === 'accountSize' ? 'accountSize' : st.riskDisplayMode === 'percents' ? 'riskPercent' : 'riskAmount';
+      if (v == null) delete st[f]; else st[f] = v;
+      // przegląd J P1-1: znacznik ustawień J, żeby wpisane konto i ryzyko nigdy nie wyglądały na domyślne paczki
+      st.statsOn = statsOf(st);
+    } else if (['entryPrice', 'tpPrice', 'slPrice', 'tpTicks', 'slTicks'].includes(k)) {
+      // J: ceny i odległości w tickach jak w zakładce Wejścia w TV (cel i stop dwiema drogami: ticki albo cena)
+      const v = numOf(el.value);
+      el.toggleAttribute('aria-invalid', v == null || Number.isNaN(v));
+      if (v == null || Number.isNaN(v)) return;
+      if (k === 'tpTicks') st.profitLevel = Math.round(v) * tick;
+      else if (k === 'slTicks') st.stopLevel = Math.round(v) * tick;
+      else { next = withPositionPrice(d, { entryPrice: 'entryPrice', tpPrice: 'tp', slPrice: 'sl' }[k], roundTick(v, tick)); manager.update(next); syncStyleFields(el); return; }
+      next = { ...d, style: st }; manager.update(next); syncStyleFields(el); return;
+    } else if (k === 'tOpacity' || k === 'sOpacity') {
+      st[k === 'tOpacity' ? 'targetTransparency' : 'stopTransparency'] = 100 - Number(el.value);
+      const o = el.parentElement.querySelector('.swc-op'); if (o) o.textContent = `${el.value}%`;
+    } else if (['showCoeffs', 'showPrices', 'fibLevelsAsPercents', 'reverse', 'showRR', 'bold', 'priceLabels', 'showStats', 'compactStats'].includes(k)) st[k] = el.checked;
+    else if (k === 'color') { st.color = el.value; if (d.kind === 'rectangle' && st.rectMiddleLine) st.rectMiddleLine = { ...st.rectMiddleLine, color: el.value }; st = markManual(st, 'color', 'rectMiddleLine.color'); }
+    else if (k) { st[k] = el.value; if (el.type === 'color') st = markManual(st, k); } // H2: kolor z panelu = ręczny, nie idzie za motywem
     next = { ...next, style: st };
     manager.update(next);
     remember(next);
@@ -822,12 +967,21 @@ export function createRysunki(ctx) {
     if (!b) return;
     if (b.dataset.act === 'pdock') { setDock(b.dataset.v); return; }
     if (b.dataset.act === 'pclose') { closePop(); return; }
+    if (b.dataset.ptab) { // J: zakładki panelu pozycji
+      posTab = b.dataset.ptab;
+      panel.querySelectorAll('[data-ptab]').forEach((x) => { x.setAttribute('aria-pressed', String(x === b)); x.setAttribute('aria-selected', String(x === b)); });
+      panel.querySelectorAll('[data-pane]').forEach((x) => { x.hidden = x.dataset.pane !== posTab; });
+      return;
+    }
     const d = panelId && manager.get(panelId);
-    if (b.dataset.k && b.dataset.v != null && d) { // segment: wyrównanie, styl linii
+    if (b.dataset.k && b.dataset.v != null && d) { // segment: wyrównanie, styl linii, jednostka ryzyka (J)
       const st = { ...d.style, [b.dataset.k]: b.dataset.v };
+      // przegląd J P1-1: wybór jednostki ryzyka też oznacza rysunek jako ustawiony w J
+      if (b.dataset.k === 'riskDisplayMode') st.statsOn = statsOf(st);
       const next = { ...d, style: st };
       manager.update(next); remember(next);
       b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      if (b.dataset.k === 'riskDisplayMode') showPanel(); // pole ryzyka pokazuje wartość wybranej jednostki
       return;
     }
     if ((b.dataset.lvadd || b.dataset.lvdel != null) && d) {
@@ -928,6 +1082,7 @@ export function createRysunki(ctx) {
 
   // Esc zdejmuje narzędzie albo zaznaczenie zamiast zamykać okno; Ctrl+Z cofa; strzałki nie przełączają trade'a, gdy wykres jest widoczny.
   const onKey = (ev) => {
+    if (ctx.isActive && !ctx.isActive()) return; // D1: kilka wykresów w replayu, klawisze (Esc, Ctrl+Z) obsługuje tylko aktywny
     const el = ev.target;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
     if (!plot.getClientRects().length) return;
@@ -958,6 +1113,34 @@ export function createRysunki(ctx) {
     relayout: () => placeGear(), // P29: zębatka idzie za rysunkiem przy przesuwaniu i skalowaniu wykresu
     dock: () => dock,
     setDock,
+    // J: podpisy pozycji widoczne po zaznaczeniu albo najechaniu (extrasPrimitive pyta o te identyfikatory)
+    focusIds: () => new Set([...[].concat(manager.selection()), ...(hoverId ? [hoverId] : [])]),
+    // J (Zakres B): zaznaczony rysunek pozycji (jeden, nie pozycja trade'a ani replayu) i usunięcie go po złożeniu zlecenia (zapis i Cofnij jak przy Delete)
+    selectedPosition() {
+      const sel = [].concat(manager.selection()).filter((x) => x !== posId);
+      const d = sel.length === 1 ? manager.get(sel[0]) : null;
+      return d && isPosKind(d.kind) && !d.locked && !d.hidden ? d : null;
+    },
+    removeDrawing(id) { if (!id || id === posId || !manager.get(id)) return; snap(); manager.remove(id); snap(); syncBtns(); showPanel(); },
+    // D1: rysunki zmienione na innym wykresie tego samego instrumentu (replay): podmiana listy bez zapisu i bez cofania
+    applyExternal(doc) {
+      if (editing) return;
+      restoring = true;
+      try { load(Array.isArray(doc?.d) ? doc.d : []); } finally { restoring = false; }
+      lastDoc = JSON.stringify(items());
+      stack.length = 0; stack.push(lastDoc);
+      meter(); syncBtns(); showPanel(); ctx.onChange?.();
+    },
+    // H2: zmiana motywu: rysunki z kolorem domyślnym dostają kolory nowego motywu (zapis się nie zmienia, więc nie ma zapisu ani kroku cofania)
+    retheme() {
+      const c = ctx.colors();
+      restoring = true;
+      try {
+        for (const d of manager.drawings()) if (d.id !== posId) manager.update(themed(d, c));
+        if (posId && !posUnlocked) { manager.remove(posId); addExtra(); }
+      } finally { restoring = false; }
+      ctx.onChange?.(); showPanel();
+    },
     refreshExtra() { if (posUnlocked) return; restoring = true; try { if (posId) manager.remove(posId); addExtra(); } finally { restoring = false; } syncBtns(); },
     async destroy() {
       window.removeEventListener('keydown', onKey, true);

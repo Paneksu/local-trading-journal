@@ -51,6 +51,20 @@
 /* ---------- tokeny: Platinum ---------- */
 :root[data-theme="platinum"] {
   color-scheme: light;
+  /* H2 (30.10.2026), słowa użytkownika: «niech to miejsce tez jest dostosowane do aktualnego motywu jasnego lub ciemnego, bo zauwazylem ze jest tylko ciemne»,
+     «Cały podgląd trade'a». Podgląd trade'a (.lb) bierze w Platinum tokeny motywu; w Onyx zostają dotychczasowe wartości --lb-* (bez zmian wyglądu). */
+  --lb-fg: var(--fg); --lb-fg-rgb: var(--fg-rgb); --lb-fg-2: var(--fg-2); --lb-float: var(--float); --lb-popover: var(--popover); --lb-line: var(--line);
+  --lb-on-fg: var(--on-fg); --lb-seg-track: var(--seg-track); --lb-chart-bg: var(--content); --lb-bg: color-mix(in srgb, var(--content) 97%, transparent);
+  --lb-primary: var(--primary); --lb-primary-fg: var(--primary-fg); --lb-well: var(--well); --lb-edge: var(--edge); --lb-input: var(--input);
+  --lb-seg-on: var(--seg-on); --lb-well-shadow: var(--well-shadow);
+  /* [U] 30.10.2026 «Jaśniejsze (#e0e0e0)»: podgląd trade'a i edytor wykresu w Platinum na --content #e0e0e0 (wcześniej rama --chrome #bfbfbf). Kontrast na #e0e0e0
+     (pomiar z tokenów): --fg 15,1, --fg-2 7,9, --warn 5,2 (notka back-adjust), --profit 6,8, --loss 6,7, --be 7,0, --n-* 5,9–7,0, rysunki domyślne (--fg) 15,1: AA bez
+     ciemniejszych odcieni, więc podgląd bierze zwykłe tokeny motywu. */
+  --lb-warn: var(--warn);
+  --lb-n-blue: var(--n-blue); --lb-n-orange: var(--n-orange); --lb-n-purple: var(--n-purple); --lb-n-red: var(--n-red); --lb-n-yellow: var(--n-yellow);
+  /* H2 P1 #21: replay zostaje na ramie --chrome #bfbfbf: tam --warn ma 3,7:1, --n-orange 4,3:1, --n-yellow 4,2:1 → ciemniejsze odcienie (≥ 5:1, features.css .bt-screen) */
+  --chrome-warn: #663700; --chrome-n-orange: oklch(0.41 0.13 50); --chrome-n-yellow: oklch(0.4 0.1 95);
+  --lb-profit: var(--profit); --lb-loss: var(--loss); --lb-be: var(--be);
   --chrome: #bfbfbf;
   --content: #e0e0e0;
   --edge: rgb(0 0 0 / .06);
@@ -99,7 +113,10 @@
   --ease: cubic-bezier(.4, 0, .2, 1);
   --spring: cubic-bezier(.32, .72, 0, 1);
   --card-ease: cubic-bezier(.22, .61, .36, 1);
-  /* tokeny lightboxa (zawsze ciemny, niezależnie od motywu): wartości Onyx w jednym miejscu, features.css używa tylko ich (poprawka po przeglądzie 28.10.2026) */
+  /* tokeny podglądu trade'a (lightbox): wartości Onyx w jednym miejscu, features.css używa tylko ich (poprawka po przeglądzie 28.10.2026); od H2 (30.10.2026) w Platinum
+     nadpisane tokenami motywu w bloku :root[data-theme="platinum"] (słowa użytkownika: «Cały podgląd trade'a» ma iść za motywem) */
+  --lb-fg: #f3f3f3; --lb-fg-rgb: 243 243 243; --lb-fg-2: #b4b9be; --lb-float: #2b2f31; --lb-popover: #26292b; --lb-line: rgb(80 86 90 / .7);
+  --lb-on-fg: #111315; --lb-seg-track: rgb(243 243 243 / .06); --lb-chart-bg: rgb(14 15 16); --lb-bg: rgb(14 15 16 / .97);
   --lb-primary: #f5f5f7; --lb-primary-fg: #0b0b0c; --lb-well: #1e2022; --lb-edge: #2d3134; --lb-input: #1e2022;
   --lb-seg-on: rgb(243 243 243 / .15); --lb-well-shadow: inset 0 2px 6px rgb(0 0 0 / .45);
   --lb-n-blue: oklch(0.78 0.11 250); --lb-n-orange: oklch(0.8 0.14 55); --lb-n-purple: oklch(0.79 0.12 305);
@@ -418,6 +435,14 @@ svg .bar-g.hl path { filter: brightness(1.18); }
 .swc-style .sp-in.sp-sel { width: auto; max-width: none; }
 .swc-style .sp-in.swc-ftext { width: 100%; min-width: 0; }
 .swc-num { width: 96px; font-variant-numeric: tabular-nums; }
+/* J (30.10.2026): panel pozycji jak w TradingView: zakładki, ryzyko z jednostką, ticki i cena w dwóch kolumnach, przełączniki podpisów w wierszu */
+.swc-ptabs { margin-top: 10px; }
+.swc-num.swc-sm { width: 80px; }
+.swc-pair { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 6px; width: 100%; }
+.swc-pair .swc-num { width: 100%; min-width: 0; }
+.swc-chks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.swc-sqty { margin: 2px 0 4px; }
+.swc-sqty:empty { display: none; }
 .swc-style .sp-in[aria-invalid] { box-shadow: inset 0 0 0 1px var(--danger); }
 .swc-style input[type="color"] { width: 28px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; cursor: pointer; }
 .swc-style input[type="range"] { flex: 1; min-width: 0; accent-color: var(--fg); }
@@ -564,6 +589,9 @@ svg .drw :is(line, rect):not([stroke]):not(.pos-profit):not(.pos-loss) { stroke:
 svg .drw rect:not(.fill):not(.pos-profit):not(.pos-loss) { fill: none; }
 svg .drw rect.fill { fill-opacity: .14; }
 svg .drw rect.fill:not([fill]):not(.pos-profit):not(.pos-loss) { fill: var(--fg); }
+/* D2: dymek calloutu (path): bez danych rysunku tokeny, jak prostokąt */
+svg .drw path.drw-callout:not([stroke]) { stroke: var(--fg); }
+svg .drw path.drw-callout.fill:not([fill]) { fill: var(--fg); fill-opacity: .15; }
 svg .drw .drw-fib { stroke-width: 1; }
 svg .drw .drw-mid { stroke-width: 1; }
 svg .drw .drw-entry { stroke: var(--fg-2); stroke-width: 1; }
@@ -669,12 +697,12 @@ td.name { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-spa
 .g-r { white-space: nowrap; font-size: var(--t-base); }
 .g-r b { font-weight: 700; margin-left: 4px; }
 
-/* lightbox: zawsze ciemny, niezależnie od motywu */
+/* podgląd trade'a (lightbox): w Onyx ciemny jak dotąd, w Platinum jasny (H2, słowa użytkownika: «Cały podgląd trade'a»); wartości w tokenach --lb-* */
 .lb {
-  --fg: #f3f3f3; --fg-rgb: 243 243 243; --fg-2: #b4b9be; --float: #2b2f31; --popover: #26292b; --line: rgb(80 86 90 / .7);
-  --profit: var(--lb-profit, #1db954); --loss: var(--lb-loss, #ff6a6a); --be: var(--lb-be, #7aa7ff); --warn: var(--lb-warn); --on-fg: #111315; --seg-track: rgb(243 243 243 / .06);
-  --chart-bg: rgb(14 15 16); /* tło wykresu w lightboxie: obrys napisów nakładek (newsy) */
-  position: fixed; inset: 0; z-index: 100; color: var(--fg); background: rgb(14 15 16 / .97); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  --fg: var(--lb-fg); --fg-rgb: var(--lb-fg-rgb); --fg-2: var(--lb-fg-2); --float: var(--lb-float); --popover: var(--lb-popover); --line: var(--lb-line);
+  --profit: var(--lb-profit, #1db954); --loss: var(--lb-loss, #ff6a6a); --be: var(--lb-be, #7aa7ff); --warn: var(--lb-warn); --on-fg: var(--lb-on-fg); --seg-track: var(--lb-seg-track);
+  --chart-bg: var(--lb-chart-bg); /* tło wykresu w lightboxie: obrys napisów nakładek (newsy) */
+  position: fixed; inset: 0; z-index: 100; color: var(--fg); background: var(--lb-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
 }
 .lb[hidden] { display: none !important; }
@@ -795,3 +823,5 @@ html.theme-switching::view-transition-new(root) { animation: .52s cubic-bezier(.
   .btn:hover, .glint:hover, .pill[aria-pressed="true"] { transform: none !important; }
   .busy .spin, .loading .spin { animation: spin 2.4s linear infinite !important; }
 }
+/* [U] 30.10.2026 «Ukryj na Backtest»: filtry „Typ” i „Okres” dotyczą trade'ów z Notion, nie sesji backtestu (app.js: body[data-view], data-dash-only) */
+body[data-view="backtest"] [data-dash-only] { display: none; }

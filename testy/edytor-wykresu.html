@@ -64,7 +64,7 @@ try {
   const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame, doc: null, edited: '2026-10-27T09:00:00.000Z', onDone: (f) => { doneArg = f; } });
   await sleep(400);
   ok(root.querySelectorAll('.swc-lwc canvas').length >= 1, 'LWC narysował canvas');
-  ok(root.querySelectorAll('.swc-tools [data-tool]').length === 9, 'pasek ma 9 narzędzi (8 rodzajów z Gann boxem + preset FVG)');
+  ok(root.querySelectorAll('.swc-tools [data-tool]').length === 10, 'pasek ma 10 narzędzi (8 rodzajów z Gann boxem + preset FVG + callout z D2)');
   ok(root.querySelector('.swc-done') && root.querySelector('.swc-foot a[href^="https://www.tradingview.com"]'), 'przycisk Gotowe i link do tradingview.com');
 
   // tło przezroczyste: istnieje piksel o alfie 0 na dolnej warstwie

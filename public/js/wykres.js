@@ -12,7 +12,8 @@ import { tradeQuery, fetchCandles, padFor, tfSec, MAX_VISIBLE, barToggles, overl
 import { chartSettings } from './styl-wykresu.js';
 import { newsGeometry, timeToX, markPath, NEWS_DASH, feed as newsFeed } from './newsy.js';
 import { mountNewsLayer } from './newsy-warstwa.js';
-import { createRysunki, NO_STATS, adoptEdited, planTradeSave, tickOf } from './rysunki.js';
+import { createRysunki, NO_STATS, NO_ACCOUNT, adoptEdited, planTradeSave, tickOf } from './rysunki.js';
+import { positionStats, statsText, statsOf, statBoxes } from './pozycja-staty.js';
 
 // P28: daty trade'a zapisujemy w strefie przeglądarki, jak formularz trade'a (form.js), więc chwila w Notion zgadza się z resztą aplikacji
 const BROWSER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; } catch { return 'Europe/Warsaw'; } })();
@@ -96,7 +97,10 @@ export function positionDrawing(trade, D, c, lastTime) {
     points: [{ time: t0, price: ep }, { time: t1, price: ep }],
     style: {
       ...D.defaultStyleFor(kind), color: c.fg2, textColor: c.fg, stopColor: c.loss, targetColor: c.profit, stopTransparency: 87, targetTransparency: 87,
+      // [U] 30.10.2026 «Domyślnie włączone jak TV»: podpisy jak TV także tutaj (po odblokowaniu i zaznaczeniu), ale bez konta i ryzyka: trade nie ma liczby kontraktów,
+      // więc pozycja-staty.js nie pokazuje ilości ani kwot (cena, ticki, %, P&L w punktach, R:R). showPriceLabels i positionStats dotyczą pigułek paczki (P27, wyłączone).
       showPriceLabels: false, stopLevel: Number.isFinite(sl) ? Math.abs(ep - sl) : 0, profitLevel: Number.isFinite(tp) ? Math.abs(tp - ep) : 0,
+      ...NO_ACCOUNT, // J: bez konta i ryzyka z domyślnych paczki (zmyślona ilość)
       ...(beLevel !== undefined ? { beLevel } : {}),
       ...(exitLevel !== undefined ? { exitLevel } : {}),
       positionStats: NO_STATS, // P27: bez pigułek kwot konta paczki po odblokowaniu i zaznaczeniu
@@ -106,9 +110,42 @@ export function positionDrawing(trade, D, c, lastTime) {
 
 // ---- P27: dodatki pozycji (BE i R:R), których paczka nie rysuje: prymityw serii z tych samych części co podgląd (geometria.positionExtras) ----
 // Skala jak w teście zgodności: odstęp świec z dwóch ostatnich indeksów LWC, cena z dwóch punktów priceToCoordinate. Kolory z tokenów (--be, --fg).
-export function extrasPrimitive({ chart, series, getDrawings, getCandles, getStep, getColors }) {
+// J (30.10.2026): podpisy pozycji jak w TradingView (pozycja-staty.js): prostokąty przy celu, stopie i wejściu, po zaznaczeniu albo najechaniu (getFocus) albo zawsze (showStats),
+// i ceny na osi (priceLabels) z kolorami tokenów. Słowa użytkownika: «Domyślnie włączone jak TV». Napis R:R bez zaznaczenia (P27) zostaje, gdy podpisów nie ma.
+export function extrasPrimitive({ chart, series, getDrawings, getCandles, getStep, getColors, getFocus = () => new Set(), getInstrument = () => '' }) {
   const ts = chart.timeScale();
   let req = null;
+  const isPos = (d) => (d.kind === 'long-position' || d.kind === 'short-position') && !d.hidden;
+  const shown = (d) => isPos(d) && (getFocus().has(d.id) || !!d.style?.showStats);
+  // prostokąty podpisów rysunku w pikselach pola wykresu (CSS px); [] bez podpisów
+  function labelsOf(d, s = scales()) {
+    if (!s || !shown(d)) return [];
+    const parts = G.shapes(d, s)?.parts || [];
+    const en = parts.find((p) => p.role === 'entry'), tg = parts.find((p) => p.role === 'target'), sp = parts.find((p) => p.role === 'stop');
+    if (!en || !tg || !sp) return [];
+    const st = d.style || {}, inst = getInstrument();
+    const stats = positionStats(d, { instrument: inst, tick: tickOf(inst), candles: getCandles(), step: getStep() });
+    const txt = statsText(stats, statsOf(st), { compact: !!st.compactStats });
+    const size = Number.isFinite(st.fontSize) ? st.fontSize : 12;
+    const boxes = statBoxes(txt, { x1: en.x1, x2: en.x2, yE: en.y1, yT: s.y(tg.price), yS: s.y(sp.price) }, (tx, z) => G.canvasMeasure(tx, z), size);
+    const W = ts.width(); // podpis szerszy niż pozycja przy krawędzi nie wchodzi pod oś ceny
+    // rrIn: R:R jest w podpisie środka (przegląd J P3-1: tylko wtedy nasz napis R:R z P27 ustępuje)
+    const rrIn = !!(statsOf(st).rr && stats?.rr != null);
+    return boxes.map((b) => ({ ...b, x: Math.max(2, Math.min(b.x, W - b.w - 2)), size, pl: stats?.pl?.diff ?? null, rrIn }));
+  }
+  const fmtPx = new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // ceny na osi: wejście (--fg-2), cel (--profit), stop (--loss) zaznaczonej albo najechanej pozycji z priceLabels
+  function axisOf() {
+    const col = getColors(), out = [];
+    for (const d of getDrawings()) {
+      if (!isPos(d) || !getFocus().has(d.id) || d.style?.priceLabels === false) continue;
+      const st = d.style || {}, e = d.points[0].price, dir = d.kind === 'short-position' ? -1 : 1;
+      for (const [price, back] of [[e, col.fg2], [e + dir * (st.profitLevel || 0), col.profit], [e - dir * (st.stopLevel || 0), col.loss]]) out.push({ price, back, color: col.onFg || col.bg, text: fmtPx.format(price) });
+    }
+    return out;
+  }
+  let axisCache = [];
+  const axisViews = () => axisCache.map((a) => ({ coordinate: () => series.priceToCoordinate(a.price) ?? -100, text: () => a.text, textColor: () => a.color, backColor: () => a.back, visible: () => true, tickVisible: () => true }));
   const scales = () => {
     const candles = getCandles(), last = candles.length - 1;
     if (last < 1) return null;
@@ -119,7 +156,7 @@ export function extrasPrimitive({ chart, series, getDrawings, getCandles, getSte
     if (right == null || prev == null || yA == null || yB == null || pA === pB) return null;
     const xs = G.indexScale({ lastIndex: last, right, spacing: right - prev });
     const ys = G.priceScaleFrom(pA, yA, pB, yB);
-    return G.chartScales({ candles, xs, ys, box: { left: 0, right: ts.width(), top: 0, bottom: 0 }, pip: 0.25, step: getStep(), decimal: DECIMAL() });
+    return G.chartScales({ candles, xs, ys, box: { left: 0, right: ts.width(), top: 0, bottom: 0 }, pip: 0.25, step: getStep(), decimal: DECIMAL(), measure: G.canvasMeasure });
   };
   const draw = (target) => target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
     const s = scales();
@@ -131,7 +168,10 @@ export function extrasPrimitive({ chart, series, getDrawings, getCandles, getSte
     for (const d of getDrawings()) {
       if (d.kind !== 'long-position' && d.kind !== 'short-position' || d.hidden) continue;
       const sh = G.shapes(d, s);
+      const boxes = labelsOf(d, s);
       for (const p of sh?.parts || []) {
+        // J: R:R w podpisie środka zastępuje nasz napis R:R; bez R:R w podpisach (wyłączony przełącznik) napis zostaje, także przy „Zawsze pokazuj”
+        if (p.role === 'rr' && boxes.some((b) => b.rrIn)) continue;
         if (p.role === 'be') {
           ctx.strokeStyle = col.be; ctx.setLineDash([Math.round(5 * hr), Math.round(4 * hr)]);
           const y = Math.round(p.y1 * vr) + 0.5;
@@ -152,6 +192,17 @@ export function extrasPrimitive({ chart, series, getDrawings, getCandles, getSte
           ctx.beginPath(); ctx.arc(p.x * hr, p.y * vr, p.r * hr, 0, Math.PI * 2); ctx.fill();
         }
       }
+      // J: podpisy jak TV: prostokąt w kolorze strefy (środek: kolor wyniku albo --fg), tekst --on-fg albo kolor tekstu wybrany ręcznie; bez zaokrągleń
+      // (preferencja: bez zaokrąglonych podkładek pod tekstem). Kolor ze stylu tylko, gdy wybrany ręcznie (znacznik autoColor bez textColor).
+      const st = d.style || {}, manualText = st.textColor && !(st.autoColor && st.autoColor.textColor);
+      for (const b of boxes) {
+        ctx.fillStyle = b.role === 'tp' ? col.profit : b.role === 'sl' ? col.loss : b.pl > 0 ? col.profit : b.pl < 0 ? col.loss : col.fg;
+        ctx.fillRect(Math.round(b.x * hr), Math.round(b.y * vr), Math.round(b.w * hr), Math.round(b.h * vr));
+        ctx.fillStyle = manualText ? st.textColor : (col.onFg || col.bg);
+        ctx.font = `${Math.round(b.size * vr)}px ${col.font}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        b.lines.forEach((ln, k) => ctx.fillText(ln, Math.round((b.x + b.w / 2) * hr), Math.round((b.y + b.pad + b.lh * (k + 0.5)) * vr)));
+      }
     }
     ctx.restore();
   });
@@ -171,10 +222,16 @@ export function extrasPrimitive({ chart, series, getDrawings, getCandles, getSte
       const p = s && G.shapes(d, s)?.parts.find((x) => x.role === 'be');
       return p ? { x1: p.x1, x2: p.x2, y: p.y1 } : null;
     },
+    // J: podpisy i ceny na osi (testy i zrzuty)
+    statLabels: (d) => labelsOf(d),
+    axisLabels: () => axisOf(),
+    // przegląd J P3-1: czy rysowany jest nasz napis R:R (P27) tego rysunku
+    rrPlain(d) { const s = scales(); return !!(s && G.shapes(d, s)?.parts.some((p) => p.role === 'rr') && !labelsOf(d, s).some((b) => b.rrIn)); },
     attached: (p) => { req = p.requestUpdate; },
     detached: () => { req = null; },
     paneViews: () => views,
-    updateAllViews() {},
+    priceAxisViews: () => axisViews(),
+    updateAllViews() { axisCache = axisOf(); },
     requestUpdate: () => req?.(),
   };
 }
@@ -200,7 +257,7 @@ export function readColors(el) {
     profit: probe(v('--profit')), loss: probe(v('--loss')), be: probe(v('--be')), up: probe(v('--chart-up') || v('--profit')), down: probe(v('--chart-down') || v('--loss')), line: probe(v('--chart-line') || v('--fg-2')), fg: probe(v('--fg')), fg2: probe(v('--fg-2')),
     asia: probe(v('--n-blue')), london: probe(v('--n-orange')), ny: probe(v('--n-purple')),
     nRed: probe(v('--n-red')), nOrange: probe(v('--n-orange')), nYellow: probe(v('--n-yellow')), nBlue: probe(v('--n-blue')), bg: probe(v('--chart-bg') || v('--float')),
-    grid: probe(`rgb(${v('--fg-rgb')} / .08)`), popover: probe(v('--popover')), cross: probe(`rgb(${v('--fg-rgb')} / .35)`), font: v('--font') || 'sans-serif',
+    grid: probe(`rgb(${v('--fg-rgb')} / .08)`), popover: probe(v('--popover')), onFg: probe(v('--on-fg') || v('--float')), cross: probe(`rgb(${v('--fg-rgb')} / .35)`), font: v('--font') || 'sans-serif',
   };
 }
 
@@ -384,6 +441,11 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
   const style = chartSettings().style; // Ustawienia → Wykresy; zmiana stylu działa od następnego otwarcia edycji (jak kolory świec, które zmieniają się na żywo)
   const bars = () => seriesData(candles, style, c);
   const F_PRICE = new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // H2 #23 (ocena wyglądu, runda 2): oś ceny jak w podglądzie SVG (priceDec): przy kroku podziałki ≥ 1 pkt pełne ceny bez groszy („18 350”), ułamkowe ceny
+  // (kursor, krok 0,25) z dwoma miejscami. Krok szacowany z widocznego zakresu (podziałka LWC co ok. 40 px). Wcześniej zawsze „18 348,00” (sprzed gałęzi, 1.3.0).
+  const F_INT = new Intl.NumberFormat(locale(), { maximumFractionDigits: 0 });
+  const tickStep = () => { try { const h = plot.clientHeight || 400, a = series.coordinateToPrice(0), b = series.coordinateToPrice(h); return Number.isFinite(a) && Number.isFinite(b) ? Math.abs(a - b) / Math.max(1, h / 40) : 1; } catch { return 1; } };
+  const fmtPrice = (p) => (Math.abs(p - Math.round(p)) < 1e-6 && tickStep() >= 1 ? F_INT : F_PRICE).format(p);
   // oś czasu w strefie z Ustawień albo przełącznika na wykresie (P26; LWC domyślnie pokazuje UTC); czasy znaczników zostają w UTC
   const F = () => fmtIn(chartTz());
   const timeOpts = () => ({
@@ -391,7 +453,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
       const d = new Date(time * 1000), f = F();
       return type === 0 ? f.YEAR.format(d) : type === 1 ? f.MONTH.format(d) : type === 2 ? f.DAY.format(d) : f.HM.format(d);
     } },
-    localization: { timeFormatter: (time) => F().FULL.format(new Date(time * 1000)) + (candles[G.timeToIndex(candles, time, step)]?.[6] === 1 ? ' · ' + t('z 1m') : ''), priceFormatter: (price) => F_PRICE.format(price) }, // P55: dopisek „z 1m” w etykiecie czasu kursora
+    localization: { timeFormatter: (time) => F().FULL.format(new Date(time * 1000)) + (candles[G.timeToIndex(candles, time, step)]?.[6] === 1 ? ' · ' + t('z 1m') : ''), priceFormatter: fmtPrice }, // P55: dopisek „z 1m” w etykiecie czasu kursora
   });
   let autoY = loadAutoScale();
   const chart = LWC.createChart(plot, {
@@ -482,7 +544,8 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     }
   }
   let rys = null, held = null;
-  const extras = extrasPrimitive({ chart, series, getDrawings: () => rys?.manager.drawings() || [], getCandles: () => candles, getStep: () => step, getColors: () => c });
+  const extras = extrasPrimitive({ chart, series, getDrawings: () => rys?.manager.drawings() || [], getCandles: () => candles, getStep: () => step, getColors: () => c,
+    getFocus: () => rys?.focusIds?.() || new Set(), getInstrument: () => instrument }); // J: podpisy pozycji jak TV
   series.attachPrimitive(extras);
   rys = createRysunki({
     D, chart, series, plot, bar: root.querySelector('.swc-tools'), panel: root.querySelector('.swc-style'),
@@ -506,6 +569,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     tradeId, doc, colors: () => c, instrument,
     onSaved: (j) => { edited = adoptEdited(edited, j); onSaved?.(j); }, // P27: tylko własny zapis przesuwa znacznik; cudza zmiana trade'a w Notion zostaje wykryta (409)
     onChange: () => extras.requestUpdate(),
+    repaint: () => extras.requestUpdate(), // J: podpisy po zaznaczeniu i najechaniu
     toHex: (v) => { const p = probe(v); const m = /^rgba\((\d+), (\d+), (\d+)/.exec(p); return m ? `#${[m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}` : p; },
     confirm: (o) => confirmDialog(o),
     saveTrade,
@@ -532,6 +596,8 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     },
     extra: () => positionDrawing(trade, D, c, candles.length ? candles[candles.length - 1][0] : 0),
   });
+  // J: podpisy pozycji nad warstwą paczki (strefa P&L i strzałka przebiegu): prymityw dołączony po menedżerze rysuje się później
+  series.detachPrimitive(extras); series.attachPrimitive(extras);
 
   // motyw i paleta danych na żywo
   const mo = new MutationObserver(() => {
@@ -542,6 +608,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     series.applyOptions(seriesOptions(c, style));
     if (rf.resetData) series.setData(bars()); // P55: kolory świec z podziału 1m zależą od motywu
     buildLevels(); buildMarkers(); prim.requestUpdate(); extras.requestUpdate();
+    rys?.retheme(); // H2: rysunki z kolorem domyślnym idą za motywem
   });
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] });
 
@@ -757,6 +824,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     rys, trade: () => ({ ...trade }), edited: () => edited,
     series, exitPoint: (d) => extras.exitPoint(d), // P28: uchwyt wyjścia (testy zgodności z LWC)
     beLine: (d) => extras.beLine(d), // P29: uchwyt BE (testy)
+    statLabels: (d) => extras.statLabels(d), axisLabels: () => extras.axisLabels(), rrPlain: (d) => extras.rrPlain(d), // J: podpisy jak TV, ceny na osi, napis R:R (testy)
     textSlot: (d) => extras.textSlot(d), // P32: pole tekstu (testy)
     destroy,
   };

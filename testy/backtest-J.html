@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<!-- przegląd J P3-2: i18n.js czyta słownik względnie (i18n/pl.json); spod /__testy/ to 404 i odmiana „3 kontraktów” zamiast „3 kontrakty” -->
+<base href="/">
+<title>JustJournal: pozycja jak w TradingView i wejście według rysunku J (strona robocza)</title>
+<!-- Strona robocza testów backtest-J (testy/backtest-J-strona.mjs), Chrome/Edge headless przez CDP, podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     ?part=replay: prawdziwy replay (bt-replay.js, bt-zlecenia.js, bt-wykres.js, paczka rysowania) na świecach syntetycznych: wejście według zaznaczonego rysunku
+     (market/limit/stop, SL/TP z rysunku, ilość z ryzyka sesji, rysunek znika, blokady, skrót). ?part=live: edytor wykresu Live (wykres.js) z atrapą fetch:
+     panel ustawień pozycji (Wejścia, Styl, Podpisy), podpisy po zaznaczeniu, „zawsze pokazuj”, tryb kompaktowy, ceny na osi, pozycja z pól trade'a bez ilości.
+     ?shot=1 zostawia ekran do zrzutów, ?theme=platinum. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  #c { width: 1500px; height: 760px; display: flex; flex-direction: column; }
+  #c .swc { display: flex; flex-direction: column; gap: 8px; width: 100%; height: 100%; }
+  body.shot #wynik { display: none; }
+</style>
+</head>
+<body>
+<div class="lb" id="lb" hidden><div id="c"></div></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'replay';
+const shot = qs.get('shot') === '1';
+if (shot) document.body.classList.add('shot');
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+
+try {
+  try { localStorage.removeItem('thq.chart.toolStyle.v1'); localStorage.removeItem('thq.bt.open.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const D = await import('/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js');
+  const S = await import('/js/pozycja-staty.js');
+  const R = await import('/js/rysunki.js');
+
+  if (part === 'replay') {
+    const { openReplay } = await import('/js/bt-replay.js');
+    const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+    const { newSessionDoc } = await import('/js/bt-kreator.js');
+    const { nyAt } = await import('/js/bt-czas.js');
+    const { mergeBase, visibleCount } = await import('/js/bt-swieca.js');
+    const { sizeFromRisk } = await import('/js/bt-wypelnienia.js');
+    const client = createSessionClient();
+    const day0 = await getJson('/api/backtest/day?instruments=NQ&day=2024-03-12&ctx=2');
+    const loadDay = async ({ day }) => (day === '2024-03-12' ? day0 : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+    const st = mergeBase(day0.inst.NQ.m1, day0.inst.NQ.s1, day0.inst.NQ.real1s);
+    const doc = newSessionDoc({
+      id: newSessionId(), name: 'Sesja J wejście z rysunku',
+      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
+      pool: ['2024-03-12', '2024-03-13'], now: Date.now(),
+    });
+    await client.create(doc);
+    const RP = openReplay(document.body, { sessionId: doc.id, client, loadDay, onClosed: () => {} });
+    await RP.ready;
+    const scr = () => document.querySelector('.bt-screen');
+    const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+    const drawBtn = () => P('[data-o="draw"]');
+    const ch = () => RP.chart(), rys = () => ch().rysunki(), M = () => rys().manager;
+    const lastClose = () => { const n = visibleCount(st, RP.cursor()); return st.bars[n - 1][4]; };
+    const lastT = () => { const b = ch().bars(); return b[b.length - 1][0]; };
+    const q = (x) => Math.round(x / 0.25) * 0.25;
+    const addPos = (kind, entry, style = {}) => {
+      const id = M().add({ kind, points: [{ time: lastT() - 600, price: entry }, { time: lastT(), price: entry }], style: { ...D.defaultStyleFor(kind), stopLevel: 10, profitLevel: 20, ...style } });
+      M().select([id]);
+      return id;
+    };
+    const pos = () => RP.book().positions.NQ;
+    const savedDoc = async () => { await rys().flush(); return RP.drawings().docOf('NQ', '2024-03-12'); };
+
+    await section('domyślne', async () => {
+      const ds = D.defaultStyleFor('long-position');
+      rec('domyślne', ds.accountSize === 50000 && ds.riskDisplayMode === 'money' && ds.riskAmount === 500, `nowy rysunek w replayu: konto i ryzyko z sesji (${ds.accountSize}, ${ds.riskDisplayMode}, ${ds.riskAmount})`);
+      rec('domyślne', !!drawBtn(), 'przycisk „Wejdź według rysunku” w panelu zleceń');
+      rec('domyślne', drawBtn()?.disabled && /Zaznacz/.test(drawBtn()?.title || ''), `bez zaznaczonego rysunku wyłączony z powodem (${drawBtn()?.title})`);
+    });
+
+    await section('market', async () => {
+      const e = q(lastClose());
+      const id = addPos('long-position', e);
+      await sleep(80);
+      rec('market', drawBtn() && !drawBtn().disabled, `zaznaczony long: przycisk aktywny (${drawBtn()?.title})`);
+      drawBtn().click(); await sleep(120);
+      const p = pos();
+      rec('market', p && p.dir === 'Long' && p.entryPrice === e, `market: pozycja Long po bieżącej cenie (${JSON.stringify(p && { e: p.entryPrice, dir: p.dir })} vs ${e})`);
+      rec('market', p && p.sl === e - 10 && p.tp === e + 20, `SL i TP z rysunku (${p?.sl}, ${p?.tp})`);
+      rec('market', p && p.qty === sizeFromRisk({ riskUsd: 500, entry: e, sl: e - 10, instrument: 'NQ' }), `ilość z ryzyka sesji (${p?.qty})`);
+      rec('market', !M().get(id), 'rysunek zniknął z wykresu');
+      const sd = await savedDoc();
+      rec('market', !(sd.d || []).some((x) => x.kind === 'long-position'), 'rysunek usunięty z rysunków sesji');
+      const id2 = addPos('long-position', e); await sleep(60);
+      rec('market', drawBtn().disabled && /otwarta pozycja/.test(drawBtn().title), `otwarta pozycja na instrumencie: wyłączony (${drawBtn().title})`);
+      M().remove(id2);
+      P('[data-o="close"]').click(); await sleep(80);
+      rec('market', !pos(), 'pozycja zamknięta (sprzątanie)');
+      if (RP.journal()) document.querySelector('.bt-jr [data-jr="later"], .bt-jr [data-act="later"]')?.click();
+    });
+
+    await section('limit', async () => {
+      RP.step(1); await sleep(60);
+      const px = q(lastClose());
+      const id = addPos('long-position', px - 5); await sleep(60);
+      drawBtn().click(); await sleep(100);
+      const o = RP.book().orders.find((x) => x.instrument === 'NQ');
+      rec('limit', o && o.type === 'limit' && o.side === 'buy' && o.price === px - 5 && o.sl === px - 15 && o.tp === px + 15, `long pod ceną: buy limit z SL/TP rysunku (${JSON.stringify(o)})`);
+      rec('limit', !M().get(id), 'rysunek zniknął');
+      if (o) scr().querySelector(`[data-cancel="${o.id}"]`)?.click(); await sleep(60);
+      const id2 = addPos('long-position', px + 5); await sleep(60);
+      drawBtn().click(); await sleep(100);
+      const o2 = RP.book().orders.find((x) => x.instrument === 'NQ');
+      rec('limit', o2 && o2.type === 'stop' && o2.side === 'buy' && o2.price === px + 5, `long nad ceną: buy stop (${JSON.stringify(o2)})`);
+      if (o2) scr().querySelector(`[data-cancel="${o2.id}"]`)?.click(); await sleep(60);
+      const id3 = addPos('short-position', px + 5); await sleep(60);
+      drawBtn().click(); await sleep(100);
+      const o3 = RP.book().orders.find((x) => x.instrument === 'NQ');
+      rec('limit', o3 && o3.type === 'limit' && o3.side === 'sell' && o3.sl === px + 15 && o3.tp === px - 15, `short nad ceną: sell limit (${JSON.stringify(o3)})`);
+      if (o3) scr().querySelector(`[data-cancel="${o3.id}"]`)?.click(); await sleep(60);
+      addPos('short-position', px - 5); await sleep(60);
+      drawBtn().click(); await sleep(100);
+      const o4 = RP.book().orders.find((x) => x.instrument === 'NQ');
+      rec('limit', o4 && o4.type === 'stop' && o4.side === 'sell', `short pod ceną: sell stop (${JSON.stringify(o4)})`);
+      if (o4) scr().querySelector(`[data-cancel="${o4.id}"]`)?.click(); await sleep(60);
+      rec('limit', !RP.book().orders.length, 'zlecenia anulowane (sprzątanie)');
+    });
+
+    // przegląd J P2-1: zlecenie i usunięcie rysunku w jednym zapisie sesji; rysunek przywrócony Ctrl+Z nie składa drugiego zlecenia, dopóki jego zlecenie czeka
+    await section('zapis', async () => {
+      const px = q(lastClose());
+      const id = addPos('long-position', px - 5); await sleep(60);
+      const saves = [];
+      const realFetch = window.fetch;
+      window.fetch = (u, o) => { if (String(u).includes('/api/backtest/session/save')) saves.push(JSON.parse(o.body)); return realFetch(u, o); };
+      try {
+        drawBtn().click(); await sleep(400);
+      } finally { window.fetch = realFetch; }
+      const o = RP.book().orders.find((x) => x.instrument === 'NQ');
+      const first = saves[0]?.doc;
+      const dIn = (doc) => (doc?.drawings?.NQ?.['2024-03-12']?.d || []).some((x) => x.id === id);
+      rec('zapis', o && o.fromDrawing === id, `zlecenie niesie id rysunku (${o?.fromDrawing})`);
+      rec('zapis', saves.length >= 1 && first.book.orders.some((x) => x.fromDrawing === id) && !dIn(first), `pierwszy zapis sesji ma zlecenie i już nie ma rysunku (${saves.length} zapisów, rysunek w 1.: ${dIn(first)})`);
+      const disk = await getJson(`/api/backtest/session/${doc.id}`);
+      rec('zapis', (disk.doc || disk).book.orders.some((x) => x.fromDrawing === id) && !dIn(disk.doc || disk), 'plik sesji: zlecenie bez rysunku');
+      // Ctrl+Z w rysunkach przywraca rysunek: przycisk wyłączony, bo zlecenie z tego rysunku czeka
+      scr().querySelector('.bt-cell[data-active="true"] [data-act="undo"]')?.click(); await sleep(80);
+      const back = M().drawings().find((x) => x.id === id) || M().drawings().find((x) => x.kind === 'long-position' && !x.locked && Math.abs(x.points[0].price - (px - 5)) < 1e-9);
+      rec('zapis', !!back, 'Ctrl+Z przywraca rysunek');
+      if (back) M().select([back.id]); await sleep(60);
+      rec('zapis', drawBtn().disabled && /Z tego rysunku/.test(drawBtn().title), `przywrócony rysunek: wyłączony z powodem (${drawBtn().title})`);
+      const n0 = RP.book().orders.length;
+      key('D'); await sleep(80);
+      rec('zapis', RP.book().orders.length === n0, 'skrót D nie składa drugiego zlecenia');
+      if (o) scr().querySelector(`[data-cancel="${o.id}"]`)?.click(); await sleep(60);
+      if (back) M().select([back.id]); await sleep(60);
+      rec('zapis', !drawBtn().disabled, `po anulowaniu zlecenia rysunek znów składa zlecenie (${drawBtn().title})`);
+      if (back) M().remove(back.id);
+    });
+
+    // przegląd J P3-5: notka w panelu Wejścia, gdy ilość z ryzyka sesji różni się od ilości rysunku
+    await section('ilosc', async () => {
+      const px = q(lastClose());
+      const id = addPos('long-position', px, { riskDisplayMode: 'money', riskAmount: 200 }); await sleep(80);
+      scr().querySelector('.bt-cell[data-active="true"] .swc-gear:not([hidden])')?.click(); await sleep(100);
+      const pnl = scr().querySelector('.bt-cell[data-active="true"] .swc-style');
+      const want = sizeFromRisk({ riskUsd: 500, entry: px, sl: px - 10, instrument: 'NQ' });
+      const note = pnl?.querySelector('.swc-sqty')?.textContent || '';
+      const own = sizeFromRisk({ riskUsd: 200, entry: px, sl: px - 10, instrument: 'NQ' });
+      rec('ilosc', new RegExp(`^${own} kontrakt`).test(pnl?.querySelector('.swc-qty')?.textContent || '') && own !== want, `ilość rysunku z jego ryzyka (${pnl?.querySelector('.swc-qty')?.textContent})`);
+      rec('ilosc', note.includes(`ryzyka sesji: ${want} kontrakt`), `notka o ilości z ryzyka sesji: «${note}» (${want})`);
+      const st = M().get(id).style;
+      M().update({ ...M().get(id), style: { ...st, riskAmount: 500 } }); await sleep(80);
+      rec('ilosc', !(pnl?.querySelector('.swc-sqty')?.textContent || ''), 'ta sama ilość: bez notki');
+      pnl?.querySelector('[data-act="pclose"]')?.click();
+      M().remove(id);
+    });
+
+    // przegląd J P1-1: drugi wykres tego samego instrumentu (applyExternal) nie kasuje konta wpisanego w rysunku sprzed J
+    await section('drugi', async () => {
+      RP.setLayout('2h'); await sleep(400);
+      const cs = RP.charts();
+      rec('drugi', cs.length === 2 && cs.every((c) => c.instrument === 'NQ'), `dwa wykresy NQ (${cs.map((c) => c.instrument)})`);
+      const M0 = cs[0].rysunki().manager, M1 = cs[1].rysunki().manager, b = cs[0].bars(), t1 = b[b.length - 1][0];
+      // dokument sesji z rysunkiem sprzed J (konto i ryzyko z domyślnych paczki) wczytany na obu wykresach
+      const oldDoc = { v: 1, at: new Date().toISOString(), d: [{ id: 'oldR', kind: 'long-position', points: [{ time: t1 - 900, price: 18000 }, { time: t1, price: 18000 }], style: { color: '#f3f3f3', width: 1, stopLevel: 10, profitLevel: 20, positionStats: R.NO_STATS, accountSize: 1000, riskPercent: 25, riskDisplayMode: 'percents' } }] };
+      cs[0].rysunki().applyExternal(oldDoc); cs[1].rysunki().applyExternal(oldDoc); await sleep(60);
+      const other = () => M1.drawings().find((x) => x.kind === 'long-position' && !x.locked && x.points[0].time === t1 - 900);
+      const first = M0.drawings().find((x) => x.kind === 'long-position' && !x.locked && x.points[0].time === t1 - 900);
+      M0.select([first.id]); await sleep(150);
+      rec('drugi', other() && other().style.accountSize == null, `drugi wykres: domyślne paczki wyczyszczone (${other()?.style.accountSize})`);
+      const pnl = scr().querySelectorAll('.bt-cell')[0].querySelector('.swc-style');
+      scr().querySelectorAll('.bt-cell')[0].querySelector('.swc-gear:not([hidden])')?.click(); await sleep(100);
+      const setIn = (k, v) => { const el = pnl.querySelector(`[data-k="${k}"]`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+      setIn('accountSize', '40000'); await sleep(40); setIn('riskValue', '400'); await sleep(400);
+      rec('drugi', other()?.style.accountSize === 40000 && other()?.style.riskAmount === 400, `drugi wykres dostał wpisane konto (${other()?.style.accountSize}, ${other()?.style.riskAmount})`);
+      const mine = M0.drawings().find((x) => x.kind === 'long-position' && !x.locked && x.points[0].time === t1 - 900);
+      rec('drugi', mine?.style.accountSize === 40000, 'pierwszy wykres zachował konto po synchronizacji');
+      pnl.querySelector('[data-act="pclose"]')?.click();
+      if (mine) M0.remove(mine.id);
+      await sleep(300);
+      RP.setLayout('1'); await sleep(300);
+    });
+
+    await section('blokady', async () => {
+      const px = q(lastClose());
+      const id = addPos('long-position', px, { stopLevel: 0 }); await sleep(60);
+      rec('blokady', drawBtn().disabled && /nie ma SL/.test(drawBtn().title), `rysunek bez SL: wyłączony z powodem (${drawBtn().title})`);
+      M().remove(id);
+      const id2 = addPos('long-position', px); await sleep(60);
+      RP.step(1); await sleep(60); RP.step(-1); await sleep(80);
+      M().select([id2]); await sleep(60);
+      rec('blokady', drawBtn().disabled && /wstecz/.test(drawBtn().title), `cofnięty kursor: wyłączony (${drawBtn().title})`);
+      rec('blokady', !key('D').defaultPrevented || !RP.book().orders.length && !pos(), 'skrót przy cofniętym kursorze nic nie składa');
+      P('[data-o="back"]')?.click(); await sleep(100);
+      M().select([id2]); await sleep(60);
+      const dd = RP.doc().days['2024-03-12'];
+      const prev = dd.status; dd.status = 'done'; RP.orders().refresh(); await sleep(30);
+      rec('blokady', drawBtn().disabled && /zakończony/.test(drawBtn().title), `dzień zakończony: wyłączony (${drawBtn().title})`);
+      dd.status = prev; RP.orders().refresh(); await sleep(30);
+      rec('blokady', !drawBtn().disabled, `po powrocie aktywny (${drawBtn().title})`);
+      // skrót D (domyślny) działa jak przycisk
+      const ev = key('D'); await sleep(120);
+      // po „Wróć” cena jest inna niż przy rysowaniu, więc zależnie od strony ceny to pozycja albo zlecenie oczekujące
+      const o5 = RP.book().orders.find((x) => x.instrument === 'NQ');
+      rec('blokady', ev.defaultPrevented && (pos() || (o5 && o5.sl === px - 10 && o5.price === px)) && !M().get(id2), `skrót D składa zlecenie z rysunku (${!!pos()}, ${ev.defaultPrevented}, ${JSON.stringify(RP.book().orders)})`);
+      if (o5) scr().querySelector(`[data-cancel="${o5.id}"]`)?.click();
+      P('[data-o="close"]')?.click(); await sleep(80);
+    });
+
+    if (shot) {
+      [...document.querySelectorAll('.bt-screen button')].find((b) => b.textContent.trim() === 'Później')?.click(); await sleep(60);
+      const px = q(lastClose());
+      const id = M().add({ kind: 'long-position', points: [{ time: lastT() - 3000, price: px - 2 }, { time: lastT() - 600, price: px - 2 }], style: { ...D.defaultStyleFor('long-position'), stopLevel: 8, profitLevel: 16 } });
+      RP.step(1); await sleep(100);
+      M().select([id]); await sleep(150);
+      scr().querySelector('.swc-gear:not([hidden])')?.click(); await sleep(150);
+    } else RP.close?.();
+  }
+
+  if (part === 'live') {
+    const W = await import('/js/wykres.js');
+    const Pg = await import('/js/podglad.js');
+    Pg.setChartTzDefault('UTC');
+    document.getElementById('lb').hidden = false;
+    const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+    const T0 = 1793000000 - (1793000000 % 60);
+    const candles = [];
+    { let p = 18000; for (let k = 0; k < 200; k++) { const o = p, c = p + Math.sin(k / 5) * 6; candles.push([T0 + k * 60, o, Math.max(o, c) + 3, Math.min(o, c) - 3, c, 10]); p = c; } }
+    const real = window.fetch.bind(window);
+    window.fetch = async (url, opts = {}) => {
+      url = String(url);
+      if (url.includes('/api/drawings/save')) return json({ ok: true, pending: false, edited: 'S1', previous: 'S0' });
+      if (url.includes('/api/candles')) return json({ bars: candles, tf: '1m', rolls: [], missing: [], derived: [], availableEnd: null });
+      return real(url, opts);
+    };
+    const trade = { at: candles[60][0] * 1000, exitAt: candles[90][0] * 1000, instrument: 'NQ', entryPrice: 18000, exitPrice: 18012, sl: 17990, tp: 18020, r: 1.2 };
+    const root = document.getElementById('c');
+    const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { tf: '1m', fromIndex: 40, toIndex: 160.5, candles, rolls: [] }, doc: null, edited: 'S0', onDone: () => {} });
+    await sleep(300);
+    const M = ed.manager, panel = root.querySelector('.swc-style');
+    const labelsOf = (d) => ed.statLabels(d) || [];
+    const txt = (d) => labelsOf(d).map((b) => b.lines.join(' / ')).join(' | ');
+
+    await section('podpisy', async () => {
+      const ds = D.defaultStyleFor('long-position');
+      rec('podpisy', ds.accountSize == null && ds.riskAmount == null, 'Live bez ustawień konta: pola konta i ryzyka puste (do wpisania)');
+      const id = M.add({ kind: 'long-position', points: [{ time: candles[100][0], price: 18000 }, { time: candles[130][0], price: 18000 }], style: { ...ds, stopLevel: 10, profitLevel: 20 } });
+      M.select([]); await sleep(60);
+      const d0 = M.get(id);
+      rec('podpisy', !labelsOf(d0).length, `bez zaznaczenia: bez pełnych podpisów (${txt(d0)})`);
+      M.select([id]); await sleep(60);
+      const t1 = txt(M.get(id));
+      rec('podpisy', /Cel: 20 \(0,11%\) 80 ticków/.test(t1) && /Stop: 10 \(0,06%\) 40 ticków/.test(t1) && /R:R 2/.test(t1), `zaznaczony: podpisy jak TV (${t1})`);
+      rec('podpisy', !/Ilość|Kwota/.test(t1), 'bez konta i ryzyka: bez ilości i kwot');
+      const ax = ed.axisLabels();
+      rec('podpisy', ax.length === 3 && ax.every((a) => /^#|^rgb/.test(a.back)), `ceny na osi: wejście, cel, stop w kolorach tokenów (${JSON.stringify(ax)})`);
+      // panel: zębatka → okienko
+      root.querySelector('.swc-gear')?.click(); await sleep(80);
+      const has = (s) => !!panel.querySelector(s);
+      rec('panel', ['[data-k="accountSize"]', '[data-k="riskValue"]', '[data-k="riskDisplayMode"]', '[data-k="entryPrice"]', '[data-k="tpTicks"]', '[data-k="tpPrice"]', '[data-k="slTicks"]', '[data-k="slPrice"]',
+        '[data-k="color"]', '[data-k="width"]', '[data-k="targetColor"]', '[data-k="stopColor"]', '[data-k="tOpacity"]', '[data-k="sOpacity"]', '[data-k="textColor"]', '[data-k="fontSize"]',
+        '[data-k="priceLabels"]', '[data-k="showStats"]', '[data-k="compactStats"]', '[data-k="beOn"]', '[data-k="showRR"]', ...S.STAT_KEYS.map((k) => `[data-stat="${k}"]`)].every(has), 'panel: Wejścia, Styl i Podpisy z polami TV i naszymi (BE, R:R)');
+      rec('panel', panel.querySelectorAll('[data-ptab]').length === 3, 'trzy zakładki panelu');
+      const setIn = (k, v) => { const el = panel.querySelector(`[data-k="${k}"]`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+      setIn('accountSize', '50000'); await sleep(40);
+      setIn('riskValue', '500'); await sleep(40);
+      const t2 = txt(M.get(id));
+      rec('panel', M.get(id).style.accountSize === 50000 && M.get(id).style.riskAmount === 500 && /Ilość: 2/.test(t2) && /Kwota: \+800/.test(t2), `konto i ryzyko → ilość i kwoty (${t2})`);
+      // przegląd J P3-2: polska odmiana ze słownika pl.json (2 → „kontrakty”, 80 → „ticków”)
+      const qtyTxt = panel.querySelector('.swc-qty')?.textContent;
+      rec('panel', qtyTxt === '2 kontrakty' && /80 ticków/.test(t2), `odmiana: «${qtyTxt}», ticki w podpisie (${t2})`);
+      rec('panel', !panel.querySelector('.swc-sqty'), 'Live: bez notki o ryzyku sesji');
+      setIn('tpTicks', '60'); await sleep(40);
+      rec('panel', M.get(id).style.profitLevel === 15, `ticki celu → poziom (${M.get(id).style.profitLevel})`);
+      setIn('slPrice', '17994'); await sleep(40);
+      rec('panel', M.get(id).style.stopLevel === 6, `cena stopu → poziom (${M.get(id).style.stopLevel})`);
+      setIn('entryPrice', '18001'); await sleep(40);
+      rec('panel', M.get(id).points[0].price === 18001 && M.get(id).style.stopLevel === 6, 'cena wejścia przesuwa pozycję');
+      const cb = (k, on, attr = 'data-k') => { const el = panel.querySelector(`[${attr}="${k}"]`); el.checked = on; el.dispatchEvent(new Event('change', { bubbles: true })); };
+      cb('tpAmount', false, 'data-stat'); await sleep(40);
+      rec('panel', M.get(id).style.statsOn?.tpAmount === false && !/Kwota/.test(labelsOf(M.get(id)).find((b) => b.role === 'tp')?.lines.join('') || ''), 'wyłączenie kwoty celu');
+      cb('compactStats', true); await sleep(40);
+      rec('panel', !/Cel:/.test(txt(M.get(id))) && txt(M.get(id)).length > 0, `tryb kompaktowy (${txt(M.get(id))})`);
+      cb('showStats', true); await sleep(40);
+      M.select([]); await sleep(60);
+      rec('panel', labelsOf(M.get(id)).length > 0, 'zawsze pokazuj: podpisy bez zaznaczenia');
+      M.select([id]); await sleep(40);
+      root.querySelector('.swc-gear')?.click(); await sleep(60);
+      cb('priceLabels', false); await sleep(40);
+      rec('panel', !ed.axisLabels().length, 'ceny na osi wyłączone');
+      const remembered = JSON.parse(localStorage.getItem('thq.chart.toolStyle.v1') || '{}')['long-position'] || {};
+      rec('panel', remembered.compactStats === true && remembered.accountSize === 50000 && remembered.statsOn?.tpAmount === false, `pamięć stylu narzędzia (${JSON.stringify(remembered)})`);
+      rec('panel', D.defaultStyleFor('long-position').accountSize === 50000, 'następny rysunek z zapamiętanym kontem');
+      await ed.rys.flush();
+    });
+
+    // przegląd J P3-1: nasz napis R:R (P27) zostaje, gdy R:R nie ma w podpisie środka (także przy „Zawsze pokazuj”)
+    await section('rr', async () => {
+      const base = { ...D.defaultStyleFor('long-position'), stopLevel: 10, profitLevel: 20, showRR: true, compactStats: false, priceLabels: true };
+      const mk = (st) => M.add({ kind: 'long-position', points: [{ time: candles[60][0], price: 18000 }, { time: candles[95][0], price: 18000 }], style: { ...base, ...st } });
+      const on = mk({ showStats: false, statsOn: { ...S.DEFAULT_STATS } }), off = mk({ showStats: false, statsOn: { ...S.DEFAULT_STATS, rr: false } });
+      const alwaysOn = mk({ showStats: true, statsOn: { ...S.DEFAULT_STATS } }), alwaysOff = mk({ showStats: true, statsOn: { ...S.DEFAULT_STATS, rr: false } });
+      M.select([]); await sleep(40);
+      rec('rr', ed.rrPlain(M.get(on)) && ed.rrPlain(M.get(off)), 'bez zaznaczenia: napis R:R (P27)');
+      rec('rr', !ed.rrPlain(M.get(alwaysOn)) && ed.rrPlain(M.get(alwaysOff)), 'zawsze pokazuj: R:R w podpisie środka albo nasz napis, gdy podpis R:R wyłączony');
+      M.select([off]); await sleep(40);
+      rec('rr', ed.rrPlain(M.get(off)) && labelsOf(M.get(off)).length > 0, 'zaznaczony z wyłączonym podpisem R:R: podpisy i nasz napis R:R');
+      M.select([on]); await sleep(40);
+      rec('rr', !ed.rrPlain(M.get(on)), 'zaznaczony z podpisem R:R: napis tylko w podpisie środka');
+      for (const x of [on, off, alwaysOn, alwaysOff]) M.remove(x);
+      M.select([]);
+    });
+
+    // przegląd J P1-1: konto wpisane w rysunku sprzed J (bez statsOn) zostaje po ponownym wczytaniu i po Ctrl+Z; domyślne paczki znikają
+    await section('stary', async () => {
+      const oldSt = { color: '#f3f3f3', width: 1, stopLevel: 10, profitLevel: 20, positionStats: R.NO_STATS, showPriceLabels: false, accountSize: 1000, riskPercent: 25, riskDisplayMode: 'percents', lotSize: 1, leverage: 10000 };
+      const oldD = { id: 'old1', kind: 'long-position', points: [{ time: candles[100][0], price: 18000 }, { time: candles[130][0], price: 18000 }], style: oldSt };
+      const typed = { id: 'old2', kind: 'long-position', points: [{ time: candles[60][0], price: 18000 }, { time: candles[90][0], price: 18000 }], style: { ...oldSt, accountSize: 30000, riskDisplayMode: 'money', riskAmount: 300, riskPercent: undefined } };
+      ed.rys.applyExternal({ v: 1, at: new Date().toISOString(), d: [oldD, typed] }); await sleep(60);
+      const find = (pts) => M.drawings().find((x) => x.kind === 'long-position' && !x.locked && x.points[0].time === pts);
+      const a0 = find(candles[100][0]), b0 = find(candles[60][0]);
+      rec('stary', a0 && a0.style.accountSize == null && a0.style.riskPercent == null && !txt(a0).includes('Ilość'), `domyślne paczki (1000 / 25%) wyczyszczone: ${JSON.stringify(a0 && [a0.style.accountSize, a0.style.riskPercent])}`);
+      rec('stary', b0 && b0.style.accountSize === 30000 && b0.style.riskAmount === 300, `konto wpisane bez statsOn zostaje (${b0 && b0.style.accountSize})`);
+      M.select([a0.id]); await sleep(60);
+      root.querySelector('.swc-gear')?.click(); await sleep(60);
+      panel.querySelector('[data-ptab="inputs"]')?.click();
+      const setIn = (k, v) => { const el = panel.querySelector(`[data-k="${k}"]`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+      setIn('accountSize', '40000'); await sleep(40);
+      setIn('riskValue', '400'); await sleep(300);
+      const a1 = M.get(a0.id);
+      rec('stary', a1.style.accountSize === 40000 && a1.style.riskAmount === 400 && !!a1.style.statsOn, `wpisane konto ze znacznikiem J (${JSON.stringify([a1.style.accountSize, a1.style.riskAmount, !!a1.style.statsOn])})`);
+      // ponowne wczytanie (otwarcie trade'a, drugi wykres: ta sama ścieżka load)
+      ed.rys.applyExternal(ed.rys.currentDoc()); await sleep(60);
+      const a2 = find(candles[100][0]);
+      rec('stary', a2 && a2.style.accountSize === 40000 && a2.style.riskAmount === 400, `po ponownym wczytaniu konto zostaje (${a2 && a2.style.accountSize})`);
+      // inna zmiana i Ctrl+Z (cofnięcie wczytuje migawkę)
+      M.select([a2.id]); await sleep(40);
+      M.update({ ...a2, style: { ...a2.style, profitLevel: 30 } }); await sleep(400);
+      root.querySelector('[data-act="undo"]')?.click(); await sleep(80);
+      const a3 = find(candles[100][0]);
+      rec('stary', a3 && a3.style.profitLevel === 20 && a3.style.accountSize === 40000 && a3.style.riskAmount === 400, `po Ctrl+Z konto zostaje (${a3 && JSON.stringify([a3.style.profitLevel, a3.style.accountSize])})`);
+      for (const x of M.drawings()) if (!x.locked && x.id !== ed.rys.positionId()) M.remove(x.id);
+      M.select([]);
+    });
+
+    await section('trade', async () => {
+      root.querySelector('[data-act="lock"]').click(); await sleep(80);
+      const d = M.get(ed.rys.positionId());
+      const t3 = txt(d);
+      rec('trade', /Cel: 20/.test(t3) && /Stop: 10/.test(t3) && /R:R 2/.test(t3) && /Zamknięty P&L: \+12 pkt/.test(t3), `pozycja z pól trade'a: cena, ticki, %, P&L w pkt, R:R (${t3})`);
+      rec('trade', !/Ilość|Kwota|\$/.test(t3), 'pozycja z pól trade\'a: bez zmyślonej ilości i kwot');
+      rec('trade', !!panel.querySelector('[data-act="tsave"]'), 'panel „Pozycja trade\'a” z „Zapisz w trade\'zie” zostaje');
+      root.querySelector('[data-act="lock"]').click(); await sleep(60);
+    });
+    if (shot) {
+      // zrzut: świeża pozycja z kontem i ryzykiem, zaznaczona, panel ustawień na zakładce z ?tab= (inputs, style, labels)
+      for (const d of M.drawings()) if (!d.locked && d.id !== ed.rys.positionId()) M.remove(d.id);
+      const id = M.add({ kind: 'long-position', points: [{ time: candles[110][0], price: 18004 }, { time: candles[140][0], price: 18004 }], style: { ...D.defaultStyleFor('long-position'), compactStats: false, showStats: false, statsOn: { ...S.DEFAULT_STATS }, priceLabels: true, accountSize: 50000, riskDisplayMode: 'money', riskAmount: 500, stopLevel: 8, profitLevel: 16, beLevel: 4 } });
+      M.select([id]); await sleep(100);
+      root.querySelector('.swc-gear')?.click(); await sleep(100);
+      panel.querySelector(`[data-ptab="${qs.get('tab') || 'inputs'}"]`)?.click(); await sleep(100);
+    } else await ed.destroy();
+  }
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

@@ -113,13 +113,14 @@ export default ({ test, H, assert, ROOT }) => {
   });
 
   test('wykresy-06: zgodność z LWC i paczką rysowania w przeglądarce (tolerancja 1 px)', async () => {
-    const { findBrowser, dumpDom } = await import(pathToFileURL(path.join(ROOT, 'testy/przegladarka.mjs')).href);
+    const { findBrowser, cdpPage } = await import(pathToFileURL(path.join(ROOT, 'testy/przegladarka.mjs')).href);
     if (!findBrowser()) { console.log('  (pominięty: brak Chrome/Edge)'); return; }
     const S = await H.server(4806, { THQ_TEST_PAGES: '1', THQ_CONFIG_DIR: H.tmp() });
-    const dom = await dumpDom(`${S.base}/__testy/zgodnosc-rysunkow.html`);
-    const m = /<pre id="wynik">([\s\S]*?)<\/pre>/.exec(dom);
-    assert.ok(m, 'strona zwróciła wynik');
-    assert.match(m[1], /^PASS/, m[1].slice(0, 2000));
-    S.stop();
+    // J (przegląd P3-3): dumpDom z --virtual-time-budget zrzucał stronę pod obciążeniem przed wynikiem („strona zwróciła wynik” ✗ tylko w pełnym przebiegu).
+    // cdpPage czeka w czasie rzeczywistym, aż pre#wynik przestanie mieć „…” (stan zamiast stałego limitu); asercje bez zmian.
+    let txt = '';
+    try { txt = await cdpPage(`${S.base}/__testy/zgodnosc-rysunkow.html`, { width: 1200, height: 800, timeoutMs: 120_000 }); } finally { S.stop(); }
+    assert.ok(txt && txt !== '…', 'strona zwróciła wynik');
+    assert.match(txt, /^PASS/, txt.slice(0, 2000));
   });
 };
