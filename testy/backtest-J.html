@@ -56,13 +56,13 @@ try {
     const { mergeBase, visibleCount } = await import('/js/bt-swieca.js');
     const { sizeFromRisk } = await import('/js/bt-wypelnienia.js');
     const client = createSessionClient();
-    const day0 = await getJson('/api/backtest/day?instruments=NQ&day=2024-03-12&ctx=2');
-    const loadDay = async ({ day }) => (day === '2024-03-12' ? day0 : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+    const day0 = await (await import('/__testy/bt-zgodnosc.js')).replayDay('2024-03-12', ["NQ"]);
+    const loadDay = async ({ day }) => (day === '2024-03-12' ? day0 : (await import('/__testy/bt-zgodnosc.js')).replayDay(day, ["NQ"]));
     const st = mergeBase(day0.inst.NQ.m1, day0.inst.NQ.s1, day0.inst.NQ.real1s);
     const doc = newSessionDoc({
       id: newSessionId(), name: 'Sesja J wejście z rysunku',
-      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
-      pool: ['2024-03-12', '2024-03-13'], now: Date.now(),
+      def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
     });
     await client.create(doc);
     const RP = openReplay(document.body, { sessionId: doc.id, client, loadDay, onClosed: () => {} });
@@ -80,7 +80,7 @@ try {
       return id;
     };
     const pos = () => RP.book().positions.NQ;
-    const savedDoc = async () => { await rys().flush(); return RP.drawings().docOf('NQ', '2024-03-12'); };
+    const savedDoc = async () => { await rys().flush(); return RP.drawings().docOf('NQ'); };
 
     await section('domyślne', async () => {
       const ds = D.defaultStyleFor('long-position');
@@ -145,14 +145,18 @@ try {
       const realFetch = window.fetch;
       window.fetch = (u, o) => { if (String(u).includes('/api/backtest/session/save')) saves.push(JSON.parse(o.body)); return realFetch(u, o); };
       try {
-        drawBtn().click(); await sleep(400);
+        drawBtn().click();
+        // final: zapis sesji idzie z opóźnieniem zapisu; pod obciążeniem pełnego przebiegu nie mieścił się w sztywnych 400 ms (0 zapisów), więc czekamy na pierwszy zapis do 3 s
+        for (let i = 0; i < 60 && !saves.length; i++) await sleep(50);
+        await sleep(150);
       } finally { window.fetch = realFetch; }
       const o = RP.book().orders.find((x) => x.instrument === 'NQ');
       const first = saves[0]?.doc;
-      const dIn = (doc) => (doc?.drawings?.NQ?.['2024-03-12']?.d || []).some((x) => x.id === id);
+      const dIn = (doc) => (doc?.drawings?.NQ?.d || []).some((x) => x.id === id);
       rec('zapis', o && o.fromDrawing === id, `zlecenie niesie id rysunku (${o?.fromDrawing})`);
       rec('zapis', saves.length >= 1 && first.book.orders.some((x) => x.fromDrawing === id) && !dIn(first), `pierwszy zapis sesji ma zlecenie i już nie ma rysunku (${saves.length} zapisów, rysunek w 1.: ${dIn(first)})`);
-      const disk = await getJson(`/api/backtest/session/${doc.id}`);
+      let disk = await getJson(`/api/backtest/session/${doc.id}`);
+      for (let i = 0; i < 20 && !(disk.doc || disk).book.orders.some((x) => x.fromDrawing === id); i++) { await sleep(100); disk = await getJson(`/api/backtest/session/${doc.id}`); }
       rec('zapis', (disk.doc || disk).book.orders.some((x) => x.fromDrawing === id) && !dIn(disk.doc || disk), 'plik sesji: zlecenie bez rysunku');
       // Ctrl+Z w rysunkach przywraca rysunek: przycisk wyłączony, bo zlecenie z tego rysunku czeka
       scr().querySelector('.bt-cell[data-active="true"] [data-act="undo"]')?.click(); await sleep(80);
@@ -225,11 +229,9 @@ try {
       rec('blokady', !key('D').defaultPrevented || !RP.book().orders.length && !pos(), 'skrót przy cofniętym kursorze nic nie składa');
       P('[data-o="back"]')?.click(); await sleep(100);
       M().select([id2]); await sleep(60);
-      const dd = RP.doc().days['2024-03-12'];
-      const prev = dd.status; dd.status = 'done'; RP.orders().refresh(); await sleep(30);
-      rec('blokady', drawBtn().disabled && /zakończony/.test(drawBtn().title), `dzień zakończony: wyłączony (${drawBtn().title})`);
-      dd.status = prev; RP.orders().refresh(); await sleep(30);
-      rec('blokady', !drawBtn().disabled, `po powrocie aktywny (${drawBtn().title})`);
+      // K (31.10.2026): blokada „dzień zakończony” zastąpiona: nie ma końca dnia, więc po powrocie do bieżącej chwili przycisk jest aktywny
+      RP.orders().refresh(); await sleep(30);
+      rec('blokady', !drawBtn().disabled && !RP.doc().days, `po powrocie aktywny, sesja bez statusów dni (${drawBtn().title})`);
       // skrót D (domyślny) działa jak przycisk
       const ev = key('D'); await sleep(120);
       // po „Wróć” cena jest inna niż przy rysowaniu, więc zależnie od strony ceny to pozycja albo zlecenie oczekujące

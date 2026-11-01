@@ -43,15 +43,15 @@ try {
   const { sizeFromRisk } = await import('/js/bt-wypelnienia.js');
   const { positionPrices, roundTick } = await import('/js/rysunki.js');
   const client = createSessionClient();
-  const day0 = await getJson('/api/backtest/day?instruments=NQ&day=2024-03-12&ctx=2');
-  const loadDay = async ({ day }) => (day === '2024-03-12' ? day0 : getJson(`/api/backtest/day?instruments=NQ&day=${day}&ctx=2`));
+  const day0 = await (await import('/__testy/bt-zgodnosc.js')).replayDay('2024-03-12', ["NQ"]);
+  const loadDay = async ({ day }) => (day === '2024-03-12' ? day0 : (await import('/__testy/bt-zgodnosc.js')).replayDay(day, ["NQ"]));
   const st = mergeBase(day0.inst.NQ.m1, day0.inst.NQ.s1, day0.inst.NQ.real1s);
   const c0 = nyAt('2024-03-12', '09:00');
   const mk = async (name, cl = client) => {
     const doc = newSessionDoc({
       id: newSessionId(), name,
-      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
-      pool: ['2024-03-12', '2024-03-13'], now: Date.now(),
+      def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
     });
     await cl.create(doc);
     return doc;
@@ -293,7 +293,11 @@ try {
       const R = openReplay(document.body, { sessionId: doc.id, client: cl, loadDay, raf: rafStub, caf: cafStub });
       await R.ready;
       btn('play').click();
-      rafCb(1000); rafCb(1237); // dt = 0,237 s × 100 = 23,7 s: kursor w środku świecy 1m (ułamkowy)
+      // final P1-1: znaczniki klatek na tej samej osi co performance.now() strony (jak rAF w przeglądarce);
+      // sztywne 1000 i 1237 ms bywały sprzed kliknięcia, wtedy loop() brał playAt i druga klatka dawała dt = 0
+      const t0 = performance.now() + 5;
+      // dt = 0,237 s × 100 = 23,7 s: kursor w środku świecy 1m (ułamkowy)
+      rafCb(t0); rafCb(t0 + 237);
       btn('play').click();
       rec('wyrownanie', R.cursor() > c0 + 20 && R.cursor() < c0 + 30 && !Number.isInteger(R.cursor()), 'kursor w środku świecy: +' + (R.cursor() - c0) + ' s');
       setF('sl', '10'); setF('tp', '20');
@@ -306,24 +310,27 @@ try {
       R.close();
     });
 
-    await section('dzien', async () => {
+    // K (31.10.2026): zastępuje „pozycja nie przechodzi na następny dzień” ([U] «nie powinno byc takiego czegos jak koniec dnia»): pozycja i zlecenie idą przez noc
+    await section('noc', async () => {
       const doc = await mk('Sesja C2 poprawki 2', cl);
-      const R = openReplay(document.body, { sessionId: doc.id, client: cl, loadDay });
+      const R = openReplay(document.body, { sessionId: doc.id, client: cl });
       await R.ready;
-      btn('end-day').click();
-      await sleep(60);
-      rec('dzien', R.doc().days['2024-03-12'].status === 'done' && P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled, 'w dniu zrobionym nie składa się zleceń (Buy/Sell wyłączone)');
+      rec('noc', !btn('end-day'), 'bez „Zakończ dzień”');
+      await R.goTo(nyAt('2024-03-12', '15:59'));
       const lp = lastClose(R.cursor());
-      R.doc().book = placeOrder(R.book(), { instrument: 'NQ', side: 'buy', type: 'market', qty: 1, sl: lp - 10, tp: null }, { t: R.cursor(), price: lp }).book;
-      btn('end-day').click();
-      await sleep(120);
-      rec('dzien', !!R.book().positions.NQ && R.doc().dayIdx === 0 && /Zamknij pozycję/.test(scr().querySelector('.bt-msg').textContent), 'pozycja nie przechodzi na następny dzień (przycisk): idx ' + R.doc().dayIdx + ', «' + scr().querySelector('.bt-msg').textContent + '»');
+      // zlecenie limit daleko pod ceną czeka przez 17:00 i przerwę do nocy
+      R.doc().book = placeOrder(R.book(), { instrument: 'NQ', side: 'buy', type: 'limit', price: lp - 4000, qty: 1, sl: lp - 4100, tp: null }, { t: R.cursor(), price: lp }).book;
+      await R.goTo(nyAt('2024-03-12', '20:00'));
+      rec('noc', R.cursor() === nyAt('2024-03-12', '20:00') && R.book().orders.length === 1, 'zlecenie oczekujące przeszło przez koniec sesji i przerwę: ' + R.book().orders.length);
+      R.doc().book = { ...R.book(), orders: [] };
+      // SL i TP daleko: pozycja przetrwa noc do następnego dnia
+      const lp2 = lastClose(R.cursor());
+      R.doc().book = placeOrder(R.book(), { instrument: 'NQ', side: 'buy', type: 'market', qty: 1, sl: lp2 - 5000, tp: lp2 + 5000 }, { t: R.cursor(), price: lp2 }).book;
       await R.runJump('nySession');
-      rec('dzien', R.doc().dayIdx === 0 && !!R.book().positions.NQ, 'ani skokiem „następny dzień”');
-      R.doc().book = { ...R.book(), positions: { ...R.book().positions, NQ: null } };
-      btn('end-day').click();
-      await until(() => R.doc().dayIdx === 1 && R.chart());
-      rec('dzien', R.doc().dayIdx === 1, 'bez pozycji przejście działa');
+      rec('noc', R.cursor() === nyAt('2024-03-13', '09:00'), 'skok „Następna sesja NY” z otwartą pozycją idzie od razu (bez pytania o zamknięcie)');
+      rec('noc', !document.querySelector('.scrim [data-cd="no"]'), 'bez okna pytania');
+      rec('noc', !!R.book().positions.NQ && !(R.doc().trades || []).some((x) => x.exits?.some((e) => e.reason === 'eod')), 'pozycja przeszła przez noc, bez zamknięcia „eod”: ' + JSON.stringify({ pos: !!R.book().positions.NQ, orders: R.book().orders.length, ex: (R.doc().trades || []).map((x) => x.exits.map((e) => e.reason)) }));
+      rec('noc', R.book().hw === R.cursor() && R.book().hwi.NQ === R.cursor(), 'silnik przeszedł całą noc (znak wodny = kursor)');
       R.close();
     });
 
@@ -406,27 +413,24 @@ try {
       key('6');
       rec('lista', R.cursor() === c0 + 2100, `własny skok pod własnym skrótem (6): ${R.cursor() - c0}`);
       btn('jump').click(); // +15 min z 9:35 → 9:50
-      sel().value = 'open'; sel().dispatchEvent(new Event('change', { bubbles: true }));
-      btn('jump').click();
-      rec('lista', /Nie ma dokąd/.test(scr().querySelector('.bt-msg').textContent) && R.cursor() === c0 + 3000, `skok do 9:30, który już minął: komunikat, kursor stoi (${scr().querySelector('.bt-msg').textContent})`);
+      rec('lista', R.cursor() === c0 + 3000, `+15 min: ${R.cursor() - c0}`);
+      // K (31.10.2026): bez końca dnia: 9:30 już minęło → 9:30 następnego dnia handlowego; skok dnia z otwartą pozycją nie pyta o zamknięcie
       setF('sl', '10'); setF('tp', '20'); clickO('buy');
       sel().value = 'nySession'; sel().dispatchEvent(new Event('change', { bubbles: true }));
       btn('jump').click();
-      await sleep(80);
-      // E1 (30.10.2026): skok „następny dzień” przechodzi przez endDay, więc z otwartą pozycją pyta o jej zamknięcie (dawniej: komunikat); „nie” zostawia dzień jak był
-      const dlg = document.querySelector('.scrim [data-cd="no"]');
-      if (dlg) dlg.click();
-      await sleep(80);
-      rec('lista', !!dlg && !!R.book().positions.NQ && R.doc().dayIdx === 0 && R.doc().days['2024-03-12'].status !== 'done', `otwarta pozycja: skok pyta o zamknięcie, po „nie” dzień nie kończy się (okno: ${!!dlg})`);
-      clickO('close');
+      await until(() => R.cursor() === nyAt('2024-03-13', '09:00'));
+      rec('lista', R.cursor() === nyAt('2024-03-13', '09:00') && !document.querySelector('.scrim [data-cd="no"]'), `„Następna sesja NY” = następny dzień o godzinie startu, bez pytania: ${new Date(R.cursor() * 1000).toISOString()}`);
+      const t1 = (R.doc().trades || [])[0];
+      rec('lista', !!R.book().positions.NQ || (t1 && ['sl', 'tp'].includes(t1.exits.at(-1).reason)), `pozycja przez noc: otwarta albo zamknięta przez SL/TP (${t1 ? t1.exits.at(-1).reason : 'otwarta'}), nigdy „eod”`);
+      if (R.book().positions.NQ) clickO('close');
+      sel().value = 'open'; sel().dispatchEvent(new Event('change', { bubbles: true }));
       btn('jump').click();
-      await until(() => R.doc().dayIdx === 1 && R.chart());
-      rec('lista', R.doc().dayIdx === 1 && R.doc().days['2024-03-12'].status === 'done', `następny dzień z puli, poprzedni done: idx ${R.doc().dayIdx}, ${JSON.stringify(R.doc().days)}`);
-      rec('lista', R.cursor() === nyAt('2024-03-13', '09:00'), 'nowy dzień od godziny startu');
-      rec('lista', R.book().hw === R.cursor() && Object.keys(R.book().hwi).length > 0, 'znak wodny silnika zaczyna od zera w nowym dniu');
-      key('2'); // skrót skoku nextDay (ostatni dzień puli)
+      await until(() => R.cursor() === nyAt('2024-03-13', '09:30'));
+      rec('lista', R.cursor() === nyAt('2024-03-13', '09:30'), 'Do 9:30 NY');
+      await until(() => btn('notion').getAttribute('aria-busy') !== 'true'); // wysyłka do Notion po zamknięciu (od razu) pisze swój komunikat
+      key('2'); // „Następna sesja NY”: następnego dnia już nie ma w danych
       await sleep(80);
-      rec('lista', /ostatni dzień/.test(scr().querySelector('.bt-msg').textContent) && R.doc().dayIdx === 1, `ostatni dzień puli: ${scr().querySelector('.bt-msg').textContent}`);
+      rec('lista', /Nie ma dokąd/.test(scr().querySelector('.bt-msg').textContent) && R.cursor() === nyAt('2024-03-13', '09:30'), `po ostatnim dniu danych: komunikat, kursor stoi (${scr().querySelector('.bt-msg').textContent})`);
       // prędkość i grafik klawiszy
       const sp0 = R.speed();
       key(']');
@@ -515,7 +519,7 @@ try {
       const q$ = (s) => pop().querySelector(s);
       const rows = () => pop().querySelectorAll('.bt-sj');
       rec('ustawienia', q$('[data-fk="tab-backtest"]') && q$('[data-fk="tab-backtest"]').getAttribute('aria-selected') === 'true', 'zakładka „Backtest” w popoverze');
-      rec('ustawienia', rows().length === 5 && pop().querySelectorAll('[data-bts^="skroty:"]').length === 11, `5 skoków domyślnych i 11 skrótów akcji (J: drawEntry) (${rows().length})`);
+      rec('ustawienia', rows().length === 5 && pop().querySelectorAll('[data-bts^="skroty:"]').length === 12, `5 skoków domyślnych i 12 skrótów akcji (J: drawEntry; K: bez endDay; M: be, half) (${rows().length})`);
       rec('ustawienia', q$('[data-btd="startTime"]').value === '09:00' && q$('[data-btd="speed"]').value === '100' && q$('[data-btd="risk"]').value === '500', 'domyślna godzina startu, ryzyko, szybkość');
       // dodaj
       q$('[data-act="bt-add"]').click();

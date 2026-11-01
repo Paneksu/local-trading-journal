@@ -318,7 +318,9 @@ export function createRysunki(ctx) {
   const panel = ctx.panel || document.createElement('div');
   const stage = ctx.stage || plot.parentElement || plot; // P29: pole wykresu z nakładkami (zębatka, okienko, panel przypięty)
   const gear = ctx.gear || document.createElement('button');
-  const manager = new D.DrawingManager(chart, series, {});
+  // K (31.10.2026): ctx.bars() = świece w formacie paczki ({ time, open, high, low, close, volume }) z pamięci wywołującego; bez tej opcji paczka przy każdym
+  // rysowaniu kopiuje całą serię (series.data().map), co przy pełnej historii replayu (dziesiątki tysięcy świec) kosztuje kilka ms na klatkę
+  const manager = new D.DrawingManager(chart, series, ctx.bars ? { bars: ctx.bars } : {});
   const fvg = { on: false };
   // H2: nowy rysunek dostaje znacznik kolorów domyślnych (rysunki-kolory.js) i kolory bieżącego motywu
   // J: pozycja w replayu dostaje konto i ryzyko z sesji (ctx.positionDefaults: def.balance, def.risk), które wygrywają z pamięcią stylu; w Live bez tej opcji
@@ -406,7 +408,8 @@ export function createRysunki(ctx) {
     btn('[data-act="del"]').disabled = ![].concat(manager.selection()).some((x) => x !== posId);
     btn('[data-act="clear"]').disabled = !items().length;
     const lk = btn('[data-act="lock"]');
-    lk.hidden = !posId;
+    // L (31.10.2026): Journal backtestu: pozycja trade'a zawsze zablokowana (ceny, czasy i wynik liczy silnik), bez kłódki
+    lk.hidden = !posId || !!ctx.noUnlock;
     lk.setAttribute('aria-pressed', String(posUnlocked));
     lk.innerHTML = posUnlocked ? ICONS.unlock : ICONS.lock;
     const lt = posUnlocked ? t('Zablokuj pozycję trade\'a (bez zapisu zmian)') : t('Odblokuj pozycję trade\'a, żeby zmienić ceny i czas wejścia i wyjścia');
@@ -998,6 +1001,7 @@ export function createRysunki(ctx) {
   // ---- P27: kłódka pozycji trade'a ----
   function setLocked(lock) {
     if (!posId && !ctx.extra?.()) return;
+    if (!lock && ctx.noUnlock) return;
     const cur = posId ? manager.get(posId) : null;
     restoring = true;
     try {

@@ -69,8 +69,9 @@ export default ({ test, H, assert, ROOT }) => {
     const l = st.list();
     assert.deepEqual(l.map((s) => s.id), ['bt-nowsza1', 'bt-starsza1']);
     const s = l[1];
-    for (const k of ['id', 'name', 'instruments', 'done', 'pool', 'sumR', 'lastOpened']) assert.ok(k in s, k);
-    assert.deepEqual(s.instruments, ['ES']); assert.equal(s.done, 1); assert.equal(s.pool, 3); assert.equal(s.sumR, 1); assert.equal(s.trades, 3);
+    // K (31.10.2026): zamiast „dni zrobione / w puli” data startu i kursor (sesja v1 z pulą przechodzi przez migrateSession: start = najwcześniejszy dzień puli)
+    for (const k of ['id', 'name', 'instruments', 'from', 'cursor', 'sumR', 'lastOpened']) assert.ok(k in s, k);
+    assert.deepEqual(s.instruments, ['ES']); assert.equal(s.from, '2024-01-02'); assert.equal(s.sumR, 1); assert.equal(s.trades, 3);
     assert.equal(l[0].lastOpened, '2026-10-30T09:00:00.000Z');
     assert.equal(s.lastOpened, s.updated, 'bez otwarcia: ostatnia zmiana');
     assert.ok(logs.some((x) => x.includes('bt-zepsuta1')), 'uszkodzony plik w logu');

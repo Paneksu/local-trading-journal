@@ -1,4 +1,4 @@
-// Karty panelu „Dzisiaj” (newsy USD dnia) i „Wyniki spółek” (earningsy) oraz sekcje Ustawienia → Wykresy → Newsy / Earningsy (pakiet D, 1.4.0).
+// Karty panelu „Dzisiaj” (newsy USD dnia) i „Wyniki spółek” (earningsy) oraz grupy Ustawień: wygląd w Wykresach, klucz i stan w Źródłach danych (pakiet D, 1.4.0; N4, 1.6.0).
 // Logika widoku to czyste funkcje (newsTodayView, earnTodayView); sklep (createNewsCards) pobiera dane z lokalnego serwera raz, potem co minutę
 // przelicza widok BEZ zapytań do sieci i odświeża dane najwyżej co kwadrans albo po zmianie dnia lub strefy. Kolory tylko z tokenów (NEWS_TOKENS, EARN_TOKENS).
 // English: panel cards (today's USD news, earnings) and their settings sections; pure view functions plus a store that refetches rarely and recomputes every minute.
@@ -66,7 +66,7 @@ export function newsCardHtml(v, { tz, error = false, loaded = true, limit = 0 } 
 }
 export function earnCardHtml(v, { error = false, loaded = true, hasKey = true, limit = 0 } = {}) {
   if (!loaded) return `<p class="note">${L('Wczytuję wyniki spółek…')}</p>`;
-  if (v.empty) return `<p class="note">${error ? L('Nie udało się wczytać wyników spółek.') : hasKey ? L('Brak wyników wybranych klas w najbliższych dniach.') : L('Bez klucza Finnhub nie mamy terminów wyników. Dodasz go w Ustawienia → Wykresy → Earningsy.')}</p>`;
+  if (v.empty) return `<p class="note">${error ? L('Nie udało się wczytać wyników spółek.') : hasKey ? L('Brak wyników wybranych klas w najbliższych dniach.') : L('Bez klucza Finnhub nie mamy terminów wyników. Dodasz go w Ustawienia → Źródła danych → Earningsy.')}</p>`;
   let left = limit || Infinity, hidden = 0;
   const groups = v.groups.map((g) => { const rows = g.rows.slice(0, Math.max(0, left)); left -= rows.length; hidden += g.rows.length - rows.length; return { ...g, rows }; }).filter((g) => g.rows.length);
   return groups.map((g) => `<p class="lbl nws-gh">${esc(g.title)}</p><ul class="nws-list${limit ? ' compact' : ''}">${g.rows.map((r) => `<li><span class="nws-t"><b>${esc(r.symbol)}</b></span>${dot(EARN_TOKENS[r.cls])}<span class="nws-n">${r.sub ? `<span class="sr">${esc(t('klasa {n}', { n: r.cls }))}: </span>${esc(r.sub)}` : `<small class="muted">${esc(t('klasa {n}', { n: r.cls }))}</small>`}</span></li>`).join('')}</ul>`).join('') + moreBtn(hidden, 'cal-earn');
@@ -120,18 +120,29 @@ export function createNewsCards({ getTz = () => '', getPrefs = () => ({}), fetch
   };
 }
 
-// ---- Ustawienia → Wykresy: sekcje Newsy i Earningsy ----
+// ---- Ustawienia: newsy i earningsy ----
+// N4 (1.6.0): rozcięcie grup z 1.4.0. Klucz i stan źródła w sekcji Źródła danych (newsSourceHtml, earnSourceHtml; karta klucza w ust-zrodla.js),
+// wygląd na wykresie i w panelu w sekcji Wykresy (newsLookHtml, earnLookHtml). Specyfikacja: backtest-wyniki/N-pierwsze-kroki-ustawienia.md §4.2.
 const fmtAt = (ms, tz) => (ms ? new Intl.DateTimeFormat(locale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: tz || undefined }).format(new Date(ms)) : '-');
 const kvRow = (k, v) => `<div class="sp-kv"><span>${esc(k)}</span><b>${v}</b></div>`;
 const NEWS_IMP_LABEL = { high: 'Czerwone', medium: 'Pomarańczowe', low: 'Żółte', holiday: 'Szare (Bank Holiday)', opex: 'OPEX' };
-const keyRow = (id, kind, has, msg, descId) => `<div class="sp-f"><label class="lbl" for="${id}">${L(kind === 'fred' ? 'Klucz FRED' : 'Klucz Finnhub')}</label>
-  <div class="sp-keyrow"><input id="${id}" class="sp-in sp-key" type="password" autocomplete="off" spellcheck="false" maxlength="100" data-fk="${id}" placeholder="${esc(has ? t('Zapisany. Wklej nowy, aby zmienić') : t('Wklej klucz (opcjonalnie)'))}" aria-describedby="${descId}">
-    <button type="button" class="btn sm" data-act="${kind === 'fred' ? 'news-key-save' : 'earn-key-save'}" data-fk="${id}-save">${L('Zapisz')}</button></div>
-  <p class="note" id="${descId}" aria-live="polite">${msg ? `<span class="${msg.error ? 'warnb' : 'okb'}">${esc(msg.text)}</span> ` : ''}${kind === 'fred' ? L('Opcjonalny. Daty z lat 2010–2026 są w programie, klucz odświeża przyszłe terminy raz dziennie. Darmowy klucz założysz na fred.stlouisfed.org. Trafia tylko do pliku .env na tym komputerze, nie do Notion ani synchronizacji.') : L('Opcjonalny. Historia działa bez klucza, nowe terminy wyników go wymagają. Darmowy klucz założysz na finnhub.io. Trafia tylko do pliku .env na tym komputerze, nie do Notion ani synchronizacji.')}</p></div>`;
 
-// c: settings.chart (po sanitizeChart), st: { news, earnings } ze statusów serwera (albo null przed wczytaniem), meta: /api/meta, msg: { fred, finnhub }
-export function newsSettingsHtml({ c, st, meta = {}, msg = {}, chk }) {
-  const o = c.overlays, ns = st?.news;
+// c: settings.chart (po sanitizeChart), chk: pomocnik przełącznika z ust-wspolne.js
+export function newsLookHtml({ c, chk }) {
+  const o = c.overlays;
+  return `<h3 class="sp-g" id="ch-g-news">${L('Newsy na wykresie')}</h3>
+      <div class="sp-f">${chk('news', o.news, 'Newsy na wykresie')}
+        <p class="note">${L('Linia i znacznik w godzinie publikacji, w kolorze najważniejszej wagi. Godziny w strefie wykresu. Domyślnie wyłączone.')}</p></div>
+      <div class="sp-f"><span class="lbl" id="ch-news-imp">${L('Wagi na wykresie i na karcie')}</span>
+        <div class="sp-chk" role="group" aria-labelledby="ch-news-imp">${NEWS_IMPS.map((k) => chk(`newsImp-${k}`, o.newsImp[k], NEWS_IMP_LABEL[k])).join('')}</div>
+        <p class="note">${L('Szare to dni wolne (Bank Holiday), OPEX to wygasanie opcji w 3. piątek miesiąca. Zdarzenia całodzienne są etykietą dnia, bez linii.')}</p></div>
+      <div class="sp-f">${chk('newsCard', c.newsCard, 'Karta „Dzisiaj” w panelu')}
+        <p class="note">${L('Dzisiejsze newsy USD oraz wzmianka o OPEX i Bank Holiday. Godziny w strefie wykresu.')}</p></div>
+      <p class="note">${L('Klucz FRED i stan pobierania:')} <a class="sv-doc" href="#ustawienia/zrodla/newsy">${L('Źródła danych → Newsy makro')}</a></p>`;
+}
+// st: { news, earnings } ze statusów serwera (albo null przed wczytaniem)
+export function newsSourceHtml({ st }) {
+  const ns = st?.news;
   const lines = [];
   if (ns) {
     const h = ns.history || {}, by = h.byImp || {};
@@ -141,22 +152,34 @@ export function newsSettingsHtml({ c, st, meta = {}, msg = {}, chk }) {
     if (h.verified?.months) lines.push(kvRow(t('Zgodność z ForexFactory'), esc(t('zweryfikowane na próbie {n} miesięcy ({date})', { n: h.verified.months, date: h.verified.checked.split('-').reverse().join('.') }))));
     lines.push(kvRow(t('Zdarzeń w historii'), esc(t('{n} (czerwone {r}, pomarańczowe {o})', { n: h.officialEvents ?? 0, r: by.high ?? 0, o: by.medium ?? 0 }))));
   }
-  return `<h3 class="sp-g" id="ch-g-news">${L('Newsy')}</h3>
-      <div class="sp-f">${chk('news', o.news, 'Newsy na wykresie')}
-        <p class="note">${L('Linia i znacznik w godzinie publikacji, w kolorze najważniejszej wagi. Godziny w strefie wykresu. Domyślnie wyłączone.')}</p></div>
-      <div class="sp-f"><span class="lbl" id="ch-news-imp">${L('Wagi na wykresie i na karcie')}</span>
-        <div class="sp-chk" role="group" aria-labelledby="ch-news-imp">${NEWS_IMPS.map((k) => chk(`newsImp-${k}`, o.newsImp[k], NEWS_IMP_LABEL[k])).join('')}</div>
-        <p class="note">${L('Szare to dni wolne (Bank Holiday), OPEX to wygasanie opcji w 3. piątek miesiąca. Zdarzenia całodzienne są etykietą dnia, bez linii.')}</p></div>
-      <div class="sp-f">${chk('newsCard', c.newsCard, 'Karta „Dzisiaj” w panelu')}
-        <p class="note">${L('Dzisiejsze newsy USD oraz wzmianka o OPEX i Bank Holiday. Godziny w strefie wykresu.')}</p></div>
-      ${keyRow('sp-fredkey', 'fred', meta.hasFredKey, msg.fred, 'sp-fredkey-d')}
-      <div class="sp-f sp-kvs">${lines.join('') || `<p class="note">${L('Wczytuję stan…')}</p>`}
+  return `<div class="sp-f sp-kvs">${lines.join('') || `<p class="note">${L('Wczytuję stan…')}</p>`}
         <details class="sp-more"><summary>${L('Czego brakuje w historii')}</summary><p class="note">${L('Brakuje przemówień prezydenta, sekretarza skarbu i członków FOMC poza przewodniczącym. Godziny przemówień przewodniczącego są niepewne. Existing i Pending Home Sales, wstępne PMI S&P Global i raport walutowy Skarbu pojawiają się tylko z cotygodniowego feedu, od dnia instalacji.')}</p></details>
         <details class="sp-more"><summary>${L('Źródła i prawa')}</summary><p class="note">${L('Fed (kalendarz FOMC, przemówienia), FRED i ForexFactory (tylko publiczny feed eksportu z bieżącego tygodnia). Nie mamy powiązania z ForexFactory, dane służą do własnego użytku i nie trafiają na karty ani filmy.')}</p>
         <p class="note">${esc(FRED_ATTRIBUTION)}</p></details></div>`;
 }
-export function earnSettingsHtml({ c, st, meta = {}, msg = {}, chk }) {
+// c: settings.chart, st: statusy, meta: /api/meta, msg: { classes } (komunikat po zmianie ręcznych wyjątków), chk: przełącznik
+export function earnLookHtml({ c, st, meta = {}, msg = {}, chk }) {
   const o = c.overlays, es = st?.earnings, h = es?.history;
+  const ov = Object.entries(es?.overrides || {}).map(([s, n]) => [s, n, false]).concat((es?.extra || []).filter((s) => !(es?.overrides || {})[s]).map((s) => [s, 4, true]));
+  const counts = h?.classes || {};
+  return `<h3 class="sp-g" id="ch-g-earn">${L('Earningsy na wykresie')}</h3>
+      <div class="sp-f">${chk('earnings', o.earnings, 'Earningsy na wykresie')}
+        <p class="note">${L('Wyniki spółek z S&P 100 jako romb w chwili ogłoszenia: BMO przed 9:30, AMC po 16:00 czasu Nowego Jorku. Bez pory pokazują się jako etykieta dnia. Domyślnie wyłączone.')}</p></div>
+      <div class="sp-f"><span class="lbl" id="ch-earn-cls">${L('Klasy na wykresie i na karcie')}</span>
+        <div class="sp-chk" role="group" aria-labelledby="ch-earn-cls">${EARN_CLASSES.map((n) => chk(`earnCls-${n}`, o.earnCls[n], t('Klasa {n}', { n }) + (counts[n] != null ? ` (${counts[n]})` : ''))).join('')}</div>
+        <p class="note">${L('Klasa 1 to największe spółki (czerwone), 4 to reszta S&P 100 (szare).')}</p></div>
+      <div class="sp-f">${chk('earningsCard', c.earningsCard ?? !!meta.hasFinnhubKey, 'Karta „Wyniki spółek” w panelu')}
+        <p class="note">${L('Dziś po zamknięciu, jutro przed otwarciem i najbliższe wyniki klasy 1. Jeśli jej nie ustawisz, pojawi się po dodaniu klucza Finnhub.')}</p></div>
+      <div class="sp-f"><span class="lbl" id="ch-earn-man">${L('Ręczne wyjątki klas')}</span>
+      ${ov.length ? `<ul class="nws-man">${ov.map(([s, n, ex]) => `<li><b>${esc(s)}</b> <span class="muted">${esc(t('klasa {n}', { n }))}${ex ? ` · ${esc(t('dopisana'))}` : ''}</span> <button type="button" class="btn ghost sm" data-act="earn-class-del" data-v="${esc(s)}" data-fk="earn-del-${esc(s)}" aria-label="${esc(t('Usuń wyjątek {s}', { s }))}">${L('Usuń')}</button></li>`).join('')}</ul>` : ''}
+      <div class="sp-keyrow"><input id="sp-earn-sym" class="sp-in" type="text" maxlength="10" autocomplete="off" spellcheck="false" autocapitalize="characters" data-fk="earn-sym" placeholder="TICKER" aria-label="${L('Ticker spółki')}">
+        <select id="sp-earn-cls" class="sp-in sp-sel" data-fk="earn-cls" aria-label="${L('Klasa')}">${EARN_CLASSES.map((n) => `<option value="${n}">${esc(t('Klasa {n}', { n }))}</option>`).join('')}</select>
+        <button type="button" class="btn sm" data-act="earn-class-add" data-fk="earn-add">${L('Dodaj')}</button></div>
+      <p class="note" id="sp-earn-man-d" aria-live="polite">${msg.classes ? `<span class="${msg.classes.error ? 'warnb' : 'okb'}">${esc(msg.classes.text)}</span> ` : ''}${L('Przenosi spółkę z S&P 100 do wybranej klasy albo dodaje własną. Terminy nowej spółki pochodzą tylko z Finnhub.')}</p></div>
+      <p class="note">${L('Klucz Finnhub i stan pobierania:')} <a class="sv-doc" href="#ustawienia/zrodla/earningsy">${L('Źródła danych → Earningsy')}</a></p>`;
+}
+export function earnSourceHtml({ st }) {
+  const es = st?.earnings, h = es?.history;
   const lines = [];
   if (es) {
     lines.push(kvRow(t('Kalendarz Finnhub'), esc(es.calendar?.lastOkAt ? fmtAt(es.calendar.lastOkAt) : t('jeszcze nie pobrany'))));
@@ -166,24 +189,6 @@ export function earnSettingsHtml({ c, st, meta = {}, msg = {}, chk }) {
   const gaps = [...(h?.incomplete || [])];
   const gapList = gaps.length ? `<details class="sp-more"><summary>${esc(t('Spółki z niepełną historią ({n})', { n: gaps.length }))}</summary><p class="note">${esc(gaps.map((g) => `${g.symbol} (${g.count})`).join(', '))}</p>
       <p class="note">${L('Luki wypełnia kalendarz Finnhub, ale dopiero od dnia instalacji. Starszych wyników tych spółek nie odzyskamy.')}</p></details>` : '';
-  const ov = Object.entries(es?.overrides || {}).map(([s, n]) => [s, n, false]).concat((es?.extra || []).filter((s) => !(es?.overrides || {})[s]).map((s) => [s, 4, true]));
-  const manual = `<div class="sp-f"><span class="lbl" id="ch-earn-man">${L('Ręczne wyjątki klas')}</span>
-      ${ov.length ? `<ul class="nws-man">${ov.map(([s, n, ex]) => `<li><b>${esc(s)}</b> <span class="muted">${esc(t('klasa {n}', { n }))}${ex ? ` · ${esc(t('dopisana'))}` : ''}</span> <button type="button" class="btn ghost sm" data-act="earn-class-del" data-v="${esc(s)}" data-fk="earn-del-${esc(s)}" aria-label="${esc(t('Usuń wyjątek {s}', { s }))}">${L('Usuń')}</button></li>`).join('')}</ul>` : `<p class="note">${L('Brak wyjątków.')}</p>`}
-      <div class="sp-keyrow"><input id="sp-earn-sym" class="sp-in" type="text" maxlength="10" autocomplete="off" spellcheck="false" autocapitalize="characters" data-fk="earn-sym" placeholder="TICKER" aria-label="${L('Ticker spółki')}">
-        <select id="sp-earn-cls" class="sp-in sp-sel" data-fk="earn-cls" aria-label="${L('Klasa')}">${EARN_CLASSES.map((n) => `<option value="${n}">${esc(t('Klasa {n}', { n }))}</option>`).join('')}</select>
-        <button type="button" class="btn sm" data-act="earn-class-add" data-fk="earn-add">${L('Dodaj')}</button></div>
-      <p class="note" id="sp-earn-man-d" aria-live="polite">${msg.classes ? `<span class="${msg.classes.error ? 'warnb' : 'okb'}">${esc(msg.classes.text)}</span> ` : ''}${L('Przenosi spółkę z S&P 100 do wybranej klasy albo dodaje własną. Terminy nowej spółki pochodzą tylko z Finnhub.')}</p></div>`;
-  const counts = h?.classes || {};
-  return `<h3 class="sp-g" id="ch-g-earn">${L('Earningsy')}</h3>
-      <div class="sp-f">${chk('earnings', o.earnings, 'Earningsy na wykresie')}
-        <p class="note">${L('Wyniki spółek z S&P 100 jako romb w chwili ogłoszenia: BMO przed 9:30, AMC po 16:00 czasu Nowego Jorku. Bez pory pokazują się jako etykieta dnia. Domyślnie wyłączone.')}</p></div>
-      <div class="sp-f"><span class="lbl" id="ch-earn-cls">${L('Klasy na wykresie i na karcie')}</span>
-        <div class="sp-chk" role="group" aria-labelledby="ch-earn-cls">${EARN_CLASSES.map((n) => chk(`earnCls-${n}`, o.earnCls[n], t('Klasa {n}', { n }) + (counts[n] != null ? ` (${counts[n]})` : ''))).join('')}</div>
-        <p class="note">${L('Klasa 1 to największe spółki (czerwone), 4 to reszta S&P 100 (szare).')}</p></div>
-      <div class="sp-f">${chk('earningsCard', c.earningsCard ?? !!meta.hasFinnhubKey, 'Karta „Wyniki spółek” w panelu')}
-        <p class="note">${L('Dziś po zamknięciu, jutro przed otwarciem i najbliższe wyniki klasy 1. Jeśli jej nie ustawisz, pojawi się po dodaniu klucza Finnhub.')}</p></div>
-      ${keyRow('sp-fhkey', 'finnhub', meta.hasFinnhubKey, msg.finnhub, 'sp-fhkey-d')}
-      <div class="sp-f sp-kvs">${lines.join('') || `<p class="note">${L('Wczytuję stan…')}</p>`}${gapList}
-        <p class="note">${L('Źródła: SEC EDGAR (historia) i Finnhub (terminy, własny klucz).')}</p></div>
-      ${manual}`;
+  return `<div class="sp-f sp-kvs">${lines.join('') || `<p class="note">${L('Wczytuję stan…')}</p>`}${gapList}
+        <p class="note">${L('Źródła: SEC EDGAR (historia) i Finnhub (terminy, własny klucz).')}</p></div>`;
 }

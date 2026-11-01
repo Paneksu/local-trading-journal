@@ -8,6 +8,10 @@ public/img/firmy/custom/
 *.url
 # lokalne pliki robocze
 dashboard.log
+# final (bezp. P3-3): rotowane logi (lib/log-rotacja.mjs) i odłożony nieczytelny plik konfiguracji
+dashboard.*.log
+dashboard.log.rotating
+config.local.json.corrupt-*
 screens/
 node_modules/
 chart-data/

@@ -59,18 +59,12 @@ export default ({ test, H, assert, ROOT }) => {
     assert.deepEqual(r2.excluded, [{ day: '2024-03-12', reason: 'done' }]);
   });
 
-  test('backtest-C1: kolejność', async () => {
-    const { orderDays } = await imp('public/js/bt-filtr.js');
-    const d = ['2024-03-13', '2024-03-11', '2024-03-15', '2024-03-12', '2024-03-14', '2024-03-18', '2024-03-19', '2024-03-20'];
-    const sorted = [...d].sort();
-    assert.deepEqual(orderDays(d, 'chrono'), sorted);
-    assert.deepEqual(orderDays(d, 'newest'), [...sorted].reverse());
-    const a = orderDays(d, 'random', 42), b = orderDays(d, 'random', 42), c = orderDays(d, 'random', 43);
-    assert.deepEqual(a, b, 'ten sam seed, ta sama kolejność');
-    assert.notDeepEqual(a, c, 'inny seed, inna kolejność');
-    for (const x of [a, c]) { assert.equal(x.length, d.length); assert.deepEqual([...x].sort(), sorted); }
-    assert.notDeepEqual(a, sorted);
-    assert.deepEqual(d[0], '2024-03-13', 'wejście bez zmian');
+  // K (31.10.2026): „backtest-C1: kolejność” (orderDays chrono/newest/random) zastąpiony: kolejność dni usunięta ([U] «Filtr jako skok»), dni z filtra rosnąco dla skoku
+  test('backtest-K: dni z filtra rosnąco, bez kolejności losowej', async () => {
+    const F = await imp('public/js/bt-filtr.js');
+    assert.equal(F.orderDays, undefined, 'orderDays usunięte');
+    const days = ['2024-03-13', '2024-03-11', '2024-03-12'].map((day) => ({ day, has1s: { NQ: true }, has1m: { NQ: true }, wd: 1 }));
+    assert.deepEqual(F.matchDays({ instruments: ['NQ'], from: '2024-03-11' }, days).days, ['2024-03-11', '2024-03-12', '2024-03-13'], 'bez daty końca: do końca indeksu');
   });
 
   test('backtest-C1: trasa /api/backtest/days', async () => {

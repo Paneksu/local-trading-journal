@@ -47,7 +47,7 @@ try {
   const { positionPrices } = await import('/js/rysunki.js');
   const { createDrawingStore } = await import('/js/bt-rysunki.js');
   const client = createSessionClient();
-  const dayAll = await getJson(`/api/backtest/day?instruments=NQ,ES&day=${DAY}&ctx=2`);
+  const dayAll = await (await import('/__testy/bt-zgodnosc.js')).replayDay(DAY, ["NQ","ES"]);
   const loadDay = async () => dayAll;
   const streams = { NQ: mergeBase(dayAll.inst.NQ.m1, dayAll.inst.NQ.s1, dayAll.inst.NQ.real1s), ES: mergeBase(dayAll.inst.ES.m1, dayAll.inst.ES.s1, dayAll.inst.ES.real1s) };
   const c0 = nyAt(DAY, '09:31');
@@ -56,8 +56,8 @@ try {
   const mk = async (name, { layout = null, cursor = null } = {}) => {
     const doc = newSessionDoc({
       id: newSessionId(), name,
-      def: { instruments: ['NQ', 'ES'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
-      pool: [DAY], now: Date.now(),
+      def: { instruments: ['NQ', 'ES'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
     });
     if (layout) doc.layout = JSON.parse(JSON.stringify(layout));
     if (cursor) doc.cursor = cursor;
@@ -276,41 +276,42 @@ try {
       cells()[0].querySelector('.bt-ct').value = '1m'; cells()[0].querySelector('.bt-ct').dispatchEvent(new Event('change', { bubbles: true }));
       rec('widoczny', lines(RA.charts()[0]).length === 1 && lines(RA.charts()[2]).length === 1, 'linia widoczna w każdym interwale (5m i 1m)');
       // ES: pozioma linia z wykresu 5m widoczna na ES 1m, nie na NQ
-      const e = RA.charts()[3].bars(), eb = e[e.length - 1];
+      const e = RA.charts()[3].liveBars(), eb = e[e.length - 1];
       RA.charts()[3].manager().add({ kind: 'horizontal-line', points: [{ time: eb[0], price: eb[4] }], style: { color: '#cccccc', width: 1 } });
       await RA.charts()[3].rysunki().flush();
       rec('widoczny', lines(RA.charts()[1]).length === 1 && lines(RA.charts()[0]).length === 1 && lines(RA.charts()[2]).length === 1, 'linia ES widoczna na ES 1m, NQ zachowuje tylko swoją linię');
     });
 
     await section('plik', async () => {
-      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${sid}`); return x.drawings?.NQ?.[DAY]?.d?.length === 1 && x.drawings?.ES?.[DAY]?.d?.length === 1 ? x : null; }, 5000);
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${sid}`); return x.drawings?.NQ?.d?.length === 1 && x.drawings?.ES?.d?.length === 1 ? x : null; }, 5000);
       rec('plik', disk, `rysunki w pliku sesji: ${JSON.stringify(Object.fromEntries(Object.entries((await getJson(`/api/backtest/session/${sid}`)).drawings || {}).map(([k, v]) => [k, Object.keys(v)])))}`);
-      rec('plik', disk && disk.drawings.NQ[DAY].v === 1 && Array.isArray(disk.drawings.NQ[DAY].d) && disk.drawings.NQ[DAY].d[0].kind === 'trend-line', 'format DrawingDoc { v: 1, at, d }');
+      rec('plik', disk && disk.drawings.NQ.v === 1 && Array.isArray(disk.drawings.NQ.d) && disk.drawings.NQ.d[0].kind === 'trend-line', 'format DrawingDoc { v: 1, at, d }');
       rec('plik', posts.length === 0, `żadne żądanie POST /api/drawings/save (${posts.length})`);
     });
 
     await section('snapshot', async () => {
       const st = RA.drawings();
-      const s1 = st.snapshot('NQ', DAY);
+      const s1 = st.snapshot('NQ');
       rec('snapshot', s1.v === 1 && typeof s1.at === 'string' && Array.isArray(s1.d) && s1.d.length === 1, `format { v: 1, at, d }: ${JSON.stringify({ v: s1.v, at: typeof s1.at, n: s1.d?.length })}`);
-      const b = RA.charts()[0].bars();
+      const b = RA.charts()[0].liveBars();
       RA.charts()[0].manager().add({ kind: 'trend-line', points: [{ time: b[b.length - 6][0], price: b[b.length - 6][4] }, { time: b[b.length - 1][0], price: b[b.length - 1][4] }], style: { color: '#cccccc', width: 1 } });
       await RA.charts()[0].rysunki().flush();
       rec('snapshot', s1.d.length === 1, `zmiana po snapshocie nie zmienia zwróconego obiektu (${s1.d.length})`);
-      const s2 = st.snapshot('NQ', DAY);
+      const s2 = st.snapshot('NQ');
       rec('snapshot', s2.d.length === 2 && s2 !== s1, 'nowy snapshot widzi dwie linie');
       s2.d.push({ kind: 'x' }); s2.d[0].kind = 'zmienione';
-      rec('snapshot', st.docOf('NQ', DAY).d.length === 2 && st.docOf('NQ', DAY).d[0].kind === 'trend-line', 'zmiana snapshotu nie rusza magazynu');
-      const es = st.snapshot('ES', '2024-03-13');
-      rec('snapshot', es.v === 1 && es.d.length === 0, 'dzień bez rysunków: pusty dokument');
-      rec('snapshot', st.snapshot('MNQ', DAY).d.length === 2, 'MNQ to rodzina NQ');
-      const keep = st.snapshot('NQ', DAY);
+      rec('snapshot', st.docOf('NQ').d.length === 2 && st.docOf('NQ').d[0].kind === 'trend-line', 'zmiana snapshotu nie rusza magazynu');
+      // K: rysunki per instrument na całej osi (bez dnia): instrument bez rysunków daje pusty dokument
+      const es = st.snapshot('YM');
+      rec('snapshot', es.v === 1 && es.d.length === 0, 'instrument bez rysunków: pusty dokument');
+      rec('snapshot', st.snapshot('MNQ').d.length === 2, 'MNQ to rodzina NQ');
+      const keep = st.snapshot('NQ');
       let calls = 0;
       const off = st.subscribe('NQ', () => { calls++; });
-      st.set('NQ', DAY, st.docOf('NQ', DAY));
-      st.set('NQ', DAY, { v: 1, at: new Date().toISOString(), d: [] });
+      st.set('NQ', st.docOf('NQ'));
+      st.set('NQ', { v: 1, at: new Date().toISOString(), d: [] });
       off();
-      st.set('NQ', DAY, keep); // przywrócenie dwóch linii dla kolejnych sprawdzeń
+      st.set('NQ', keep); // przywrócenie dwóch linii dla kolejnych sprawdzeń
       rec('snapshot', calls === 1, `subscribe: powiadomienie tylko przy zmianie i do wypisania (${calls})`);
       RA.close();
     });
@@ -322,7 +323,7 @@ try {
       const diskA = await getJson(`/api/backtest/session/${sid}`);
       const diskB = await getJson(`/api/backtest/session/${docB.id}`);
       rec('sesje', Object.keys(diskB.drawings || {}).length === 0, `plik sesji B bez rysunków: ${JSON.stringify(diskB.drawings)}`);
-      rec('sesje', (diskA.drawings?.NQ?.[DAY]?.d || []).length >= 1, 'plik sesji A zachował swoje rysunki');
+      rec('sesje', (diskA.drawings?.NQ?.d || []).length >= 1, 'plik sesji A zachował swoje rysunki');
       RB.close();
       const RA2 = await open(doc);
       rec('sesje', lines(RA2.charts()[0]).length >= 1 && lines(RA2.charts()[2]).length >= 1, 'po ponownym otwarciu sesji A rysunki wracają');
@@ -398,8 +399,8 @@ try {
       rec('narzedzie', after[1].time === before[1].time && after[1].price === before[1].price, 'środek dymku bez zmian');
       // zapis w pliku sesji: rodzaj callout w DrawingDoc
       await ch.rysunki().flush();
-      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); return (x.drawings?.NQ?.[DAY]?.d || []).some((d) => d.kind === 'callout') ? x : null; }, 5000);
-      rec('narzedzie', !!disk, 'callout zapisany w pliku sesji (drawings.NQ.<dzień>.d)');
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); return (x.drawings?.NQ?.d || []).some((d) => d.kind === 'callout') ? x : null; }, 5000);
+      rec('narzedzie', !!disk, 'callout zapisany w pliku sesji (K: drawings.NQ.d, jeden dokument na instrument)');
       // panel stylu: tło, ramka, tekst, rozmiar, pogrubienie
       const gear = cell.querySelector('.swc-gear');
       mgr.select([callouts()[0].id]);
@@ -503,7 +504,7 @@ try {
       rec('reczny', st('dw_def').textColor !== '#f3f3f3', `kolor tekstu tej linii (domyślny) dalej idzie za motywem: ${st('dw_def').textColor}`);
       await setTheme('onyx');
       await rys.flush();
-      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); const d = (x.drawings?.NQ?.[DAY]?.d || []).find((q) => q.id === 'dw_def'); return d && d.style.color === '#ff8800' ? d : null; }, 5000);
+      const disk = await until(async () => { const x = await getJson(`/api/backtest/session/${doc.id}`); const d = (x.drawings?.NQ?.d || []).find((q) => q.id === 'dw_def'); return d && d.style.color === '#ff8800' ? d : null; }, 5000);
       rec('reczny', !!disk, `ręczny kolor w pliku sesji: ${disk && JSON.stringify(disk.style)}`);
     });
     await section('svg', async () => {
@@ -568,7 +569,7 @@ try {
     const doc = await mk('NQ otwarcie 2024', { layout: kind === '4' ? LAY4 : LAY2, cursor: nyAt(DAY, '09:40') });
     const R = await open(doc);
     for (let i = 0; i < 6; i++) R.step(1);
-    const b = R.charts()[0].bars();
+    const b = R.charts()[0].liveBars();
     R.charts()[0].manager().add({ kind: 'trend-line', points: [{ time: b[b.length - 20][0], price: b[b.length - 20][4] }, { time: b[b.length - 2][0], price: b[b.length - 2][4] }], style: { color: '#cccccc', width: 2 } });
     await sleep(500);
   }

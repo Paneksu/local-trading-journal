@@ -5,10 +5,10 @@
 // Nie ma tu Sharpe'a, Sortino ani wariantów profit factor (nie-cel [S]): nie zmieniają żadnej decyzji dla próby kilkudziesięciu trade'ów.
 // English: backtest statistics view: R equity, edge table with a minimum-sample warning, execution (MAE/MFE) and backtest vs live.
 import { t } from './i18n.js';
-import { esc, fmtR, fmtPct, cls, shortDate, DAYS_TITLE, num } from './format.js';
+import { esc, fmtR, fmtPct, fmtMoney, cls, shortDate, DAYS_TITLE, num } from './format.js';
 import { drawEquity, drawColumns } from './charts.js';
 import { dayTags } from './bt-filtr.js';
-import { MIN_N, BY, hiddenCount, summary, equityR, edgeTable, execution, compareLive, mergeBacktest, pickSessions, sessionsOf, NO_SETUP, NO_DAYTYPE, NO_HOUR, HOUR_BEFORE, HOUR_AFTER } from './bt-staty.js';
+import { MIN_N, BY, summary, equityR, edgeTable, execution, compareLive, mergeBacktest, pickSessions, sessionsOf, NO_SETUP, NO_DAYTYPE, NO_HOUR, HOUR_BEFORE, HOUR_AFTER } from './bt-staty.js';
 
 const BY_LABEL = () => ({ setup: t('Setup'), wd: t('Dzień tygodnia'), hour: t('Godzina wejścia'), dayType: t('Typ dnia'), dir: t('Kierunek') });
 const rcls = (x) => (x > 1e-9 ? 'pos' : x < -1e-9 ? 'neg' : '');
@@ -36,10 +36,11 @@ async function defaultFeatures(client, days) {
   return new Map((r.days || []).map((f) => [f.day, f]));
 }
 
-export function mountStats(host, { client, getTrades = () => [], sessionId = null, onBack = null, loadFeatures = null } = {}) {
+// backLabel: napis przycisku powrotu (final, ocena wyglądu P3: z listy „Wróć do listy sesji”, z replayu „Wróć do sesji”)
+export function mountStats(host, { client, getTrades = () => [], sessionId = null, onBack = null, backLabel = null, loadFeatures = null } = {}) {
   const st = { scope: sessionId ? 'this' : 'all', picked: null, by: 'setup' };
-  let all = [], live = [], feats = new Map(), featsOk = true, err = null, ro = null, raf = 0, dead = false, equity = [], cols = null;
-  let fullLoaded = false, failedN = 0, hiddenN = 0;
+  let sessList = [], all = [], live = [], feats = new Map(), featsOk = true, err = null, ro = null, raf = 0, dead = false, equity = [], cols = null;
+  let fullLoaded = false, failedN = 0;
 
   const scoped = () => {
     if (st.scope === 'this') return pickSessions(all, [sessionId]);
@@ -53,8 +54,8 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
   async function build(ids) {
     const r = await client.statsSource({ ids });
     const list = r.sessions || [];
+    sessList = list;
     failedN = (r.failed || []).length;
-    hiddenN = hiddenCount(list);
     const notion = getTrades() || [];
     all = mergeBacktest(notion, list);
     live = notion.filter((x) => x.typ === 'Live' && x.counted !== false && Number.isFinite(x.r)).map((x) => ({ ...x, day: x.date }));
@@ -85,8 +86,19 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
     return `<div class="bt-st-scope"><div class="seg" role="group" aria-label="${esc(t('Zakres statystyk'))}">${b('this', t('Ta sesja'), !sessionId)}${b('picked', t('Wybrane sesje'))}${b('all', t('Wszystkie Backtest'))}</div>${pick}</div>`;
   }
 
+  // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 6: $ i % w statystykach sesji; „Backtest kontra Live” dalej w R)
+  // L: wynik w $ (suma P&L netto trade'ów z kwotą) i, dla jednej sesji, w % jej salda startowego
+  function usdLine(ts) {
+    const xs = ts.filter((x) => Number.isFinite(x.pnl));
+    if (!xs.length) return '';
+    const usd = Math.round(xs.reduce((a, x) => a + x.pnl, 0) * 100) / 100;
+    const bal = st.scope === 'this' ? sessList.find((x) => x.id === sessionId)?.def?.balance : null;
+    const pct = Number.isFinite(bal) && bal > 0 ? ` (${fmtPct((usd / bal) * 100, 2)})` : '';
+    return `${fmtMoney(usd)}${pct}`;
+  }
   function headHtml(ts) {
     const s = summary(ts);
+    const usd = usdLine(ts);
     const few = s.few
       ? `<p class="note bt-st-few" role="status">${esc(t("To dopiero {n} z {min} trade'ów. Poniżej {min} wynik łatwo jest przypadkiem: traktuj liczby jako szkic, nie jako wniosek.", { n: s.n, min: MIN_N }))}</p>`
       : '';
@@ -94,7 +106,7 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
       ${tile(t("Trade'y"), esc(String(s.n)), `${t.p('{n} wygranych', s.wins)} · ${t.p('{n} strat', s.losses)} · ${s.be} BE`)}
       ${tile(t('Skuteczność'), esc(fmtPct(s.wr, 0)), t('wygrane z rozstrzygniętych, BE poza liczeniem'))}
       ${tile(t('Średnio na trade'), `<span class="${rcls(s.avgR)}">${esc(R(s.avgR))}</span>`, t('na 1R ryzyka'))}
-      ${tile(t('Wynik'), `<span class="${rcls(s.sumR)}">${esc(R(s.sumR))}</span>`, t('suma R wszystkich trade\'ów'))}
+      ${tile(t('Wynik'), `<span class="${rcls(s.sumR)}">${esc(R(s.sumR))}</span>`, usd ? `${t('suma R wszystkich trade\'ów')} · ${usd}` : t('suma R wszystkich trade\'ów'))}
     </div>${few}`;
   }
 
@@ -161,11 +173,11 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
   function paint() {
     if (dead) return;
     const ts = scoped();
-    const notes = [failedN ? t.p('Pominięto {n} sesji z powodu błędu odczytu. Liczby ich nie obejmują.', failedN) : '', hiddenN ? t.p("Ukryto {n} trade'ów z dnia w toku (kolejność losowa: data zostaje ukryta do końca dnia).", hiddenN) : ''].filter(Boolean);
+    const notes = [failedN ? t.p('Pominięto {n} sesji z powodu błędu odczytu. Liczby ich nie obejmują.', failedN) : ''].filter(Boolean);
     // H2 (ocena wyglądu #9): ten sam tytuł i podtytuł zakresu niezależnie od drogi wejścia (lista, „Sesja ukończona”)
     const scopeName = st.scope === 'this' ? (sessionsOf(all).find((x) => x.id === sessionId)?.name || t('Ta sesja')) : st.scope === 'picked' ? t('Wybrane sesje') : t('Wszystkie Backtest');
     // H2 #9: nagłówek strony jak „Statystyki” dashboardu (h1 + podtytuł zakresu, .page-head)
-    const top = `<header class="page-head bt-st-head"><div><h1>${esc(t('Statystyki backtestu'))}</h1><p class="page-sub bt-st-sub">${esc(scopeName)} · ${esc(t.p("{n} trade'ów", ts.length))}</p></div>${onBack ? `<div class="sec-ctl"><button type="button" class="btn" data-st="back">${esc(t('Wróć do sesji'))}</button></div>` : ''}</header>${scopeHtml()}${notes.map((x) => `<p class="note bt-st-notice" role="status">${esc(x)}</p>`).join('')}`;
+    const top = `<header class="page-head bt-st-head"><div><h1>${esc(t('Statystyki backtestu'))}</h1><p class="page-sub bt-st-sub">${esc(scopeName)} · ${esc(t.p("{n} trade'ów", ts.length))}</p></div>${onBack ? `<div class="sec-ctl"><button type="button" class="btn" data-st="back">${esc(backLabel || t('Wróć do listy sesji'))}</button></div>` : ''}</header>${scopeHtml()}${notes.map((x) => `<p class="note bt-st-notice" role="status">${esc(x)}</p>`).join('')}`;
     if (err) { host.innerHTML = `${top}<div class="card empty err"><h3>${esc(t('Nie udało się policzyć statystyk'))}</h3><p>${esc(t('Sprawdź, czy dashboard działa.'))}</p></div>`; return; }
     if (!ts.length) {
       host.innerHTML = `${top}<div class="card empty"><h3>${esc(t("Brak ukończonych trade'ów w tym zakresie"))}</h3><p>${esc(t("Statystyki pojawią się po zamknięciu pierwszego trade'a w replayu."))}</p></div>`;

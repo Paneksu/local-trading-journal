@@ -75,16 +75,33 @@ export default ({ test, H, assert, ROOT }) => {
     return R;
   }
 
-  test('backtest-E2: Zakończ dzień wysyła trade\'y dnia', async () => {
+  // K (31.10.2026): zastępuje „backtest-E2: Zakończ dzień wysyła trade'y dnia”. [U] 31.10.2026 «od razu»: każdy zamknięty trade idzie do Notion (także bez opisu
+  // i z innych dni), a opis zapisany później aktualizuje tę samą stronę (PATCH, bez drugiej strony).
+  test('backtest-K: trade od razu w atrapie Notion, opis później aktualizuje tę samą stronę', async () => {
     const R = await rig(5602);
     try {
       const dw = await drawing('a');
-      R.store.save(SID, session([trade(1, { drawings: dw }), trade(2), trade(3, { be: true, setup: '' }), trade(4, { day: DAY2 })]), 0);
-      const res = await R.sync.push({ sessionId: SID, day: DAY1 });
-      assert.deepEqual([res.sent, res.skipped, res.failed.length], [3, 0, 0], JSON.stringify(res.failed));
-      assert.equal(res.pending, 1, 'trade drugiego dnia czeka');
+      R.store.save(SID, session([trade(1, { drawings: dw }), trade(2), trade(3, { be: true, setup: '' }), trade(4, { day: DAY2, setup: '', notes: '', journal: 'todo' })]), 0);
+      const res = await R.sync.push({ sessionId: SID });
+      assert.deepEqual([res.sent, res.skipped, res.failed.length], [4, 0, 0], JSON.stringify(res.failed));
+      assert.equal(res.pending, 0, 'bez czekania na koniec dnia i na opis');
       const pages = await R.pages();
-      assert.equal(pages.length, 3);
+      assert.equal(pages.length, 4);
+      const p4 = pages.find((p) => R.text(p, 'Sesja backtestu').endsWith('/t4]'));
+      assert.equal(p4.p.Setup?.select ?? null, null, 't4 wysłany bez opisu');
+      // opis później: ta sama strona dostaje setup i notatkę
+      const d0 = R.store.read(SID);
+      const t4 = d0.trades.find((x) => x.id === 't4');
+      Object.assign(t4, { setup: 'Pullback', notes: 'opis po zamknięciu', journal: 'done', jEdited: Date.now() });
+      R.store.save(SID, d0, d0.rev);
+      const res2 = await R.sync.push({ sessionId: SID });
+      assert.deepEqual([res2.sent, res2.failed.length], [1, 0], JSON.stringify(res2.failed));
+      const pages2 = await R.pages();
+      assert.equal(pages2.length, 4, 'bez drugiej strony');
+      const q4 = pages2.find((p) => p.id === p4.id);
+      assert.equal(q4.p.Setup.select.name, 'Pullback'); assert.equal(R.text(q4, 'Notatki'), 'opis po zamknięciu');
+      assert.ok(R.calls.some((c) => c.startsWith('PATCH /v1/pages/')), 'PATCH istniejącej strony');
+      const pages3 = pages;
       const p1 = pages.find((p) => R.text(p, 'Sesja backtestu') === 'CPI 2024 [bt-k3f9x2abc/t1]');
       assert.ok(p1, 'znacznik sesji w polu');
       assert.equal(R.text(p1, 'Trade'.trim()) || p1.p.Trade.title.map((x) => x.text?.content ?? x.plain_text).join(''), 'Backtest NQ Long 2024-03-12');
@@ -105,13 +122,12 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal(p3.p.BE.number, 18003, 'BE = cena wejścia');
       assert.equal(p3.p.Setup?.select ?? null, null, 'bez setupu pole puste');
       const doc = R.store.read(SID);
-      for (const x of doc.trades.filter((y) => y.day === DAY1)) {
+      for (const x of doc.trades) {
         assert.equal(x.notion.state, 'sent', x.id);
-        assert.ok(pages.some((p) => p.id === x.notion.id), `${x.id}: notion.id = strona`);
+        assert.ok(pages3.some((p) => p.id === x.notion.id), `${x.id}: notion.id = strona`);
       }
-      assert.equal(doc.trades[3].notion.state, 'pending');
-      assert.equal(doc.rev, 1, 'wysyłka nie podbija wersji pliku (karta przeglądarki zapisuje dalej bez 409)');
-      assert.equal(R.sync.pending(SID), 1);
+      assert.equal(doc.rev, 2, 'wysyłka nie podbija wersji pliku (podbił ją tylko zapis opisu)');
+      assert.equal(R.sync.pending(SID), 0);
       assert.deepEqual(await R.A.get('/__test/violations'), []);
     } finally { R.A.stop(); }
   });
@@ -204,7 +220,9 @@ export default ({ test, H, assert, ROOT }) => {
     assert.deepEqual(buildTradeProps({ btMae: -0.5, btMfe: 1.5 }, sch, [], { creating: false }, T), { P_btMae: { number: -0.5 }, P_btMfe: { number: 1.5 } });
     assert.deepEqual(buildTradeProps({ btMae: null, btMfe: null }, sch, [], { creating: false }, T), {}, 'null pomija pole');
     assert.throws(() => buildTradeProps({ btMae: 'abc' }, sch, [], { creating: false }, T), (e) => e.status === 400 && !!e.fields.btMae);
-    assert.throws(() => buildTradeProps({ btMae: -0.5, btMfe: 1 }, schOf({ title: 'title' }), [], { creating: false }, T), (e) => /nie ma jeszcze pola „MAE \(R\)”/.test(e.fields.btMae) && /„MFE \(R\)”/.test(e.fields.btMfe));
+    assert.throws(() => buildTradeProps({ btMae: -0.5, btMfe: 1 }, schOf({ title: 'title' }), [], { creating: false }, T), (e) => /brakuje pól: MAE \(R\), MFE \(R\)\. Uruchom aktualizację/.test(e.fields.btMae) && e.fields.btMfe === e.fields.btMae);
+    // final (P2-3): jedno brakujące pole: dotychczasowy komunikat
+    assert.throws(() => buildTradeProps({ btMae: -0.5 }, schOf({ title: 'title' }), [], { creating: false }, T), (e) => /nie ma jeszcze pola „MAE \(R\)”/.test(e.fields.btMae));
     // trade wysłany przez push ma MAE/MFE w atrapie, a normalizeTrades oddaje je jako liczby
     const R = await rig(5606);
     try {
@@ -304,16 +322,16 @@ export default ({ test, H, assert, ROOT }) => {
       const r = await H.dash(base, '/api/backtest/notion', { sessionId });
       assert.equal(r.status, 400, `${JSON.stringify(sessionId)} → ${r.status}`);
     }
-    assert.equal((await H.dash(base, '/api/backtest/notion', { sessionId: 'bt-trasa0001', day: '2024-13-45x' })).status, 400, 'zły dzień');
     assert.equal((await H.dash(base, '/api/backtest/notion', { sessionId: 'bt-nieistnieje' })).status, 404);
     assert.equal((await U.A.get('/__test/pages?ds=trades')).filter((p) => p.p.Typ?.select?.name === 'Backtest' && (p.p['Sesja backtestu']?.rich_text || []).length).length, 0);
-    const ok = await H.dash(base, '/api/backtest/notion', { sessionId: 'bt-trasa0001' });
+    // K: pole day ze starej karty przeglądarki jest ignorowane (tryb dnia usunięty, [U] 31.10.2026 «od razu»)
+    const ok = await H.dash(base, '/api/backtest/notion', { sessionId: 'bt-trasa0001', day: '2024-13-45x' });
     assert.equal(ok.status, 200, JSON.stringify(ok.j));
     assert.deepEqual([ok.j.sent, ok.j.pending], [1, 0]);
     assert.equal(ok.j.notion.t1.state, 'sent');
   });
 
-  test('backtest-E2: zapis bez kończenia dnia', async () => {
+  test('backtest-E2: zapis przyciskiem i od razu po zamknięciu (K)', async () => {
     const U = await uiResult(5610);
     const P = await lib('testy/przegladarka.mjs');
     if (!P.findBrowser()) { console.log('  (pominięty: brak Chrome/Edge)'); return; }
@@ -324,12 +342,12 @@ export default ({ test, H, assert, ROOT }) => {
       assert.ok(!res.fatal, res.fatal);
       assert.deepEqual(res.checks.filter((c) => !c.ok).map((c) => `${width}: ${c.tag}: ${c.msg}`), []);
       assert.ok(res.checks.filter((c) => c.tag === 'przycisk').length >= 4, 'strona sprawdziła przycisk');
-      assert.ok(res.checks.filter((c) => c.tag === 'koniec dnia').length >= 3, 'strona sprawdziła koniec dnia');
+      assert.ok(res.checks.filter((c) => c.tag === 'od razu').length >= 3, 'strona sprawdziła wysyłkę od razu po zamknięciu (K)');
       assert.equal(res.checks.filter((c) => c.tag === 'szerokość').length, 1);
     }
     const pages = (await U.A.get('/__test/pages?ds=trades')).filter((p) => (p.p['Sesja backtestu']?.rich_text || []).length);
     const marks = pages.map((p) => p.p['Sesja backtestu'].rich_text.map((x) => x.text?.content ?? x.plain_text).join(''));
-    // sesja 1: t1 i t2 przyciskiem (t2 bez opisu też, bo „Zapisz do Notion” wysyła wszystkie zaległe); sesja 2: t1 dnia kończonego
+    // sesja 1: t1 i t2 (wysłane od razu albo przyciskiem); sesja 2: t1 od razu po zamknięciu, opis później tą samą stroną
     assert.equal(marks.filter((m) => m.includes('bt-uinotion1/')).length, 2, marks.join(' | '));
     assert.equal(marks.filter((m) => m.includes('bt-uinotion2/')).length, 1, marks.join(' | '));
     U.stop();
@@ -349,7 +367,9 @@ export default ({ test, H, assert, ROOT }) => {
     const out = sanitizeSettings({ bt: C.sanitizeBt({ ...C.btDefaults(), sessionsCopy: r.copy }) });
     assert.deepEqual(out.bt.sessionsCopy, r.copy, 'sanitizeSettings zachowuje bt.sessionsCopy bez zmian');
     const back = C.sanitizeBt(out.bt).sessionsCopy;
-    assert.deepEqual(back.map((x) => [x.id, x.name, C.defFromCopy(x.def)]), sessions.map((x) => [x.id, x.name, x.def]), 'odtworzenie definicji z kopii');
+    // K: kopia bez daty końca, kolejności i ziarna ([U] 31.10.2026 «Do końca danych», «Filtr jako skok»)
+    const strip = ({ to, order, seed, ...rest }) => rest;
+    assert.deepEqual(back.map((x) => [x.id, x.name, C.defFromCopy(x.def)]), sessions.map((x) => [x.id, x.name, strip(x.def)]), 'odtworzenie definicji z kopii');
     assert.ok(!JSON.stringify(r.copy).includes('pool'), 'bez puli');
     // kopia większa niż 30 000 znaków jest pominięta (sesje tylko lokalnie)
     const many = Array.from({ length: 40 }, (_, i) => ({ id: `bt-many${String(i).padStart(4, '0')}`, name: `S${i}`, def: { ...def, excluded: excluded.slice(0, 200) } }));

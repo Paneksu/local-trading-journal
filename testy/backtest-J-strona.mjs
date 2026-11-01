@@ -40,7 +40,8 @@ export default ({ test, H, assert, ROOT }) => {
   test('backtest-J: drugi wykres nie kasuje konta wpisanego w rysunku sprzed J', () => tagged('replay', 'drugi', 4));
   test('backtest-J: Live: napis R:R zostaje, gdy R:R nie ma w podpisie środka', () => tagged('live', 'rr', 4));
   test('backtest-J: Live: rysunek sprzed J: konto wpisane zostaje po wczytaniu i Ctrl+Z, domyślne paczki znikają', () => tagged('live', 'stary', 5));
-  test('backtest-J: blokady wejścia z rysunku (brak SL, cofnięty kursor, dzień zakończony) i skrót D', () => tagged('replay', 'blokady', 6));
+  // K (31.10.2026): bez blokady „dzień zakończony” (nie ma końca dnia)
+  test('backtest-J: blokady wejścia z rysunku (brak SL, cofnięty kursor) i skrót D', () => tagged('replay', 'blokady', 5));
   test('backtest-J: Live: podpisy po zaznaczeniu, ceny na osi', () => tagged('live', 'podpisy', 5));
   test('backtest-J: Live: panel Wejścia/Styl/Podpisy, kompaktowy, zawsze pokazuj, pamięć stylu', () => tagged('live', 'panel', 12));
   test('backtest-J: Live: pozycja z pól trade\'a bez zmyślonej ilości', () => tagged('live', 'trade', 3));

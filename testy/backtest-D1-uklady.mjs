@@ -67,6 +67,9 @@ export default ({ test, H, assert, ROOT }) => {
     assert.ok(/typeof ctx\.saveDoc === 'function'/.test(src), 'saveDoc tylko gdy podane (funkcja)');
     assert.ok(/fetch\('\/api\/drawings\/save'/.test(src), 'zapis do Notion przez /api/drawings/save zostaje domyślny');
     const wy = await fs.readFile(path.join(ROOT, 'public/js/wykres.js'), 'utf8');
-    assert.ok(!/saveDoc/.test(wy), 'edytor trade\'a Live nie przekazuje saveDoc');
+    // L (31.10.2026): edytor przekazuje saveDoc tylko z opcji (Journal backtestu); Live (app.js) go nie podaje, więc zapis idzie do Notion jak dotąd
+    assert.ok(/\.\.\.\(saveDoc \? \{ saveDoc \} : \{\}\)/.test(wy), 'edytor trade\'a przekazuje saveDoc tylko, gdy podane');
+    const app = await fs.readFile(path.join(ROOT, 'public/js/app.js'), 'utf8');
+    assert.ok(!/saveDoc/.test(app), 'Live (app.js) nie podaje saveDoc');
   });
 };

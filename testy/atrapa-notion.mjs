@@ -175,6 +175,9 @@ function tradeProps(o) {
   }
   // wpis bez tytułu, jak w prawdziwej bazie
   pages.trades.push(mkPage('trades', randomUUID(), tradeProps({ name: '', typ: 'Backtest', date: '2023-07-11', instrument: 'NQ', dir: 'Long', setup: 'MECH MODEL', r: 1 })));
+  // N1 (baner DEMO): ATRAPA_DEMO=n dodaje n trade'ów Live z prefiksem „DEMO · ”, jak wpisy przykładowe z kreatora (tylko w atrapie)
+  const demoN = Number(process.env.ATRAPA_DEMO) || 0;
+  for (let i = 0; i < demoN; i++) pages.trades.push(mkPage('trades', randomUUID(), tradeProps({ name: `DEMO · Przykład ${i + 1}`, typ: 'Live', date: addDays(today, -1 - i) + 'T15:3' + i, instrument: 'NQ', dir: 'Long', setup: 'Range', session: 'Nowy Jork', r: 1, pnl: 250, konta: [kontaIds[0]] })));
 })();
 
 // pole „Wyjście” istnieje dopiero po dodaniu go do schematu (jak w prawdziwej bazie przed uruchomieniem skryptu)
@@ -230,6 +233,7 @@ const UNSUPPORTED_VIEWS = new Set(String(process.env.ATRAPA_VIEWS_BEZ || '').spl
 const findLoose = (id) => (shared ? [...loosePages.values()].find((p) => sameId(p.id, id)) : null);
 let shared = !process.env.ATRAPA_NIEUDOSTEPNIONA; // czy użytkownik dodał integrację do strony nadrzędnej („Connections”)
 let failRule = null;
+let delayRule = null;
 // po cofnięciu udostępnienia (/__test/share {shared:false}) bazy i strony pod stroną nadrzędną są niewidoczne, jak w Notion (404)
 const visibleDs = (d) => (d && (shared || !d.parentPage) ? d : null);
 const sameId = (a, b) => String(a || '').replace(/-/g, '') === String(b || '').replace(/-/g, '');
@@ -324,6 +328,8 @@ http.createServer(async (req, res) => {
   if (failRule && !p.startsWith('/__test/') && `${req.method} ${p}`.includes(failRule.match)) {
     if (failRule.after-- <= 0) { const st = failRule.status || 500; failRule = null; return send(res, st, { object: 'error', code: 'internal_server_error', message: 'Atrapa: wstrzyknięta awaria' }); }
   }
+  // N5 (1.6.0): wolna odpowiedź (test blokady w trakcie kopii baz): POST /__test/delay { match, ms }
+  if (delayRule && !p.startsWith('/__test/') && `${req.method} ${p}`.includes(delayRule.match)) await new Promise((r) => setTimeout(r, delayRule.ms));
   // pliki wgrane przez File Upload API: adres z bloku obrazu (jak tymczasowy adres S3, bez nagłówka Authorization)
   let m;
   // strona w bazie ma bloki treści w osobnej mapie (obiekt strony w odpowiedziach API nie ma pola children)
@@ -401,6 +407,7 @@ http.createServer(async (req, res) => {
     return send(res, 200, { id: newPageId, dsIds: Object.fromEntries([...dsMap.entries()]) });
   }
   if (p === '/__test/fail' && req.method === 'POST') { failRule = await body(req); return send(res, 200, { ok: true }); }
+  if (p === '/__test/delay' && req.method === 'POST') { const b = await body(req); delayRule = b.ms ? { match: String(b.match || ''), ms: Math.min(10000, Number(b.ms)) } : null; return send(res, 200, { ok: true }); }
   if (p === '/__test/share' && req.method === 'POST') { const b = await body(req); shared = b.shared !== false; return send(res, 200, { ok: true, shared }); }
   if (p === '/__test/loose') return send(res, 200, [...loosePages.values()]);
   if (p === '/__test/writes') return send(res, 200, log.filter((l) => !/^GET /.test(l) && !/\/query$/.test(l) && l !== 'POST /v1/search' && !l.includes('/__test/')));

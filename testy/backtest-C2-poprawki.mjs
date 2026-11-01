@@ -37,7 +37,8 @@ export default ({ test, H, assert, ROOT }) => {
   }
 
   test('backtest-C2: MAE/MFE i wejście bez świecy w budowie (kursor w środku świecy)', () => tagged('wyrownanie', 3));
-  test('backtest-C2: pozycja nie przechodzi na następny dzień', () => tagged('dzien', 4));
+  // K (31.10.2026): zastępuje „backtest-C2: pozycja nie przechodzi na następny dzień”
+  test('backtest-K: pozycja i zlecenie przechodzą przez noc, skok dnia bez pytania (ekran)', () => tagged('noc', 6));
   test('backtest-C2: zamknięcie to jeden zapis, pagehide przy zapisie w toku', () => tagged('zapis', 4));
   test('backtest-C2: przytrzymany klawisz nie mnoży zleceń', () => tagged('powtorzenie', 3));
   test('backtest-C2: 409 zatrzymuje handel z komunikatem', () => tagged('stale', 2));

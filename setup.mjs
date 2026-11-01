@@ -25,6 +25,10 @@ const { createNotion } = await import('./lib/notion.mjs');
 const { createWorkspace, removeDemo, pageIdFromUrl, DEMO_PREFIX } = await import('./lib/workspace.mjs');
 const { loadSchemaFile, SCHEMA_VERSION } = await import('./lib/version.mjs');
 const { writeShortcut } = await import('./lib/wizard.mjs');
+const { DEFAULTS_MARK } = await import('./lib/config-migracje.mjs');
+// Poprawki po review N1–N4 (P2-1): instalacja z terminala tworzy config.local.json przed pierwszym startem serwera; znacznik nowych wartości domyślnych
+// zapisany w nowym pliku sprawia, że serwer nie traktuje jej jak istniejącej (okno 1s NQ zostaje wyłączone, decyzja 4)
+const freshConfig = !configExists();
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -159,6 +163,7 @@ let result;
 try {
   // postęp zapisywany w config.local.json: przerwaną instalację wznowi ponowne uruchomienie z tą samą stroną
   const pcfg = loadConfig();
+  if (freshConfig && !pcfg.defaultsUpgraded) pcfg.defaultsUpgraded = DEFAULTS_MARK;
   if (!pcfg.setupProgress || pcfg.setupProgress.parentPageId !== parentId || pcfg.setupProgress.lang !== lang) pcfg.setupProgress = {};
   result = await createWorkspace(notion, { schema: loadSchemaFile(), parentPageId: parentId, lang, demo, state: pcfg.setupProgress, save: () => saveConfig(pcfg), log: (k, s) => { if (s) console.log(`  + ${labels[k] || k}: ${s}`); } });
 } catch (e) {
@@ -174,6 +179,7 @@ saveEnv({
 const cfg = loadConfig();
 Object.assign(cfg, { schemaVersion: SCHEMA_VERSION, lang, updateCheck: cfg.updateCheck !== false, fields: result.fields, options: {}, databases: result.dbIds, views: result.views, rootPageId: result.rootPageId, onboarded: false });
 delete cfg.legacy; delete cfg.setupProgress;
+if (freshConfig && !cfg.defaultsUpgraded) cfg.defaultsUpgraded = DEFAULTS_MARK;
 saveConfig(cfg);
 // skrót do strony w Notion (plik lokalny, w .gitignore)
 const shortcut = path.join(CONFIG_DIR, L('Otwórz journal w Notion.url', 'Open journal in Notion.url'));

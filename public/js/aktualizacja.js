@@ -456,7 +456,8 @@ export function createUpdater({ getMeta = () => ({}) } = {}) {
     else if (info.available) line = info.skipped ? t('Dostępna wersja {v} (pominięta).', { v: info.latest }) : t('Dostępna wersja {v}.', { v: info.latest });
     else line = t('Masz najnowszą wersję.');
     const when = info?.checkedAt ? ` ${t('Sprawdzono {time}.', { time: new Date(info.checkedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) })}` : '';
-    return `<div class="sp-f"><span class="lbl">${esc(t('Aktualizacje'))}</span>
+    // final (ocena wyglądu P3): bez drugiej etykiety „Aktualizacje”; nagłówek ma już karta grupy w Ustawieniach (ust-diag.js)
+    return `<div class="sp-f">
       <p class="upd-line">${esc(t('Wersja {v}', { v: m.version || '?' }))} · ${esc(line)}${esc(when)}</p>
       <div class="upd-actions"><button type="button" class="btn sm" data-act="upd-check-now" data-fk="upd-now" ${checking ? 'disabled' : ''}>${esc(t('Sprawdź teraz'))}</button>${info?.restartNeeded ? `<button type="button" class="btn primary sm" data-act="upd-open" data-fk="upd-open">${esc(t('Uruchom ponownie'))}</button>` : ''}${info?.available && info.latest ? `<button type="button" class="btn primary sm" data-act="upd-open" data-fk="upd-open">${esc(t('Zobacz wersję {v}', { v: info.latest }))}</button>` : ''}</div></div>`;
   }

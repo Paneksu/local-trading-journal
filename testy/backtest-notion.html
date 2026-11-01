@@ -46,8 +46,8 @@ try {
   const mk = async (id, trades) => {
     const doc = newSessionDoc({
       id, name: `UI ${id}`,
-      def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
-      pool: [DAY1, DAY2], now: Date.now(),
+      def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
     });
     doc.trades = trades;
     await client.create(doc);
@@ -80,20 +80,20 @@ try {
     const x = R.doc().trades[0];
     rec('panel', !jr.isConnected && x.setup === 'FVG OB' && x.jEdited > 0, `zapisany: ${x.setup}, jEdited ${x.jEdited}`);
     btn('notion').click();
-    rec('panel', await until(() => label() === 'Niezapisane w Notion: 0'), `po wysyłce: „${label()}”`);
+    rec('panel', await until(() => label() === 'Notion: zapisane'), `po wysyłce: „${label()}”`);
     R.close();
     await sleep(100);
-    // timer: bieżący, niezakończony dzień nigdy nie wychodzi automatycznie
+    // timer: trade jeszcze nie próbowany nie wychodzi z timera (K: pierwsza próba idzie od razu po zamknięciu)
     const R1 = openReplay(document.body, { sessionId: 'bt-uitimer01', client, notionEveryMs: 100 });
     await R1.ready;
     await sleep(800);
-    rec('timer', label() === 'Niezapisane w Notion: 1', `bieżący dzień po 800 ms: „${label()}”`);
+    rec('timer', label() === 'Niezapisane w Notion: 1', `nie próbowany po 800 ms: „${label()}”`);
     R1.close();
     await sleep(100);
-    // timer: próbowany trade zakończonego dnia jest ponawiany
+    // timer: trade już próbowany z błędem przejściowym jest ponawiany
     const R2 = openReplay(document.body, { sessionId: 'bt-uitimer02', client, notionEveryMs: 100 });
     await R2.ready;
-    rec('timer', await until(() => label() === 'Niezapisane w Notion: 0'), `zakończony dzień: „${label()}”`);
+    rec('timer', await until(() => label() === 'Notion: zapisane'), `próbowany z błędem: „${label()}”`);
     R2.close();
     out.textContent = JSON.stringify({ checks });
   } else {
@@ -105,30 +105,38 @@ try {
   rec('przycisk', !btn('notion').disabled, 'przycisk aktywny przy zaległych');
   rec('szerokość', noScroll(), `pasek bez poziomego przewijania przy ${window.innerWidth} px (scrollWidth ${document.documentElement.scrollWidth})`);
   btn('notion').click();
-  const zero = await until(() => label() === 'Niezapisane w Notion: 0');
+  const zero = await until(() => label() === 'Notion: zapisane');
   rec('przycisk', zero, `licznik po wysyłce: „${label()}”`);
   rec('przycisk', btn('notion').disabled, 'przycisk nieaktywny bez zaległych');
   const d1 = await onDisk('bt-uinotion1' + suf);
   rec('przycisk', d1.trades.every((x) => x.notion?.state === 'sent' && x.notion.id), `plik sesji: ${JSON.stringify(d1.trades.map((x) => x.notion))}`);
-  rec('przycisk', d1.days?.[DAY1]?.status !== 'done' && R.doc().dayIdx === 0 && btn('end-day').textContent === 'Zakończ dzień', 'dzień trwa dalej');
+  rec('przycisk', !btn('end-day') && R.cursor() === nyAt(DAY1, '09:00'), 'K: bez „Zakończ dzień”, kursor bez zmian');
   R.close();
   await sleep(100);
 
-  // 2) „Zakończ dzień” wysyła trade'y dnia
-  await mk('bt-uinotion2' + suf, [trade(1)]);
+  // 2) K (31.10.2026) [U] «od razu»: trade idzie do Notion zaraz po zamknięciu pozycji (bez opisu), opis później aktualizuje tę samą stronę (zastępuje „Zakończ dzień wysyła trade'y dnia”)
+  await mk('bt-uinotion2' + suf, []);
   const R2 = openReplay(document.body, { sessionId: 'bt-uinotion2' + suf, client, notionEveryMs: 0 });
   await R2.ready;
-  rec('koniec dnia', label() === 'Niezapisane w Notion: 1', `licznik: „${label()}”`);
-  await R2.endDay();
-  const zero2 = await until(() => label() === 'Niezapisane w Notion: 0');
-  rec('koniec dnia', zero2, `licznik po zakończeniu dnia: „${label()}”`);
-  const d2 = await until(async () => { const d = await onDisk('bt-uinotion2' + suf); return d.trades[0].notion?.state === 'sent' ? d : null; });
-  rec('koniec dnia', d2 && d2.days?.[DAY1]?.status === 'done', `plik sesji: dzień ${d2?.days?.[DAY1]?.status}, trade ${JSON.stringify(d2?.trades?.[0]?.notion)}`);
+  const P2 = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P2(`[name="${name}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  setF('sl', '300'); setF('tp', ''); setF('qty', '1');
+  P2('[data-o="buy"]').click();
+  await R2.goTo(nyAt(DAY1, '09:10'));
+  P2('[data-o="close"]').click();
+  const sent = await until(async () => { const d = await onDisk('bt-uinotion2' + suf); return d.trades[0]?.notion?.state === 'sent' ? d : null; });
+  rec('od razu', sent && sent.trades[0].journal === 'todo', `trade wysłany od razu po zamknięciu, jeszcze bez opisu: ${JSON.stringify(sent?.trades?.[0]?.notion)}`);
+  rec('od razu', await until(() => label() === 'Notion: zapisane'), `licznik po zamknięciu: „${label()}”`);
+  const jr = await until(() => scr().querySelector('.bt-jr'));
+  const inp = jr?.querySelector('[name="setup"]');
+  inp.value = 'Breakout'; inp.dispatchEvent(new Event('input', { bubbles: true })); enter(inp);
+  const upd = await until(async () => { const d = await onDisk('bt-uinotion2' + suf); const x = d.trades[0]; return x.setup === 'Breakout' && x.notion?.state === 'sent' && x.notion.edited === x.jEdited ? d : null; });
+  rec('od razu', upd && upd.trades[0].notion.id === sent?.trades?.[0]?.notion?.id, 'opis zapisany po wysyłce aktualizuje tę samą stronę (to samo id)');
   // kolejny zapis stanu z przeglądarki (wysyłka nie podbiła wersji, więc bez 409) nie kasuje id strony
   R2.step(1);
   await sleep(1500);
   const d3 = await onDisk('bt-uinotion2' + suf);
-  rec('koniec dnia', !scr().querySelector('.bt-stale:not([hidden])') && d3.trades[0].notion?.state === 'sent', `po zapisie z przeglądarki: ${JSON.stringify(d3.trades[0].notion)}`);
+  rec('od razu', !scr().querySelector('.bt-stale:not([hidden])') && d3.trades[0].notion?.state === 'sent', `po zapisie z przeglądarki: ${JSON.stringify(d3.trades[0].notion)}`);
   R2.close();
   out.textContent = JSON.stringify({ checks });
   }

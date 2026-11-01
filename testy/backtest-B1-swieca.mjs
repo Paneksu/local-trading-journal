@@ -13,11 +13,14 @@ export default ({ test, H, assert, ROOT }) => {
     if (cache.has(k)) return cache.get(k);
     const { syntheticDay } = await imp('testy/bt-dane-syntetyczne.mjs');
     const { createCandles } = await imp('lib/candles.mjs');
-    const { createReplayDay } = await imp('lib/backtest-day.mjs');
+    // K (31.10.2026): strumień bazowy z API zakresu (lib/backtest-range.mjs) zamiast dnia replayu, ten sam zakres co dawny kontekst dnia
+    const { createReplayRange } = await imp('lib/backtest-range.mjs');
+    const { dayRange } = await imp('testy/bt-dane-syntetyczne.mjs');
     const baseDir = H.tmp();
     await syntheticDay(baseDir, { instrument: 'NQ', day: DAY, seed: 11, ...opts });
     const candles = createCandles({ getKey: () => null, getConfig: () => ({}), baseDir });
-    const r = await createReplayDay({ candles, news: noNews, earnings: noNews }).read({ instruments: ['NQ'], day: DAY });
+    const w = await dayRange(DAY);
+    const r = { ...createReplayRange({ candles, news: noNews, earnings: noNews, baseDir }).read({ instruments: ['NQ'], from: w.ctxFrom, to: w.end, tf: 'base' }), times: w };
     cache.set(k, r);
     return r;
   }
@@ -96,7 +99,7 @@ export default ({ test, H, assert, ROOT }) => {
     const { mergeBase, candlesAt } = await mod();
     const g0 = ny(10, 0, 5), g1 = ny(10, 0, 20);
     const r = await dayOf({ gaps: [[g0, g1]] }), q = r.inst.NQ;
-    assert.equal(q.has1s, true);
+    assert.deepEqual(q.real1s, [[r.times.open, r.times.w1sEnd]], 'pokrycie 1s bez dziury (K: has1s z dnia zastąpione pokryciem zakresu)');
     const st = mergeBase(q.m1, q.s1, q.real1s);
     assert.ok(!st.bars.some((b) => b[0] >= g0 && b[0] < g1));
     const at = (C) => candlesAt(st, '1s', C);

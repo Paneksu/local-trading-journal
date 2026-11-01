@@ -14,7 +14,9 @@ export default ({ test, H, assert, ROOT }) => {
   const calls = async (A, name) => (await A.log()).log.filter((e) => e.path.endsWith(name));
 
   // createCandles bezpośrednio na atrapie; zegar sterowany z testu (domyślnie 27.10.2026 12:00Z, atrapa kończy dane o 10:00Z).
-  async function direct({ cfg = {}, clock = Date.UTC(2026, 9, 27, 12), atrapa = {}, fetchImpl } = {}) {
+  // N4 (1.6.0): domyślnie instalacja z wpisanym kredytem (H.TEST_CREDIT); cfg bez chartCredit = kredyt z testu
+  async function direct({ cfg: cfg0 = {}, clock = Date.UTC(2026, 9, 27, 12), atrapa = {}, fetchImpl } = {}) {
+    const cfg = 'chartCredit' in cfg0 ? cfg0 : { chartCredit: { ...H.TEST_CREDIT }, ...cfg0 };
     const A = await H.atrapaDb(++port);
     if (Object.keys(atrapa).length) await A.config(atrapa);
     const old = process.env.DATABENTO_API_BASE;
@@ -104,7 +106,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal(q.pending, 0); assert.equal(q.reason, null);
       assert.equal((await calls(R.A, 'get_range')).length, 4);
       assert.deepEqual((await R.A.log()).violations, []);
-      assert.equal(R.C.credit().spentUsd, 1.62, 'kredyt liczy faktycznie pobrane okna');
+      assert.equal(R.C.credit().spentUsd, 1.6, 'kredyt liczy faktycznie pobrane okna');
       const read = R.C.read({ instrument: 'ES', from: String(wNew.from), to: String(wNew.to), tf: '1s' });
       assert.equal(read.layer, '1s'); assert.equal(read.bars.length, 30); assert.deepEqual(read.missing, []);
     } finally { R.stop(); }
@@ -160,15 +162,16 @@ export default ({ test, H, assert, ROOT }) => {
   const A_cost = (R, cost, costs = []) => R.A.reset().then(() => R.A.config({ ...(cost != null ? { cost } : {}), costs }));
 
   test('wykresy-04: P25: strażnik kredytu: po dacie wygaśnięcia odrzut (fetch i kolejka), dzień przed jeszcze działa; edycja kredytu i daty z walidacją; komentarz z datą i cytatem P25', async () => {
-    const R = await direct({ clock: Date.UTC(2027, 3, 26, 0, 0, 0), atrapa: { cost: 0.01 } });
+    // poprawki po review N1–N4: kredyt testowy z własną datą wygaśnięcia (bez dat prawdziwego konta)
+    const R = await direct({ cfg: { chartCredit: { startUsd: 100, expires: '2031-03-14', spentUsd: 0 } }, clock: Date.UTC(2031, 2, 14, 0, 0, 0), atrapa: { cost: 0.01 } });
     try {
       const body = { instrument: 'ES', from: String(D26), to: String(D26 + 3600), confirmedCostUsd: 0.01 };
-      await assert.rejects(R.C.fetchDays(body), (e) => e.code === 'credit-expired' && /2027-04-26/.test(e.message));
+      await assert.rejects(R.C.fetchDays(body), (e) => e.code === 'credit-expired' && /2031-03-14/.test(e.message));
       R.C.enqueue({ windows: [win(D26 + 14 * 3600, D26 + 14 * 3600 + 1800)] });
       await R.C.tick();
       assert.equal(R.C.status().queue.reason, 'credit'); assert.equal(R.C.status().queue.pending, 1, 'okno zostaje w kolejce');
       assert.equal((await calls(R.A, 'get_range')).length, 0);
-      R.st.clock = Date.UTC(2027, 3, 25, 23, 59, 59);
+      R.st.clock = Date.UTC(2031, 2, 13, 23, 59, 59);
       assert.equal((await R.C.fetchDays(body)).started, true); await R.idle();
       assert.equal(R.C.status().error, null);
       // edycja
@@ -200,7 +203,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal((await R.C.importHistory({ instrument: 'ES', from, chunk: 'month', confirmedCostUsd: 0.006 })).started, true); await R.idle();
       assert.equal(R.C.status().error.code, 'rate-limit'); assert.equal(R.C.status().done, 2);
       assert.deepEqual(S.readCoverage('ES', { baseDir: R.dir })['1m'], [[from, utc(2026, 10, 1)]], 'zapisane to, co się udało');
-      assert.equal(R.C.credit().spentUsd, 0.026);
+      assert.equal(R.C.credit().spentUsd, 0.006);
       // wznowienie: tylko brakujący miesiąc
       await R.A.config({ failRangeAfter: null }); await R.A.reset();
       const rs = await R.C.importHistory({ instrument: 'ES', from, chunk: 'month', confirmedCostUsd: 0.002 });
@@ -209,7 +212,7 @@ export default ({ test, H, assert, ROOT }) => {
       const gr = await calls(R.A, 'get_range');
       assert.equal(gr.length, 1); assert.equal(gr[0].params.start, '2026-10-01T00:00:00Z'); assert.equal(gr[0].params.end, '2026-10-27T10:00:00Z');
       assert.deepEqual(S.readCoverage('ES', { baseDir: R.dir })['1m'], [[from, end]], 'ciągłe pokrycie');
-      assert.equal(R.C.credit().spentUsd, 0.028);
+      assert.equal(R.C.credit().spentUsd, 0.008);
       // idempotencja
       await R.A.reset();
       const again = await R.C.importHistory({ instrument: 'ES', from, chunk: 'month', confirmedCostUsd: 0 });
@@ -235,7 +238,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal((await R.C.importHistory({ ...base, limitsOverrideUsd: 50 })).started, true); await R.idle();
       assert.equal(R.C.status().error, null); assert.equal(R.C.status().result.costUsd, 45);
       assert.equal((await calls(R.A, 'get_range')).length, 3);
-      assert.equal(R.C.credit().spentUsd, 45.02); assert.equal(R.C.credit().leftUsd, 79.98);
+      assert.equal(R.C.credit().spentUsd, 45); assert.equal(R.C.credit().leftUsd, 55);
       assert.equal(R.st.cfg.chartSpend.usd, 45, 'import liczy się też do dobowego licznika');
       assert.equal(R.st.cfg.chartCostLimitUsd, undefined, 'podniesienie nie zapisane w konfiguracji');
       // zwykłe pobranie po imporcie znów pod limitem 1 USD
@@ -293,12 +296,16 @@ export default ({ test, H, assert, ROOT }) => {
       assert.deepEqual((await R.A.log()).log, [], 'zero żądań bez tick()');
       const src = readFileSync(path.join(ROOT, 'lib/candles.mjs'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
       assert.ok(!/setInterval|setTimeout/.test(src));
-      assert.match(readFileSync(path.join(ROOT, 'server.mjs'), 'utf8'), /setInterval\(\(\) => \{ candles\.tick\(\)/);
+      // N3 (1.6.0): timer serwera woła queueTick (ten sam candles.tick(), wstrzymany w trakcie przenoszenia katalogu danych)
+      const srv = readFileSync(path.join(ROOT, 'server.mjs'), 'utf8');
+      assert.match(srv, /setInterval\(queueTick, 5 \* 60_000\)/); assert.match(srv, /function queueTick\(\) \{\r?\n\s+if \(mover\.writesBlocked\(\)\) return;\r?\n\s+candles\.tick\(\)/);
     } finally { R.stop(); }
   });
 
   test('wykresy-04: P25: trasy windows/queue-run/import tylko przez guardWrite (403), okna z trade\'ów trafiają do magazynu, status z kolejką i kredytem, meta z kredytem; skrypt CLI: wycena domyślnie, pobranie dopiero z kwotą', async () => {
     const dir = H.tmp();
+    // N4 (1.6.0): instalacja z wpisanym kredytem Databento (bez kredytu płatne pobieranie czeka, decyzja 3)
+    writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ chartCredit: H.TEST_CREDIT }));
     const A = await H.atrapaDb(++port);
     const S = await H.server(++port, { THQ_CONFIG_DIR: dir, DATABENTO_API_BASE: A.base, DATABENTO_API_KEY: KEY });
     const get = async (p) => (await fetch(S.base + p)).json();
@@ -315,13 +322,13 @@ export default ({ test, H, assert, ROOT }) => {
       const r = await post('/api/candles/windows', { trades: [trade] });
       assert.equal(r.status, 200); assert.equal(r.j.queued, 1);
       const st = await waitQueue();
-      assert.equal(st.queue.pending, 0); assert.equal(st.credit.startUsd, 125); assert.equal(st.error, null);
+      assert.equal(st.queue.pending, 0); assert.equal(st.credit.startUsd, 100); assert.equal(st.error, null);
       const gr = await calls(A, 'get_range');
       assert.equal(gr.length, 1); assert.equal(gr[0].params.schema, 'ohlcv-1s'); assert.equal(gr[0].params.start, '2026-10-26T13:30:00Z'); assert.equal(gr[0].params.end, '2026-10-26T14:40:00Z');
       const g = await get('/api/candles?' + new URLSearchParams({ instrument: 'ES', from: String(trade.entry - 1800), to: String(trade.exit + 1800), tf: '1s' }));
       assert.equal(g.layer, '1s'); assert.equal(g.bars.length, 70, 'atrapa: świeca co 60 s w 70 minutach'); assert.deepEqual(g.missing, []);
       const meta = await get('/api/meta');
-      assert.equal(meta.chartCredit.expires, '2027-04-26'); assert.ok(meta.chartCredit.leftUsd < 125 && meta.chartCredit.leftUsd > 124.9);
+      assert.equal(meta.chartCredit.expires, H.TEST_CREDIT.expires); assert.ok(meta.chartCredit.leftUsd < 100 && meta.chartCredit.leftUsd > 99.9);
       assert.ok(!JSON.stringify(meta).includes(KEY) && !JSON.stringify(st).includes(KEY));
       // import: wycena przez trasę
       const imp = await post('/api/candles/import', { instrument: 'ES', from: utc(2026, 10, 20), to: utc(2026, 10, 22), dryRun: true });
@@ -359,8 +366,8 @@ export default ({ test, H, assert, ROOT }) => {
       const body = { instrument: 'ES', from: String(D26), to: String(D26 + 3600), confirmedCostUsd: 0.4 };
       assert.equal((await R.C.fetchDays(body)).started, true); await R.idle();
       assert.equal(R.C.status().error.code, 'timeout');
-      assert.deepEqual(seen, { credit: 0.42, saved: 1 }, 'przed wysłaniem: 0,02 + 0,4 i natychmiastowy zapis');
-      assert.equal(R.C.credit().spentUsd, 0.42); assert.equal(R.st.cfg.chartSpend.usd, 0.4);
+      assert.deepEqual(seen, { credit: 0.4, saved: 1 }, 'przed wysłaniem: 0 + 0,4 i natychmiastowy zapis');
+      assert.equal(R.C.credit().spentUsd, 0.4); assert.equal(R.st.cfg.chartSpend.usd, 0.4);
       assert.equal(R.saved.length, 1, 'jeden zapis natychmiastowy na pobranie');
     } finally { R.stop(); }
     // błąd CSV w odpowiedzi: pieniądze mogły zostać naliczone
@@ -369,23 +376,28 @@ export default ({ test, H, assert, ROOT }) => {
       const body = { instrument: 'ES', from: String(D26), to: String(D26 + 3600), confirmedCostUsd: 0.4 };
       assert.equal((await R2.C.fetchDays(body)).started, true); await R2.idle();
       assert.equal(R2.C.status().error.code, 'bad-csv');
-      assert.equal(R2.C.credit().spentUsd, 0.42); assert.equal(R2.st.cfg.chartSpend.usd, 0.4);
+      assert.equal(R2.C.credit().spentUsd, 0.4); assert.equal(R2.st.cfg.chartSpend.usd, 0.4);
       // udane pobranie liczy się raz (0,4), nie dwa razy
       await R2.A.config({ header: ['ts_event', 'rtype', 'publisher_id', 'instrument_id', 'open', 'high', 'low', 'close', 'volume'] });
       const b2 = { ...body, from: String(D26 + 7200), to: String(D26 + 10800) };
       assert.equal((await R2.C.fetchDays(b2)).started, true); await R2.idle();
-      assert.equal(R2.C.status().error, null); assert.equal(R2.C.credit().spentUsd, 0.82);
+      assert.equal(R2.C.status().error, null); assert.equal(R2.C.credit().spentUsd, 0.8);
     } finally { R2.stop(); }
   });
 
-  test('wykresy-04: P25 poprawka: zmiana kredytu wymaga confirm:true, start <= 125, licznik wydatków nie maleje bez potwierdzenia; domyślnie 2027-04-26 i 0,02 USD', async () => {
+  // N4 (1.6.0): [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 3): bez wpisanego kredytu nie ma wartości domyślnej (kredyt nieskonfigurowany);
+  // reszta przypadków na instalacji z kredytem wpisanym przez użytkownika (H.TEST_CREDIT)
+  test('wykresy-04: P25 poprawka: zmiana kredytu wymaga confirm:true, start <= 125, licznik wydatków nie maleje bez potwierdzenia; bez wpisu brak kredytu (N4)', async () => {
+    const R0 = await direct({ cfg: { chartCredit: undefined } });
+    try { assert.equal(R0.C.credit().configured, false); assert.equal(R0.C.credit().leftUsd, 0); } finally { R0.stop(); }
     const R = await direct();
     try {
-      assert.equal(R.C.credit().expires, '2027-04-26'); assert.equal(R.C.credit().spentUsd, 0.02); assert.equal(R.C.credit().leftUsd, 124.98);
+      assert.equal(R.C.credit().expires, H.TEST_CREDIT.expires); assert.equal(R.C.credit().spentUsd, 0); assert.equal(R.C.credit().leftUsd, 100);
+      const before = JSON.stringify(R.st.cfg.chartCredit);
       for (const b of [{ creditStartUsd: 100 }, { creditSpentUsd: 0 }, { creditExpires: '2027-06-01' }, { creditSpentUsd: 0, confirm: 'true' }, { creditSpentUsd: 0, confirm: 1 }]) {
         assert.throws(() => R.C.setLimit(b), (e) => e.status === 400 && e.code === 'confirm-required', JSON.stringify(b));
       }
-      assert.equal(R.st.cfg.chartCredit, undefined, 'nic nie zapisano');
+      assert.equal(JSON.stringify(R.st.cfg.chartCredit), before, 'nic nie zapisano');
       assert.throws(() => R.C.setLimit({ creditStartUsd: 126, confirm: true }), (e) => e.status === 400 && /125/.test(e.message));
       assert.equal(R.C.setLimit({ creditSpentUsd: 5, confirm: true }).credit.spentUsd, 5);
       assert.throws(() => R.C.setLimit({ creditSpentUsd: 1 }), (e) => e.code === 'confirm-required', 'cofnięcie licznika w dół bez potwierdzenia');

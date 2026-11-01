@@ -2,13 +2,13 @@
 // Pakiet C1: pula z danymi i orderDays; pakiet F1: filtr zaawansowany (evalFilter: warunki łączone przez i / lub / nie), dayTags i COND_KINDS.
 // Powody wykluczenia dnia: 'manual' (ręcznie wyrzucony), 'done' (zrobiony w tej sesji, pula się nie powtarza), 'no1s' (NQ/MNQ bez prawdziwego 1s 9:30–11:00 NY),
 // 'no1m' (ES/MES bez pełnego 1m 9:30–16:00 NY), 'filter' (dzień nie spełnia filtra zaawansowanego; kreator nie pokazuje go na liście wykluczeń, ale liczy w liczniku). ES nie wymaga 1s: [U] 30.10.2026 «Nie potrzebuje narazie tego jednak».
-// English: session day pool (no advanced filter yet) and deterministic day ordering.
+// English: days matching the session filter (targets of the "next filter day" jump).
 import { FAMILY } from './kontrakty.js';
 
 const dayOf = (x) => (typeof x === 'string' ? x : x?.day);
 
 // matchDays(def, days, { done }) → { days: Day[], excluded: [{ day, reason }] }; days = DayFeatures[] z /api/backtest/days (tylko dni robocze).
-// def = { instruments, from, to, filter, excluded: Day[] (ręcznie wyrzucone), done?: Day[] }. Kolejność wyniku: rosnąco po dniu (ustawia ją orderDays).
+// def = { instruments, from, to?, filter, excluded: Day[] (ręcznie wyrzucone), done?: Day[] }. Kolejność wyniku: rosnąco po dniu. K: brak to = do końca indeksu.
 // Wynik: { days, excluded, counts }; counts = liczba wykluczonych dni wg powodu (manual, done, no1s, no1m, filter). Filtr oceniany dopiero dla dni z danymi, na cechach pierwszego instrumentu sesji.
 export function matchDays(def = {}, days = [], { done = [] } = {}) {
   const manual = new Set((def.excluded || []).map(dayOf).filter(Boolean));
@@ -32,28 +32,7 @@ export function matchDays(def = {}, days = [], { done = [] } = {}) {
   return { days: out, excluded, counts };
 }
 
-// mulberry32: małe, deterministyczne PRNG (to samo ziarno = ta sama kolejność na każdym urządzeniu)
-function rng(seed) {
-  let a = (Number(seed) >>> 0) || 1;
-  return () => {
-    a = (a + 0x6D2B79F5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// orderDays(days, 'chrono'|'newest'|'random', seed) → nowa tablica; wejście bez zmian. 'random' = Fisher-Yates od posortowanej puli, deterministyczny dla seed.
-export function orderDays(days = [], order = 'chrono', seed = 1) {
-  const s = [...days].sort();
-  if (order === 'newest') return s.reverse();
-  if (order === 'random') {
-    const r = rng(seed);
-    for (let i = s.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [s[i], s[j]] = [s[j], s[i]]; }
-  }
-  return s;
-}
+// K (31.10.2026): kolejność dni (chrono/newest/random) i orderDays usunięte, sesja ma ciągły czas ([U] «Filtr jako skok»); matchDays daje dni skoku „Następny dzień z filtra”.
 
 // ---- filtr zaawansowany (F1, §12 i 18a.7) ----
 // Filter = { op: 'and'|'or', not: boolean, items: (Cond|Filter)[] }, Cond = { k, not?: boolean, ...parametry }. Grupa bez elementów nie odrzuca niczego (kreator może mieć pustą grupę w trakcie edycji); brak filtra (null) = wszystkie dni.

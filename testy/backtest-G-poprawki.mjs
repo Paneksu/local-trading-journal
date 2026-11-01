@@ -69,19 +69,17 @@ export default ({ test, H, assert, ROOT }) => {
   });
 
   // ---- #3 kolejność losowa: dzień w toku ukryty ----
-  test('backtest-G2: kolejność losowa ukrywa trade\'y dnia w toku', async () => {
+  // K (31.10.2026): zastępuje „backtest-G2: kolejność losowa ukrywa trade'y dnia w toku” (kolejność losowa i ukrywanie daty usunięte, [U] «Filtr jako skok»)
+  test('backtest-K: statystyki liczą każdy zamknięty trade sesji (także dawnej losowej po migracji), dubel z Notion raz', async () => {
     const S = await imp('public/js/bt-staty.js');
-    const sess = (order, status) => ({ id: 'bt-rand01', name: 'Los', def: { order }, days: { '2024-03-12': { status: 'done' }, '2024-03-13': { status } },
-      trades: [loc({ id: 't1', day: '2024-03-12' }), loc({ id: 't2', day: '2024-03-13', entryT: Date.UTC(2024, 2, 13, 13, 40) / 1000 })] });
-    const hidden = S.mergeBacktest([], [sess('random', 'active')]);
-    assert.deepEqual(hidden.map((x) => x.id), ['t1'], 'dzień active w sesji losowej ukryty');
-    assert.equal(S.mergeBacktest([], [sess('random', 'done')]).length, 2, 'dzień done widoczny');
-    assert.equal(S.mergeBacktest([], [sess('chrono', 'active')]).length, 2, 'kolejność chronologiczna: data i tak jest znana');
-    // kopia ukrytego trade'a, wysłana do Notion przyciskiem, też nie wraca tylnymi drzwiami
-    const n = nt({ date: '2024-03-13', at: Date.UTC(2024, 2, 13, 13, 40), btSession: 'Los [bt-rand01/t2]' });
-    assert.deepEqual(S.mergeBacktest([n], [sess('random', 'active')]).map((x) => x.id), ['t1'], 'dubel z Notion ukrytego trade\'a pominięty');
-    assert.equal(S.hiddenCount([sess('random', 'active')]), 1);
-    assert.equal(S.hiddenCount([sess('chrono', 'active')]), 0);
+    const { migrateSession } = await imp('public/js/bt-sesja.js');
+    const v1 = { v: 1, id: 'bt-rand01', name: 'Los', def: { order: 'random' }, pool: ['2024-03-13', '2024-03-12'], dayIdx: 1, days: { '2024-03-12': { status: 'active' }, '2024-03-13': { status: 'done' } },
+      trades: [loc({ id: 't1', day: '2024-03-13' }), loc({ id: 't2', day: '2024-03-12', entryT: Date.UTC(2024, 2, 12, 13, 40) / 1000 })] };
+    const s = migrateSession(v1);
+    assert.deepEqual(S.mergeBacktest([], [s]).map((x) => x.id).sort(), ['t1', 't2'], 'oba trade\'y w statystykach');
+    const n = nt({ date: '2024-03-12', at: Date.UTC(2024, 2, 12, 13, 40), btSession: 'Los [bt-rand01/t2]' });
+    assert.equal(S.mergeBacktest([n], [s]).length, 2, 'kopia z Notion tego samego trade\'a liczy się raz');
+    assert.equal(S.hiddenCount, undefined, 'bez licznika ukrytych');
   });
 
   // ---- #4, #5, #10 źródło trade'ów ----
@@ -123,7 +121,8 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(one.sessions.length, 1);
     assert.deepEqual(one.failed, []);
     const s = one.sessions[0];
-    assert.equal(s.id, 'bt-aaaaaa'); assert.equal(s.def.order, 'random'); assert.equal(s.days['2024-03-12'].status, 'done');
+    // K: sesja v1 wraca zmigrowana (bez kolejności i statusów dni)
+    assert.equal(s.id, 'bt-aaaaaa'); assert.equal(s.def.order, undefined); assert.equal(s.days, undefined); assert.equal(s.def.from, '2024-03-12');
     assert.ok(!('drawings' in s) && !('book' in s), 'bez rysunków i księgi');
     assert.ok(!('drawings' in s.trades[0]), 'trade bez migawki rysunków');
     assert.equal(s.trades[0].r, 1);

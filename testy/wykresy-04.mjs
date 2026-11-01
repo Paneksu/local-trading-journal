@@ -1,6 +1,6 @@
 // wykresy-04: API świec (odczyt bez sieci, wycena i pobranie po kliknięciu, scalanie końcówek, klucz i limit, ochrona zapisu). Tylko atrapa Databento.
 import { pathToFileURL } from 'node:url';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export default ({ test, H, assert, ROOT }) => {
@@ -13,6 +13,8 @@ export default ({ test, H, assert, ROOT }) => {
 
   async function rig({ key = KEY, env = {} } = {}) {
     const dir = H.tmp();
+    // N4 (1.6.0): instalacja z wpisanym kredytem Databento (bez kredytu płatne pobieranie czeka, decyzja 3)
+    writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ chartCredit: H.TEST_CREDIT }));
     const A = await H.atrapaDb(++port);
     const S = await H.server(++port, { THQ_CONFIG_DIR: dir, DATABENTO_API_BASE: A.base, ...(key ? { DATABENTO_API_KEY: key } : {}), ...env });
     const get = async (p) => { const r = await fetch(S.base + p); return { status: r.status, j: await r.json() }; };
@@ -83,7 +85,7 @@ export default ({ test, H, assert, ROOT }) => {
       const qt = await R.post('/api/candles/quote', body);
       assert.equal(qt.status, 200);
       assert.equal(qt.j.layer, '1m'); assert.equal(qt.j.costUsd, 0.002); assert.equal(qt.j.limitUsd, 1); assert.deepEqual(qt.j.ranges, [[D26, D27]]); assert.equal(qt.j.overLimit, false);
-      assert.equal(qt.j.availableEnd, utc(2026, 10, 27, 10)); assert.equal(qt.j.credit.leftUsd, 124.98);
+      assert.equal(qt.j.availableEnd, utc(2026, 10, 27, 10)); assert.equal(qt.j.credit.leftUsd, 100);
       assert.deepEqual((await calls(R.A, 'get_range')), [], 'quote nie pobiera');
       const f = await R.post('/api/candles/fetch', { ...body, confirmedCostUsd: qt.j.costUsd });
       assert.equal(f.status, 200); assert.equal(f.j.started, true);
@@ -114,7 +116,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.deepEqual(after, []);
       await sleep(250);
       const cfg = JSON.parse(readFileSync(path.join(R.dir, 'config.local.json'), 'utf8'));
-      assert.equal(cfg.chartSpend.usd, 0.002); assert.equal(cfg.chartCredit.spentUsd, 0.022);
+      assert.equal(cfg.chartSpend.usd, 0.002); assert.equal(cfg.chartCredit.spentUsd, 0.002);
     } finally { R.stop(); }
   });
 
@@ -345,11 +347,12 @@ export default ({ test, H, assert, ROOT }) => {
     process.env.DATABENTO_API_BASE = A.base;
     try {
       const { createCandles } = await import(pathToFileURL(path.join(ROOT, 'lib/candles.mjs')).href);
-      const cfg = {};
+      // N4 (1.6.0): instalacja z wpisanym kredytem Databento (bez kredytu płatne pobieranie czeka, decyzja 3)
+      const cfg = { chartCredit: { ...H.TEST_CREDIT } };
       let clock = Date.UTC(2026, 9, 27, 12);
       const C = createCandles({ getKey: () => KEY, getConfig: () => cfg, baseDir: H.tmp(), now: () => clock });
       await A.config({ cost: 0.006 });
-      const sl = C.setLimit({ dailyLimitUsd: 0.01 }); assert.equal(sl.limitUsd, 1); assert.equal(sl.dailyLimitUsd, 0.01); assert.equal(sl.credit.leftUsd, 124.98);
+      const sl = C.setLimit({ dailyLimitUsd: 0.01 }); assert.equal(sl.limitUsd, 1); assert.equal(sl.dailyLimitUsd, 0.01); assert.equal(sl.credit.leftUsd, 100);
       for (const bad of [{ dailyLimitUsd: 0.009 }, { dailyLimitUsd: 101 }, { dailyLimitUsd: '3' }, {}, null, { maxCostUsd: 1, dailyLimitUsd: 0 }]) assert.throws(() => C.setLimit(bad), (e) => e.status === 400);
       assert.equal(cfg.chartDailyLimitUsd, 0.01);
       const wait = async () => { for (let i = 0; i < 100 && C.status().running; i++) await sleep(30); };

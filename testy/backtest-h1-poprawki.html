@@ -38,7 +38,8 @@ try {
   const client = createSessionClient();
   const settings = { ...sanitizeBt(null), jumps: [...DEFAULT_JUMPS.map((j) => ({ ...j })), { id: 'go', name: 'go', cel: { kind: 'offset', sec: 1 }, skrot: '' }] };
   const mk = async (name, pool, { cursor = null, layout = null } = {}) => {
-    const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ', 'ES'], from: pool[0], to: pool[pool.length - 1], balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] }, pool, now: Date.now() });
+    // K: sesja v2: data startu = pierwszy dzień (bez puli, daty końca i kolejności)
+    const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ', 'ES'], from: pool[0], balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] }, now: Date.now() });
     if (layout) doc.layout = layout;
     if (cursor) doc.cursor = cursor;
     await client.create(doc);
@@ -85,12 +86,11 @@ try {
       setF('qty', '1');
       P('[data-o="buy"]').click();
       rec('es', !!R.book().positions.ES, `po „Wróć do bieżącej chwili” Kup ES działa (kursor ${new Date(R.cursor() * 1000).toISOString().slice(11, 19)})`);
-      // „Zakończ dzień” z otwartą pozycją ES przy NQ w środku minuty: pytanie o zamknięcie (confirm testowy = tak), zamknięcie eod, dzień zakończony
+      // K (31.10.2026): zamiast „Zakończ dzień” z pozycją ES: bez końca dnia pozycja ES idzie dalej po 16:00 (zamyka ją tylko SL/TP albo użytkownik)
       R.activate(0); R.step(1); R.step(1);
-      R.endDay();
-      await until(() => R.doc().days[DAY1]?.status === 'done', 4000);
-      const eod = (R.doc().trades || []).filter((x) => x.instrument === 'ES').pop();
-      rec('es', R.doc().days[DAY1]?.status === 'done' && !R.book().positions.ES && eod?.exits?.[0]?.reason === 'eod', `Zakończ dzień z pozycją ES: dzień ${R.doc().days[DAY1]?.status}, wyjście ${eod?.exits?.[0]?.reason}`);
+      await R.goTo(nyAt(DAY1, '16:10'));
+      const late = (R.doc().trades || []).filter((x) => x.instrument === 'ES').pop();
+      rec('es', !scr().querySelector('[data-bt="end-day"]') && (R.book().positions.ES || late?.exits?.every((e) => e.reason !== 'eod')), `po 16:00: pozycja ES ${R.book().positions.ES ? 'otwarta' : 'zamknięta ' + late?.exits?.map((e) => e.reason).join('+')}, bez „eod”`);
       R.close();
     });
   }
@@ -104,7 +104,9 @@ try {
       setF('sl', '10'); setF('qty', '1');
       P('[data-o="buy"]').click();
       rec('dialog', !!R.book().positions.NQ, 'pozycja otwarta');
-      scr().querySelector('[data-bt="end-day"]').click();
+      // K: „Zakończ dzień” usunięte; to samo okno pytania (modal.js) otwiera np. usunięcie wszystkich rysunków, więc sprawdzamy samo okno nad replayem
+      const { confirmDialog } = await import('/js/modal.js');
+      confirmDialog({ title: 'Test', text: 'Okno nad replayem?', ok: 'OK', cancel: 'Anuluj' });
       const m = await until(() => document.querySelector('.scrim .modal'), 3000);
       const r = m?.getBoundingClientRect();
       const hit = r && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
@@ -120,24 +122,21 @@ try {
     let slow = true;
     const notion = async (opts) => { calls.push(opts); if (slow) { slow = false; await sleep(2000); } return { sent: 0, skipped: 0, failed: [], pending: 0, notion: {} }; };
     const cl = { ...client, notion };
+    // K (31.10.2026): zamiast „podwójne Następny dzień” i „Zakończ dzień w trakcie wysyłki”: podwójny skok w trakcie wczytywania i kolejka wysyłek
     await section('nastepny', async () => {
-      const doc = await mk('H2 następny dzień', [DAY1, DAY2]);
-      const R = openReplay(document.body, { sessionId: doc.id, client: cl, getSettings: () => settings, notionEveryMs: 0, confirm: async () => true });
+      const doc = await mk('H2 podwójny skok', [DAY1, DAY2]);
+      const R = openReplay(document.body, { sessionId: doc.id, client: cl, getSettings: () => settings, notionEveryMs: 0 });
       await R.ready;
-      await R.endDay(); // dzień 1 zakończony (wysyłka dnia 1 trwa 2 s)
-      rec('nastepny', R.doc().days[DAY1]?.status === 'done', 'dzień 1 zakończony');
-      // podwójne „Następny dzień”: drugie kliknięcie w trakcie wczytywania nic nie robi
-      const b = scr().querySelector('[data-bt="end-day"]');
-      b.click(); b.click(); R.endDay();
-      const busy = b.disabled;
-      await until(() => R.doc().pool[R.doc().dayIdx] === DAY2 && R.charts().length > 0, 6000);
-      await sleep(200);
-      rec('nastepny', R.doc().dayIdx === 1 && R.doc().days[DAY2]?.status === 'active', `po podwójnym kliknięciu: dzień ${R.doc().pool[R.doc().dayIdx]} = ${R.doc().days[DAY2]?.status} (przycisk w trakcie wczytywania ${busy ? 'wyłączony' : 'aktywny'})`);
-      rec('nastepny', busy, 'przycisk wyłączony w trakcie wczytywania dnia');
-      // dzień 2 kończy się, gdy wysyłka dnia 1 jeszcze trwa: prośba idzie do kolejki
-      await R.endDay();
-      await until(() => calls.some((c) => c.day === DAY2), 4000);
-      rec('kolejka', calls.some((c) => c.day === DAY1) && calls.some((c) => c.day === DAY2), `wysyłki: ${JSON.stringify(calls)}`);
+      const a = R.runJump('nySession'), b2 = R.runJump('nySession');
+      await Promise.all([a, b2]);
+      rec('nastepny', R.cursor() === nyAt(DAY2, '09:00'), `dwa skoki „Następna sesja NY” naraz: jeden ruch (${new Date(R.cursor() * 1000).toISOString()})`);
+      rec('nastepny', !R.busy(), 'po skoku nic nie czeka');
+      await R.runJump('nySession');
+      rec('nastepny', R.cursor() === nyAt(DAY2, '09:00'), 'po ostatnim dniu danych kursor stoi');
+      // wysyłka w trakcie innej wysyłki trafia do kolejki (H2 #3)
+      R.sendNotion({ all: true }); R.sendNotion({});
+      await until(() => calls.length >= 2, 4000);
+      rec('kolejka', calls.length === 2 && calls[0].all === true && !calls[1].all, `wysyłki po kolei: ${JSON.stringify(calls)}`);
       R.close();
     });
   }

@@ -109,7 +109,7 @@ export default ({ test, H, assert, ROOT }) => {
     const w = P.badjWarning({ missing: ['ESM4 → ESU4'] });
     assert.match(w, /przeliczone do kontraktu trade'a/); assert.match(w, /pasują do świec/); assert.match(w, /Bez luki.*ESM4 → ESU4/, 'luka czerwca 2014 jak dotąd');
     assert.doesNotMatch(w, /mogą nie pasować/);
-    const app = src('public/js/app.js'), ust = src('public/js/ustawienia.js'), wyk = src('public/js/wykres.js');
+    const app = src('public/js/app.js'), ust = src('public/js/ust-wykresy.js'), wyk = src('public/js/wykres.js');
     assert.match(app, /chartBadj: true/, 'ustawienie domyślnie włączone'); assert.match(app, /collect:[^\n]*chartBadj: settings\.chartBadj/, 'synchronizowane między urządzeniami');
     assert.match(ust, /id="sp-badj"[^>]*\$\{settings\.chartBadj !== false \? 'checked'/, 'przełącznik w Ustawieniach (domyślnie zaznaczony)');
     assert.doesNotMatch(wyk, /bj\.disabled = true;(?![^\n]*kotwicy)/, 'edytor nie blokuje B-ADJ bez powodu');

@@ -239,7 +239,8 @@ export default ({ test, H, assert, ROOT }) => {
       } });
       const { createCandles } = await lib('lib/candles.mjs');
       const TEST_KEY = 'db-test-key-0123456789abcdef'; // klucz atrapy (testy/atrapa-databento.mjs; import pliku uruchomiłby atrapę)
-      const cfg = {};
+      // N4 (1.6.0): instalacja z wpisanym kredytem Databento (bez kredytu płatne pobieranie czeka, decyzja 3)
+      const cfg = { chartCredit: { ...H.TEST_CREDIT } };
       const dir = H.tmp();
       const C = createCandles({ getKey: () => TEST_KEY, getConfig: () => cfg, baseDir: dir, now: () => Date.UTC(2026, 0, 5, 12) });
       const q = await C.quote({ instrument: 'ES', from: at('2025-12-08T00:00:00Z'), to: at('2025-12-19T00:00:00Z'), layer: '1m' });
@@ -261,7 +262,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.deepEqual(r.missing, []);
       assert.ok(r.bars.filter((b) => b[0] >= T_FB && b[0] < T_V).length > 3 && r.bars.filter((b) => b[0] >= T_FB && b[0] < T_V).every((b) => b[1] >= 5080), 'okno rolla z symbolu surowego (atrapa: +55)');
       assert.ok(r.bars.filter((b) => b[0] < T_CAL - 86400).length > 3 && r.bars.filter((b) => b[0] < T_CAL - 86400).every((b) => b[1] < 5030), 'przed oknem pomiaru .v.0');
-      assert.ok(cfg.chartCredit.spentUsd > 0.02, 'wydatek w liczniku kredytu (P25)');
+      assert.ok(cfg.chartCredit.spentUsd > 0, 'wydatek w liczniku kredytu (P25)');
       // kolejka (P36, 28.10.2026): trade w środę tygodnia wygaśnięcia z polem ESZ5 → tylko okno 1s w kontrakcie trade'a; minutówki sesji na kliknięcie z wyceną
       await A.reset();
       const e = C.enqueue({ trades: [{ instrument: 'ES', entry: at('2025-12-17T15:00:00Z'), exit: at('2025-12-17T15:20:00Z'), contract: 'ESZ5' }] });

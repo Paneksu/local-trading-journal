@@ -64,21 +64,22 @@ export default ({ test, assert, ROOT }) => {
     assert.equal(nextCursor(bounds.min, -1, '1m', real1s, bounds), bounds.min);
   });
 
+  // K (31.10.2026): skoki bez granicy dnia; przypadki z 1.5.0 przepisane na czas ciągły (cel po kursorze, najwyżej do końca danych `max`)
   test('backtest-B1: skoki', async () => {
     const { DEFAULT_JUMPS, jumpTarget } = await mod();
     const kinds = DEFAULT_JUMPS.map((j) => j.cel.kind);
     assert.ok(DEFAULT_JUMPS.some((j) => j.cel.kind === 'time' && j.cel.at === '09:30'), 'do 9:30 NY');
-    assert.ok(kinds.filter((k) => k === 'nextDay').length >= 2, 'następna sesja NY i następny dzień z filtra');
+    assert.ok(kinds.includes('nextDay') && kinds.includes('filterDay'), 'następna sesja NY i następny dzień z filtra');
     assert.ok(DEFAULT_JUMPS.some((j) => j.cel.kind === 'news' && j.cel.minImp === 'high'), 'następny news');
     assert.ok(DEFAULT_JUMPS.some((j) => j.cel.kind === 'offset' && j.cel.sec === 900), '+15 min');
     for (const j of DEFAULT_JUMPS) assert.ok(j.id && j.name && typeof j.skrot === 'string');
     assert.equal(new Set(DEFAULT_JUMPS.map((j) => j.id)).size, DEFAULT_JUMPS.length);
 
     const news = [ev(8, 30, 'high', 'CPI'), ev(10, 0, 'medium', 'ISM'), ev(14, 0, 'high', 'FOMC'), ev(0, 0, 'holiday', 'Święto', { allDay: true, kind: 'holiday' })];
-    const ctx = (cursor) => ({ cursor, day: DAY, times, news, startTime: '09:00' });
+    const ctx = (cursor) => ({ cursor, news, startTime: '09:00', tradingDays: [DAY, '2024-03-13'], max: times.end });
     const at930 = { id: 'x', name: 'x', cel: { kind: 'time', at: '09:30' }, skrot: '' };
     assert.deepEqual(jumpTarget(at930, ctx(ny(9, 5))), { cursor: ny(9, 30) });
-    assert.equal(jumpTarget(at930, ctx(ny(9, 45))), null);
+    assert.equal(jumpTarget(at930, ctx(ny(9, 45))), null, '9:30 następnego dnia jest po końcu danych');
     assert.equal(jumpTarget(at930, ctx(ny(9, 30))), null);
     const off = { id: 'o', name: 'o', cel: { kind: 'offset', sec: 900 }, skrot: '' };
     assert.deepEqual(jumpTarget(off, ctx(ny(10, 0))), { cursor: ny(10, 15) });
@@ -92,15 +93,16 @@ export default ({ test, assert, ROOT }) => {
     assert.deepEqual(jumpTarget(hi, ctx(ny(8, 30))), { cursor: ny(14, 0) }, 'tylko t > kursor');
     assert.equal(jumpTarget(hi, ctx(ny(14, 0))), null);
     const nd = { id: 'd', name: 'd', cel: { kind: 'nextDay' }, skrot: '' };
-    assert.deepEqual(jumpTarget(nd, ctx(ny(10, 0))), { nextDay: true, at: '09:00' });
+    assert.deepEqual(jumpTarget(nd, { ...ctx(ny(10, 0)), max: Infinity }), { cursor: ny(9, 0) + 86400 }, 'następny dzień handlowy o godzinie startu');
     const lon = { id: 'l', name: 'l', cel: { kind: 'session', id: 'london' }, skrot: '' };
     assert.deepEqual(jumpTarget(lon, ctx(ny(1, 0))), { cursor: ny(2, 0) });
-    assert.equal(jumpTarget(lon, ctx(ny(3, 0))), null);
+    assert.equal(jumpTarget(lon, ctx(ny(3, 0))), null, 'Londyn następnego dnia jest po końcu danych');
     // poprzedni dzień kontekstu: z 11.03 1:00 NY do 11.03 2:00 NY
     assert.deepEqual(jumpTarget(lon, ctx(ny(1, 0) - 86400)), { cursor: ny(2, 0) - 86400 });
     const asia = { id: 'a', name: 'a', cel: { kind: 'session', id: 'asia' }, skrot: '' };
     assert.deepEqual(jumpTarget(asia, ctx(ny(-1, 0) - 86400)), { cursor: ny(-4, 0) }, 'Azja 20:00 NY dzień wcześniej');
-    assert.equal(jumpTarget(asia, ctx(ny(9, 0))), null, '20:00 w dniu replayu jest po 16:00');
+    assert.equal(jumpTarget(asia, ctx(ny(9, 0))), null, '20:00 jest po końcu danych (16:00)');
+    assert.deepEqual(jumpTarget(asia, { ...ctx(ny(9, 0)), max: Infinity }), { cursor: ny(20, 0) }, 'bez końca dnia: Azja tego wieczoru');
     assert.equal(jumpTarget({ cel: { kind: 'nieznany' } }, ctx(ny(9, 0))), null);
   });
 
@@ -125,8 +127,8 @@ export default ({ test, assert, ROOT }) => {
 
   test('backtest-B1: kolizja skrótów', async () => {
     const { DEFAULT_SKROTY, DEFAULT_JUMPS, RESERVED_SKROTY, skrotOf, collisions } = await mod();
-    assert.deepEqual(DEFAULT_SKROTY, { play: 'Space', stepFwd: 'Shift+ArrowRight', stepBack: 'Shift+ArrowLeft', jump: 'J', speedUp: ']', speedDown: '[', buy: 'B', sell: 'S', closeAll: 'Shift+C', endDay: 'Shift+E', drawEntry: 'D' }); // J: wejście według rysunku
-    assert.deepEqual(RESERVED_SKROTY, ['Escape', 'Ctrl+Z', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', 'Enter', 'Delete', 'Backspace']);
+    assert.deepEqual(DEFAULT_SKROTY, { play: 'Space', stepFwd: 'Shift+ArrowRight', stepBack: 'Shift+ArrowLeft', jump: 'J', speedUp: ']', speedDown: '[', buy: 'B', sell: 'S', closeAll: 'Shift+C', drawEntry: 'D', be: 'E', half: 'H' }); // J: wejście według rysunku; K: bez endDay; M: BE i połowa
+    assert.deepEqual(RESERVED_SKROTY, ['Escape', 'Ctrl+Z', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', 'Enter', 'Delete', 'Backspace', 'Ctrl+J']); // L: Ctrl+J = Journal
     assert.deepEqual(collisions(DEFAULT_SKROTY, DEFAULT_JUMPS), [], 'domyślne bez kolizji');
     // klucze ustawień nie mogą pasować do filtra sanitizeSettings (key, hotkey…)
     for (const k of [...Object.keys(DEFAULT_SKROTY), ...Object.keys(DEFAULT_JUMPS[0])]) assert.ok(!/key/i.test(k), k);

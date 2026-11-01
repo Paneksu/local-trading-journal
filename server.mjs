@@ -2,19 +2,21 @@
 // Czyta .env i config.local.json, odpytuje Notion API, normalizuje dane (po rolach pól, nie po nazwach) i serwuje public/.
 // Token nigdy nie trafia do frontendu ani do logów. / The token never reaches the browser or the logs.
 import http from 'node:http';
-import { existsSync, statSync, createReadStream, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, statSync, createReadStream, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { ROOT, CONFIG_DIR, loadEnv, envSettings, loadConfig, saveConfig, saveEnv, configExists } from './lib/env.mjs';
+import { ROOT, CONFIG_DIR, CONFIG_FILE, loadEnv, envSettings, loadConfig, saveConfig, saveEnv, configExists, keyHint } from './lib/env.mjs';
 import { createNotion, NotionError } from './lib/notion.mjs';
 import { createData } from './lib/data.mjs';
 import { createWriter, ValidationError, PAGE_ID_RE } from './lib/writes.mjs';
-import { createCandles } from './lib/candles.mjs';
+import { createCandles, LIMIT_MAX_USD, CREDIT_MAX_USD, IMPORT_MAX_USD, OPEN_IMPORT_MAX_USD } from './lib/candles.mjs';
+import { upgradeDefaults } from './lib/config-migracje.mjs';
+import { scrubSecrets } from './lib/diag.mjs';
 import { DatabentoError } from './lib/databento.mjs';
 import { createNews } from './lib/news-service.mjs';
-import { createReplayDay } from './lib/backtest-day.mjs';
+import { createReplayRange } from './lib/backtest-range.mjs';
 import { createBacktestStore, BacktestError, SESSION_BODY_LIMIT, SESSION_ID_RE } from './lib/backtest-store.mjs';
 import { createBacktestSync } from './lib/backtest-sync.mjs';
 import { createDayIndex } from './lib/backtest-index.mjs';
@@ -33,18 +35,37 @@ import { createWorkspace } from './lib/workspace.mjs';
 import { verifyToken, listPages, writeShortcut, hasShortcut } from './lib/wizard.mjs';
 import { createSync } from './lib/sync.mjs';
 import { sealPackage, openPackage, peekPackage, MAX_ATTEMPTS } from './lib/transfer.mjs';
+import { createDiag } from './lib/diag.mjs';
+import { resolveDataDir, scanData, createMover, layersOfRow, CANDLE_ROWS, CANDLE_SYMBOLS, DiskError, freeSpace } from './lib/dysk.mjs';
+import { createBackups, BackupError } from './lib/kopie.mjs';
 
 const PUBLIC = path.join(ROOT, 'public');
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.PORT) || 4321;
+// N2 (1.6.0): znacznik startu procesu (GET /api/health, /api/diag): strona po restarcie z Ustawień czeka na nowy start, a nie na stary proces
+const STARTED = Date.now();
 
 // S, SOURCES i notion są podmieniane w miejscu (reconfigure) po zapisaniu tokenu albo utworzeniu dziennika w kreatorze,
 // więc moduły, które dostały do nich referencję (odczyt, zapis), od razu widzą nową konfigurację.
 let S = envSettings(loadEnv());
 const SOURCES = { ...S.sources };
 let config = loadConfig();
+// Poprawki po review N1–N4 (P1-1, bezp. P2-1): nieczytelny config.local.json odkładamy jako config.local.json.corrupt-<czas> przed jakimkolwiek zapisem;
+// ten start traktuje instalację jak nową (bez migracji wartości), a diagnostyka pokazuje nazwę kopii, żeby dało się odzyskać ustawienia
+let CONFIG_CORRUPT = null;
+if (config.corrupt) {
+  CONFIG_CORRUPT = `${CONFIG_FILE}.corrupt-${new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')}`;
+  try { renameSync(path.join(CONFIG_DIR, CONFIG_FILE), path.join(CONFIG_DIR, CONFIG_CORRUPT)); console.error(`[config] ${CONFIG_FILE} is not valid JSON, moved to ${CONFIG_CORRUPT}.`); }
+  catch (e) { console.error('[config] cannot move the unreadable config:', e.message); }
+}
 const firstRun = !configExists();
 setLang(config.lang);
+// N3 (1.6.0): katalog danych (świece, sesje backtestu, newsy, earningsy, rysunki) z config.local.json dataDir albo CONFIG_DIR/chart-data.
+// Czytany raz przy starcie, więc jego zmiana (przeniesienie z Ustawień → Dane na dysku) wymaga restartu (§5.2).
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 6: przenoszenie katalogu danych: kopia → sprawdzenie → przełączenie → restart, stary katalog zostaje)
+const DATA = resolveDataDir(config, CONFIG_DIR);
+const DATA_DIR = DATA.dir;
+if (DATA.missing) console.error(`[data] Data folder from config.local.json (dataDir) is not available, using ${DATA_DIR}.`);
 // Test na atrapie API: NOTION_API_BASE=http://127.0.0.1:PORT (domyślnie prawdziwe Notion).
 const notion = createNotion({ token: S.token, version: S.version, base: S.base, t });
 let saveTimer = 0;
@@ -54,11 +75,11 @@ const persistConfigNow = () => { clearTimeout(saveTimer); try { saveConfig(confi
 const data = createData({ notion, sources: SOURCES, getConfig: () => config, persistConfig, rootUrl: () => S.rootUrl });
 const writer = createWriter({ notion, sources: SOURCES, data, t });
 const shots = createShots({ notion, sources: SOURCES, data, t });
-const drawings = createDrawings({ notion, sources: SOURCES, data, t, baseDir: path.join(CONFIG_DIR, 'chart-data') });
+const drawings = createDrawings({ notion, sources: SOURCES, data, t, baseDir: DATA_DIR });
 // Świece (Databento): klucz tylko z .env, magazyn w CONFIG_DIR/chart-data, limit kosztu w config.local.json (nigdy w settings).
 const candles = createCandles({
   getKey: () => loadEnv().DATABENTO_API_KEY, getConfig: () => config, persistConfig, persistConfigNow,
-  saveKey: (key) => saveEnv({ DATABENTO_API_KEY: key }), baseDir: path.join(CONFIG_DIR, 'chart-data'), t,
+  saveKey: (key) => saveEnv({ DATABENTO_API_KEY: key }), baseDir: DATA_DIR, t,
   // P50: kolejka dokłada codzienne okno 1s NQ 9:30–11:00 NY (przełącznik chartNq1sDaily, domyślnie włączony). THQ_NO_AUTO_1S=1 ustawiają tylko
   // testy (pomocnicze.cleanEnv): serwer testowy z pustym magazynem nadrabiałby okna od 2020 na atrapie.
   autoOpenWindows: process.env.THQ_NO_AUTO_1S !== '1',
@@ -66,12 +87,12 @@ const candles = createCandles({
 // Newsy makro USD (pakiet A, 1.4.0): klucz FRED tylko z .env (jak Databento), magazyn w CONFIG_DIR/chart-data/news, profil świąt z config.local.json (newsHolidayProfile).
 // Odświeżanie w tle (feed FF najwyżej raz na godzinę, FRED raz dziennie i tylko z kluczem, RSS Fed raz dziennie) startuje niżej; THQ_NO_NEWS=1 ustawiają tylko testy.
 const news = createNews({
-  baseDir: path.join(CONFIG_DIR, 'chart-data'), getKey: () => loadEnv().FRED_API_KEY, getProfile: () => config.newsHolidayProfile,
+  baseDir: DATA_DIR, getKey: () => loadEnv().FRED_API_KEY, getProfile: () => config.newsHolidayProfile,
   userAgent: `JustJournal/${APP_VERSION} (+https://github.com/${REPO})`,
 });
 // Earningsy spółek S&P 100 (pakiet A2, 1.4.0): klucz Finnhub tylko z .env, magazyn w CONFIG_DIR/chart-data/earnings, ręczne wyjątki klas w config.local.json
 // (earningsClassOverrides: { TICKER: 1-4 }, earningsExtra: [tickery]). Aplikacja nie łączy się z SEC; Finnhub tylko z kluczem.
-const earnings = createEarnings({ baseDir: path.join(CONFIG_DIR, 'chart-data'), getKey: () => loadEnv().FINNHUB_API_KEY, getConfig: () => config });
+const earnings = createEarnings({ baseDir: DATA_DIR, getKey: () => loadEnv().FINNHUB_API_KEY, getConfig: () => config });
 function reconfigure() {
   S = envSettings(loadEnv());
   for (const k of Object.keys(SOURCES)) delete SOURCES[k];
@@ -86,6 +107,15 @@ function reconfigure() {
 // Instalacja skonfigurowana wcześniej (są bazy w .env) nie dostaje automatycznie „Pierwszych kroków”; świeża kopia bez konfiguracji tak.
 if (firstRun) { if (SOURCES.trades) config.legacy = true; config.onboarded = !!SOURCES.trades; persistConfig(); }
 else if (config.onboarded === undefined) { config.onboarded = true; persistConfig(); }
+// N4 (1.6.0): okno 1s NQ wyłączone w nowych instalacjach, u istniejących zostaje włączone (lib/config-migracje.mjs); kredytu migracja nie wpisuje nikomu.
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 4: okno 1s NQ wyłączone w nowych instalacjach, u obecnych włączone)
+// [U] 31.10.2026 «Wpisz tylko u mnie» (migracja w kodzie nie wpisuje nikomu kwot kredytu)
+{
+  const had = !!config.defaultsUpgraded;
+  const changed = upgradeDefaults(config, { firstRun });
+  if (changed.length) console.log(`[config] 1.6.0 defaults kept for this installation: ${changed.join(', ')}.`);
+  if (!had) persistConfigNow();
+}
 
 const stats = data.stats;
 
@@ -251,12 +281,13 @@ function startUpdate() {
 // Serwer słucha tylko na 127.0.0.1, ale strona otwarta w tej samej przeglądarce mogłaby próbować pisać po cichu.
 // Dlatego zapis wymaga: Hosta z loopbacka (anty DNS rebinding), Origin równego adresowi dashboardu, własnego nagłówka
 // X-THQ i JSON-a (to wymusza preflight CORS dla obcych stron, którego serwer nigdy nie zatwierdza).
-const replayDay = createReplayDay({ candles, news, earnings, t });
+// K (31.10.2026): ciągła oś czasu zamiast dnia replayu ([U] «nie powinno byc takiego czegos jak koniec dnia»)
+const replayRange = createReplayRange({ candles, news, earnings, baseDir: DATA_DIR, t });
 // Backtest (1.5.0, pakiet C1): sesje w CONFIG_DIR/chart-data/backtest/sessions (źródło prawdy stanu sesji), pula dni z indeksu pokrycia świec.
-const btStore = createBacktestStore({ baseDir: path.join(CONFIG_DIR, 'chart-data'), t });
+const btStore = createBacktestStore({ baseDir: DATA_DIR, t });
 // E2: wysyłka trade'ów sesji do bazy Trade'y (typ Backtest), idempotentna po znaczniku w polu „Sesja backtestu”
 const btSync = createBacktestSync({ store: btStore, writer, drawings, data, t });
-const btIndex = createDayIndex({ candles, news, earnings, baseDir: path.join(CONFIG_DIR, 'chart-data'), t });
+const btIndex = createDayIndex({ candles, news, earnings, baseDir: DATA_DIR, t });
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const ALLOWED_ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
 const isLoopback = (a) => a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
@@ -273,16 +304,20 @@ function guardWrite(req, { json = true } = {}) {
 
 function readJson(req, limit = 64 * 1024, tooBig = 'Dane są zbyt duże.') {
   return new Promise((resolve, reject) => {
-    let size = 0, done = false;
+    let size = 0, done = false, draining = false;
     const chunks = [];
+    const tooLarge = () => Object.assign(new ValidationError({}, tooBig), { tooLarge: true });
     req.on('data', (c) => {
-      if (done) return;
       size += c.length;
-      // za duże: odpowiedź 413 od razu, bez czytania reszty; sendError zamyka połączenie po wysłaniu odpowiedzi
-      if (size > limit) { done = true; chunks.length = 0; req.pause(); reject(Object.assign(new ValidationError({}, tooBig), { tooLarge: true })); return; }
+      // final (1.6.0): nadmiar do 4× limitu doczytujemy bez zapisu i dopiero wtedy odpowiadamy 413; odpowiedź w trakcie wysyłania ciała
+      // zrywała połączenie po stronie klienta („fetch failed” zamiast komunikatu, niestabilny test wykresy-12 D4). Większe ciało: 413 od razu.
+      if (draining) { if (size > limit * 4) { draining = false; req.pause(); reject(tooLarge()); } return; }
+      if (done) return;
+      if (size > limit) { done = true; draining = true; chunks.length = 0; return; }
       chunks.push(c);
     });
     req.on('end', () => {
+      if (draining) { draining = false; reject(tooLarge()); return; }
       if (done) return;
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new ValidationError({}, 'Nieczytelne dane formularza.')); }
     });
@@ -311,7 +346,7 @@ function sendError(res, e) {
     return sendJson(res, e.tooLarge ? 413 : 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
   }
   console.error('[write]', e.message);
-  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError || e instanceof BacktestError ? e.status : 500;
+  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError || e instanceof BacktestError || e instanceof DiskError || e instanceof BackupError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
   const status = s === 401 || s < 400 || s > 599 ? 502 : s;
   return sendJson(res, status, { error: e.message, code: e.code, ...(e.left !== undefined ? { left: e.left } : {}) });
@@ -320,12 +355,17 @@ function sendError(res, e) {
 function meta() {
   return {
     ...versionState(), lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
-    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily !== false, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
+    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily === true, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
 
 const SCHEMA = loadSchemaFile();
-const healthCtx = () => ({ notion, sources: SOURCES, config, schema: SCHEMA, schemaVersion: SCHEMA_VERSION, host: HOST, updateInfo, rootUrl: S.rootUrl, t });
+// N6: grupa „Dane rynkowe” w Gotowości: klucze tak/nie, kredyt, kolejka i wolne miejsce, bez żadnego zapytania do dostawców
+async function marketState() {
+  const free = await freeSpace(DATA_DIR).catch(() => null);
+  return { databento: { key: candles.hasKey(), credit: candles.credit(), nq1sDaily: config.chartNq1sDaily === true, queue: candles.status().queue }, fred: news.hasKey(), finnhub: earnings.hasKey(), freeBytes: free?.freeBytes ?? null };
+}
+const healthCtx = () => ({ notion, sources: SOURCES, config, schema: SCHEMA, schemaVersion: SCHEMA_VERSION, host: HOST, updateInfo, rootUrl: S.rootUrl, t, market: marketState });
 // POST z ochroną zapisu: ścieżka → obsługa (body) → odpowiedź
 const ACTIONS = {
   '/api/config': async (body) => {
@@ -345,14 +385,18 @@ const ACTIONS = {
   },
   '/api/update/plan': async () => updatePlan(),
   '/api/restart': async () => {
-    if (upd.running) throw Object.assign(new NotionError(t('Aktualizacja już trwa.'), 409), { code: 'running' });
+    // N2–N4 i poprawki po review: wspólna blokada (aktualizacja, tworzenie dziennika, kopia katalogu danych, każde pobieranie świec)
+    const why = busyReason();
+    if (why) throw Object.assign(new NotionError(why, 409), { code: 'running' });
     const vs = versionState();
     console.log(`Restart requested (running ${APP_VERSION}, on disk ${vs.diskVersion}).`);
     scheduleRestart(800);
     return { restarting: true, diskVersion: vs.diskVersion };
   },
   '/api/update/run': async () => {
-    if (upd.running) throw Object.assign(new NotionError(t('Aktualizacja już trwa.'), 409), { code: 'running' });
+    // poprawki po review N1–N4 (P3-2): aktualizacja kończy się restartem, więc czeka na te same prace co restart
+    const why = busyReason();
+    if (why) throw Object.assign(new NotionError(why, 409), { code: 'running' });
     startUpdate();
     return { started: true };
   },
@@ -417,15 +461,17 @@ function runSetupJob({ pageId, lang, demo }) {
 }
 Object.assign(ACTIONS, {
   '/api/candles/quote': (body) => candles.quote(body ?? {}),
-  '/api/candles/fetch': (body) => candles.fetchDays(body ?? {}),
+  // N3: w trakcie przenoszenia katalogu danych nic nie dopisuje świec do starego katalogu (moveBusy rzuca 409)
+  '/api/candles/fetch': (body) => moveBusy() || candles.fetchDays(body ?? {}),
   '/api/candles/key': (body) => candles.setKey(body ?? {}),
   '/api/candles/limit': async (body) => candles.setLimit(body ?? {}),
   // P25: okna 1s wokół trade'ów trafiają do kolejki (połączone, bez duplikatów); pobieranie rusza od razu, o ile strażniki przepuszczają
-  '/api/candles/windows': async (body) => { const r = candles.enqueue(body ?? {}); setTimeout(() => candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)), 0); return r; },
-  '/api/candles/queue-run': async () => { setTimeout(() => candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)), 0); return { ok: true }; },
+  '/api/candles/windows': async (body) => { const r = candles.enqueue(body ?? {}); setTimeout(queueTick, 0); return r; },
+  '/api/candles/queue-run': async () => { setTimeout(queueTick, 0); return { ok: true }; },
   // P25: import historii 1m (dryRun = sama wycena; pobranie wymaga confirmedCostUsd, ewentualnie limitsOverrideUsd)
-  '/api/candles/import': (body) => candles.importHistory(body ?? {}),
-  '/api/candles/import-1s': (body) => candles.importOpen(body ?? {}), // P49: okna 1s NQ 9:30–11:00 NY, budżet 36 USD (narzedzia/import-okien-1s.mjs)
+  '/api/candles/import': (body) => (body?.dryRun === true ? null : moveBusy()) || candles.importHistory(body ?? {}),
+  // P49: okna 1s NQ 9:30–11:00 NY, budżet 36 USD (narzedzia/import-okien-1s.mjs)
+  '/api/candles/import-1s': (body) => (body?.dryRun === true ? null : moveBusy()) || candles.importOpen(body ?? {}),
 });
 // Newsy i earningsy (1.4.0): klucze FRED i Finnhub tylko do .env (jak Databento, nigdy do Notion ani do ustawień), ręczne wyjątki klas earningów w config.local.json.
 // Po zapisie klucza odświeżenie rusza w tle (zapytań do FRED jest kilkadziesiąt), wynik widać w statusie (GET /api/news/status, /api/earnings/status).
@@ -464,12 +510,70 @@ Object.assign(ACTIONS, {
     return { ok: true, overrides, extra: [...extra] };
   },
 });
+// ---------- źródła danych (N4, 1.6.0): Ustawienia → Źródła danych ----------
+// Klucze Databento, FRED i Finnhub: zapis do .env dopiero po bezpłatnym teście u dostawcy, „Usuń” usuwa linię; odpowiedzi mają tylko „zapisany: tak/nie”
+// i 4 ostatnie znaki. Klucz nie trafia do odpowiedzi, logu ani komunikatów błędów (scrubSecrets z wartością klucza), ani do settings i bloku w Notion.
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 1: klucze w Ustawieniach z „Testuj” i „Usuń”, zapis wyłącznie do .env przez serwer, maska z 4 ostatnimi znakami)
+const SOURCE_KEYS = { databento: 'DATABENTO_API_KEY', fred: 'FRED_API_KEY', finnhub: 'FINNHUB_API_KEY' };
+// Poprawki po review N1–N4 (bezp. P3-2): klucze usunięte albo zastąpione w tej sesji maskujemy w logu dalej (nie leżą już w .env, więc maska dosłowna by ich nie znała)
+const forgottenSecrets = new Set();
+const rememberOld = (envKey) => { const v = loadEnv()[envKey]; if (v) forgottenSecrets.add(v); };
+function sourcesState() {
+  const env = loadEnv();
+  const st = candles.status();
+  return {
+    keys: Object.fromEntries(Object.entries(SOURCE_KEYS).map(([s, k]) => [s, { configured: !!env[k], hint: keyHint(env[k]) }])),
+    databento: {
+      limitUsd: candles.limitUsd(), dailyLimitUsd: candles.dailyLimitUsd(), spentTodayUsd: candles.spentToday(), credit: candles.credit(), nq1sDaily: config.chartNq1sDaily === true,
+      // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 2: bez podnoszenia twardych sufitów): UI tylko je pokazuje, pilnuje serwer
+      caps: { limitMaxUsd: LIMIT_MAX_USD, creditMaxUsd: CREDIT_MAX_USD, importMaxUsd: IMPORT_MAX_USD, open1sMaxUsd: OPEN_IMPORT_MAX_USD },
+      queue: st.queue, open1s: st.open1s, import1s: st.import1s,
+      status: { running: st.running, phase: st.phase, done: st.done, total: st.total, costUsd: st.costUsd, error: st.error, result: st.result, finishedAt: st.finishedAt },
+    },
+  };
+}
+async function sourceKey(body) {
+  const source = body?.source;
+  if (!Object.hasOwn(SOURCE_KEYS, source)) throw new NewsError(t('Nieznane źródło danych.'), 400, 'bad-source');
+  if (body.remove !== undefined) {
+    if (body.remove !== true) throw new NewsError(t('Nieprawidłowe żądanie.'), 400, 'bad-request');
+    rememberOld(SOURCE_KEYS[source]);
+    saveEnv({ [SOURCE_KEYS[source]]: null });
+    console.log(`[sources] Key removed: ${source}.`);
+    return { ok: true, source, configured: false, hint: '' };
+  }
+  const key = String(body.key ?? '').trim();
+  const fail = (e) => {
+    const msg = scrubSecrets(e?.message || '', [key]);
+    // błąd dostawcy (zły klucz, brak sieci): 400 z komunikatem bez klucza; zapis nie nastąpił
+    return new NewsError(t('Klucz nie został zapisany: {msg}', { msg }), e?.status === 409 || e?.status === 422 ? e.status : 400, e?.code || 'bad-key');
+  };
+  rememberOld(SOURCE_KEYS[source]);
+  if (source === 'databento') {
+    try { await candles.setKey({ key }); } catch (e) { throw fail(e); }
+  } else {
+    if (source === 'fred' && !FRED_KEY_RE.test(key)) throw new NewsError(t('To nie wygląda na klucz FRED (32 znaki: litery i cyfry).'), 400, 'bad-key');
+    if (source === 'finnhub' && !FINNHUB_KEY_RE.test(key)) throw new NewsError(t('To nie wygląda na klucz Finnhub (10 do 60 znaków: litery i cyfry).'), 400, 'bad-key');
+    try { await (source === 'fred' ? news : earnings).testKey(key); } catch (e) { throw fail(e); }
+    saveEnv({ [SOURCE_KEYS[source]]: key });
+    if (source === 'fred') background('news', () => news.refreshFred());
+    else background('earnings', async () => { await earnings.refreshCalendar(); await earnings.refreshCaps(); });
+  }
+  console.log(`[sources] Key saved after a test: ${source}.`);
+  return { ok: true, source, configured: true, hint: keyHint(key) };
+}
+Object.assign(ACTIONS, {
+  '/api/sources/key': async (body) => sourceKey(body),
+});
+
 Object.assign(ACTIONS, {
   '/api/setup/token': async (body) => {
     const token = String(body.token || '').trim();
     if (!token) throw new ValidationError({ token: t('Wklej token integracji.') });
     if (!/^[A-Za-z0-9_\-]{20,200}$/.test(token) && !process.env.NOTION_API_BASE) throw new ValidationError({ token: t('To nie wygląda na token Notion (zaczyna się od ntn_).') });
     if (body.replace !== true && (await tokenWorks())) throw Object.assign(new NotionError(t('Token jest już zapisany i działa. Zmienisz go w Ustawieniach: „Zmień token”.'), 409), { code: 'has-token' });
+    // final (review kodu P2-1): podmiana klienta Notion w trakcie kopii albo przywracania baz pisałaby dalej starym tokenem do starego dziennika
+    if (backups.busy()) throw Object.assign(new NotionError(backups.busy(), 409), { code: 'running' });
     const probe = createNotion({ token, version: S.version, base: S.base, t });
     let who;
     try { who = await verifyToken(probe); } catch (e) {
@@ -493,6 +597,8 @@ Object.assign(ACTIONS, {
   },
   '/api/setup/connect': async (body) => {
     if (!PAGE_ID_RE.test(String(body.pageId || ''))) throw new ValidationError({ pageId: t('Wybierz stronę z listy.') });
+    // final (review kodu P2-1): zmiana baz (SOURCES) w trakcie kopii albo przywracania mieszałaby dwa dzienniki
+    if (backups.busy()) throw Object.assign(new NotionError(backups.busy(), 409), { code: 'running' });
     const page = (await listPages(notion, SCHEMA)).find((p) => p.id === body.pageId);
     if (!page?.journal) throw new ValidationError({ pageId: t('Na tej stronie nie ma kompletnego dziennika (4 baz).') });
     finishInstall({ dsIds: page.journal.dsIds, dbIds: page.journal.dbIds, rootUrl: page.url, rootPageId: page.id, lang: page.journal.lang, schemaVersion: 0 });
@@ -594,6 +700,115 @@ Object.assign(ACTIONS, {
   },
 });
 
+// ---------- diagnostyka (N2, 1.6.0): Ustawienia → Kopie i diagnostyka ----------
+// Stan bez sieci, test źródła (guardWrite przez ACTIONS), log bez sekretów, „Otwórz folder” tylko dla ścieżek serwera.
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 9: restart i zatrzymanie serwera zawsze widoczne w diagnostyce)
+const diag = createDiag({
+  version: APP_VERSION, started: STARTED, host: HOST, port: PORT, repoUrl: `https://github.com/${REPO}`,
+  configDir: CONFIG_DIR, dataDir: DATA_DIR, backupsDir: path.join(CONFIG_DIR, 'backups'), logFile: path.join(CONFIG_DIR, 'dashboard.log'), prevDir: () => prevDataDir(), configCorrupt: CONFIG_CORRUPT,
+  notion, sources: SOURCES, getConfig: () => config, schemaVersion: SCHEMA_VERSION, candles, news, earnings, updateInfo, t,
+  secrets: () => { const e = loadEnv(); return [...['NOTION_TOKEN', 'DATABENTO_API_KEY', 'FRED_API_KEY', 'FINNHUB_API_KEY'].map((k) => e[k]).filter(Boolean), ...forgottenSecrets]; },
+  badRequest: (msg) => new ValidationError({}, msg),
+});
+Object.assign(ACTIONS, {
+  '/api/diag/test': async (body) => diag.test(body?.source),
+  '/api/diag/open': async (body) => diag.open(body?.which),
+});
+
+// ---------- dane na dysku (N3, 1.6.0): Ustawienia → Dane na dysku ----------
+// Przegląd bez sieci (GET /api/disk), usuwanie warstwy świec z potwierdzeniem nazwą, przenoszenie katalogu danych (kopia → sprawdzenie → przełączenie → restart).
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 6: przenoszenie katalogu danych: kopia → sprawdzenie → przełączenie → restart, stary katalog zostaje)
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 7: usuwanie świec z UI tak, kopii baz nie)
+const BACKUPS_DIR = path.join(CONFIG_DIR, 'backups');
+// poprzedni katalog danych (po przeniesieniu) tylko z config.local.json i tylko jako ścieżka bezwzględna
+function prevDataDir() { const p = config.dataDirPrev; return typeof p === 'string' && path.isAbsolute(p) && p !== DATA_DIR ? p : null; }
+// Poprawki po review N1–N4 (kod P3-2, bezp. „poza punktacją”): jeden powód blokady dla restartu, zatrzymania i aktualizacji. Przerwanie kopii zostawia
+// niepełny katalog, przerwanie pobierania traci opłaconą (zarezerwowaną w liczniku) partię. null = można.
+// N5: zadanie kopii baz (kopia teraz, podgląd, przywrócenie) też blokuje restart, zatrzymanie i aktualizację (kopie sprawdzają własne zadanie przed tą funkcją)
+function busyReason() {
+  if (backups.busy()) return backups.busy();
+  if (upd.running) return t('Aktualizacja już trwa.');
+  if (setupJob.running) return t('Trwa tworzenie dziennika. Spróbuj po jego zakończeniu.');
+  if (mover.busy()) return t('Trwa przenoszenie danych. Spróbuj po jego zakończeniu.');
+  const c = candles.status();
+  if (c.running) return c.phase === 'import' || c.phase === 'import-1s' ? t('Trwa import świec. Spróbuj po jego zakończeniu.') : t('Trwa pobieranie świec. Spróbuj po jego zakończeniu.');
+  return null;
+}
+const mover = createMover({
+  getDataDir: () => DATA_DIR, appRoot: ROOT, getConfig: () => config, saveConfig: () => persistConfigNow(), t,
+  isBusy: () => (candles.status().running ? t('Trwa pobieranie świec. Spróbuj po jego zakończeniu.') : null),
+});
+// Blokada zapisów świec w trakcie kopii: zwraca nic (można działać) albo rzuca 409
+function moveBusy() {
+  if (mover.busy()) throw new DiskError(t('Trwa przenoszenie danych. Spróbuj po jego zakończeniu.'), 409, 'moving');
+  if (mover.writesBlocked()) throw new DiskError(t('Kopia danych czeka na przełączenie. Przełącz albo anuluj w Ustawieniach → Dane na dysku.'), 409, 'moving');
+  return null;
+}
+// Przebieg kolejki świec (timer co 5 minut i żądania z dashboardu); w trakcie kopii katalogu czeka
+function queueTick() {
+  if (mover.writesBlocked()) return;
+  candles.tick().catch((e) => console.error('[candles] kolejka:', e.message));
+}
+// Dozwolone nazwy wierszy i symbole: tylko z list (nigdy ścieżka z żądania)
+function deleteCandles(body) {
+  moveBusy();
+  const symbol = body?.symbol, layer = body?.layer;
+  if (!CANDLE_SYMBOLS.includes(symbol) || !CANDLE_ROWS.includes(layer)) throw new DiskError(t('Nieznany instrument albo warstwa świec.'), 400, 'bad-layer');
+  if (body.confirm !== `${symbol} ${layer}`) throw new DiskError(t('Żeby usunąć, wpisz dokładnie: {name}', { name: `${symbol} ${layer}` }), 400, 'confirm-required');
+  const symDir = path.join(DATA_DIR, 'candles', symbol);
+  const present = existsSync(symDir) ? readdirSync(symDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : [];
+  const layers = layersOfRow(layer, present);
+  if (!layers.length) return { ok: true, removed: [], bytes: 0 };
+  let bytes = 0;
+  const count = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) count(p); else if (e.isFile()) bytes += statSync(p).size; } };
+  for (const l of layers) count(path.join(symDir, l));
+  const r = candles.deleteLayers(symbol, layers);
+  // indeks cech dni liczony z pokrycia świec: po usunięciu warstwy liczy się od nowa
+  try { rmSync(path.join(DATA_DIR, 'backtest', `day-index-${symbol}.json`), { force: true }); } catch { /* brak pliku */ }
+  console.log(`[data] Removed candle layers ${symbol}: ${layers.join(', ')}.`);
+  return { ok: true, removed: layers, bytes, queueDropped: r.dropped };
+}
+Object.assign(ACTIONS, {
+  '/api/disk/candles/delete': async (body) => moveBusy() || deleteCandles(body),
+  // { target, dryRun: true } sprawdza ścieżkę i miejsce; { target, confirm: true } zaczyna kopię
+  '/api/disk/move': async (body) => {
+    if (body?.dryRun === true) return { ok: true, ...(await mover.check(body.target)) };
+    if (body?.confirm !== true) throw new DiskError(t('Przeniesienie wymaga potwierdzenia.'), 400, 'confirm-required');
+    return mover.start(body.target);
+  },
+  '/api/disk/move/cancel': async () => mover.cancel(),
+  // Przełączenie: zapis dataDir w config.local.json, potem restart (nowy proces czyta nowy katalog); stary katalog zostaje
+  '/api/disk/move/switch': async () => {
+    // final (review kodu P2-1): ta sama blokada co restart (kopia i przywracanie baz, aktualizacja, tworzenie dziennika, pobieranie świec)
+    const why = busyReason();
+    if (why) throw new DiskError(why, 409, 'running');
+    const r = await mover.switchTo();
+    console.log(`[data] Data folder switched to ${r.dataDir}, restarting.`);
+    scheduleRestart(800);
+    return { ...r, restarting: true };
+  },
+});
+
+// ---------- kopie baz Notion (N5, 1.6.0): Ustawienia → Kopie i diagnostyka ----------
+// Lista kopii, kopia teraz, podgląd przywracania bez zapisu i przywrócenie po wpisaniu „TAK” (EN „YES”) z kopią bieżącego stanu przed zapisem.
+// Logika kopii i planu bez zmian w lib/backup.mjs; nazwy kopii tylko z listy; usuwania kopii nie ma.
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 7: usuwania kopii baz z UI nie ma)
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 8: przywracanie Notion z kopii z UI po wpisaniu „TAK”)
+const backups = createBackups({
+  notion, sources: SOURCES, backupsDir: BACKUPS_DIR, t,
+  meta: () => ({ appVersion: APP_VERSION, schemaVersion: Number(config.schemaVersion) || 0 }),
+  isBusy: () => busyReason(),
+  lang: () => (config.lang === 'en' ? 'en' : 'pl'),
+  onRestored: () => data.invalidate(),
+  scrub: (s) => scrubSecrets(s, [...['NOTION_TOKEN', 'DATABENTO_API_KEY', 'FRED_API_KEY', 'FINNHUB_API_KEY'].map((k) => loadEnv()[k]).filter(Boolean), ...forgottenSecrets]),
+});
+Object.assign(ACTIONS, {
+  '/api/backups/create': async () => backups.create(),
+  '/api/backups/preview': async (body) => backups.preview(body?.name),
+  // final (P2-2, bezp. P3-2): przywrócenie wymaga znacznika z wyniku podglądu (jednorazowy, ważny kilka minut)
+  '/api/backups/restore': async (body) => backups.restore(body?.name, body?.confirm, body?.token),
+});
+
 const server = http.createServer(async (req, res) => {
   try {
     if (!isLoopback(req.socket.remoteAddress) || !ALLOWED_HOSTS.has(req.headers.host || '')) {
@@ -622,6 +837,8 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 403, { error: t('Żądanie odrzucone: zapis jest możliwy tylko z samego dashboardu.') });
       }
       if (isShutdown) {
+        const why = busyReason();
+        if (why) return sendJson(res, 409, { error: why, code: 'running' });
         sendJson(res, 200, { ok: true });
         console.log('Shutdown requested from the status bar.');
         res.on('finish', () => setTimeout(() => process.exit(0), 100));
@@ -642,8 +859,8 @@ const server = http.createServer(async (req, res) => {
           const body = await readJson(req, 4096);
           const bb = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
           if (typeof bb.sessionId !== 'string' || !SESSION_ID_RE.test(bb.sessionId)) throw new BacktestError(t('Nieprawidłowy identyfikator sesji backtestu.'), 400, 'bad-id');
-          if (bb.day != null && !(typeof bb.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(bb.day))) throw new BacktestError(t('Nieprawidłowy dzień.'), 400, 'bad-day');
-          return sendJson(res, 200, await btSync.push({ sessionId: bb.sessionId, day: bb.day ?? null, all: bb.all === true, auto: bb.auto === true }));
+          // K (31.10.2026) [U] «od razu»: bez trybu dnia; pole day ignorowane (stara karta przeglądarki)
+          return sendJson(res, 200, await btSync.push({ sessionId: bb.sessionId, all: bb.all === true, auto: bb.auto === true }));
         }
         if (dr) {
           const body = await readJson(req, DRAWINGS_BODY_LIMIT, 'Rysunki są zbyt duże.');
@@ -700,12 +917,15 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/candles') {
       try { return sendJson(res, 200, candles.read(Object.fromEntries(url.searchParams))); } catch (e) { return sendError(res, e); }
     }
-    // Backtest (1.5.0, pakiet A): cały dzień replayu jednym zapytaniem (kontekst 1m + prawdziwe 1s NQ + newsy). ES tylko 1m ([U] 30.10.2026).
-    if (url.pathname === '/api/backtest/day') {
+    // Backtest K (31.10.2026): zakres replayu (strumień bazowy tf=base albo historia wykresu tf=<interwał>) i granice danych; tylko lokalne świece.
+    if (url.pathname === '/api/backtest/range') {
       try {
-        const c = url.searchParams.get('ctx');
-        return sendJson(res, 200, await replayDay.read({ instruments: (url.searchParams.get('instruments') ?? '').split(',').filter(Boolean), day: url.searchParams.get('day') ?? '', ctx: c === null ? 2 : /^\d{1,3}$/.test(c) ? Number(c) : NaN }));
+        const q = (k) => url.searchParams.get(k) ?? '';
+        return sendJson(res, 200, replayRange.read({ instruments: q('instruments').split(',').filter(Boolean), from: q('from'), to: q('to'), tf: q('tf') || 'base' }));
       } catch (e) { return sendError(res, e); }
+    }
+    if (url.pathname === '/api/backtest/bounds') {
+      try { return sendJson(res, 200, replayRange.bounds({ instruments: (url.searchParams.get('instruments') ?? '').split(',').filter(Boolean) })); } catch (e) { return sendError(res, e); }
     }
     if (url.pathname === '/api/backtest/sessions') {
       try { return sendJson(res, 200, { sessions: btStore.list() }); } catch (e) { return sendError(res, e); }
@@ -742,14 +962,29 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/sync') return sendJson(res, 200, await sync.pull({ force: url.searchParams.has('force') }));
     if (url.pathname === '/api/devices') return sendJson(res, 200, await sync.devices());
     if (url.pathname === '/api/setup/state') return sendJson(res, 200, { hasToken: notion.hasToken, configured: !!SOURCES.trades, lang: config.lang, onboarded: config.onboarded !== false, resumable: !!config.setupProgress?.rootPageId, parentPageId: config.setupProgress?.parentPageId || null });
-    if (url.pathname === '/api/health') return sendJson(res, 200, { ok: true, version: APP_VERSION });
+    if (url.pathname === '/api/health') return sendJson(res, 200, { ok: true, version: APP_VERSION, started: STARTED });
+    if (url.pathname === '/api/diag') return sendJson(res, 200, diag.state());
+    if (url.pathname === '/api/diag/log') return sendJson(res, 200, diag.logTail(url.searchParams.get('lines')));
+    // N3: przegląd katalogu danych (tylko dysk) i stan przenoszenia
+    if (url.pathname === '/api/disk') {
+      try {
+        const s = await scanData({ dataDir: DATA_DIR, backupsDir: BACKUPS_DIR });
+        return sendJson(res, 200, { ...s, custom: DATA.custom, missing: DATA.missing, prev: prevDataDir(), move: mover.status(), busy: mover.busy() ? 'move' : candles.status().running ? 'candles' : null });
+      } catch (e) { return sendError(res, e); }
+    }
+    if (url.pathname === '/api/disk/move/status') return sendJson(res, 200, mover.status());
+    // N5: lista kopii baz Notion i stan zadania (tylko dysk, bez sieci)
+    if (url.pathname === '/api/backups') { try { return sendJson(res, 200, backups.list()); } catch (e) { return sendError(res, e); } }
+    // N4: stan źródeł danych (bez sieci): klucze tak/nie z 4 znakami, limity, kredyt, sufity, kolejka, import
+    if (url.pathname === '/api/sources') return sendJson(res, 200, sourcesState());
     if (url.pathname === '/api/ping') return sendJson(res, 200, { ok: true, app: 'trading-hq', version: APP_VERSION, img: stats });
     if (url.pathname === '/api/img') return await handleImg(url, res);
 
     // Strony robocze z testy/ (np. podgląd kart Udostępnij) tylko dla dashboardu testowego: testy/start-test.mjs ustawia THQ_TEST_PAGES=1.
-    if (process.env.THQ_TEST_PAGES === '1' && url.pathname.startsWith('/__testy/') && url.pathname.endsWith('.html')) {
+    // K (31.10.2026): także pomocnicze moduły stron testowych testy/bt-*.js (np. bt-zgodnosc.js), tylko z THQ_TEST_PAGES=1
+    if (process.env.THQ_TEST_PAGES === '1' && url.pathname.startsWith('/__testy/') && (url.pathname.endsWith('.html') || /^bt-[a-z0-9-]+\.js$/.test(path.basename(url.pathname)))) {
       const tf = path.normalize(path.join(ROOT, 'testy', path.basename(url.pathname)));
-      if (existsSync(tf) && statSync(tf).isFile()) { res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', ...SEC_HEADERS }); return createReadStream(tf).pipe(res); }
+      if (existsSync(tf) && statSync(tf).isFile()) { res.writeHead(200, { 'Content-Type': MIME[path.extname(tf)], 'Cache-Control': 'no-cache', ...SEC_HEADERS }); return createReadStream(tf).pipe(res); }
     }
     let rel = decodeURIComponent(url.pathname);
     if (rel === '/') rel = '/index.html';
@@ -768,8 +1003,14 @@ const server = http.createServer(async (req, res) => {
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') {
-    console.log(`Port ${PORT} is busy: assuming the dashboard is already running.`);
-    process.exit(0);
+    // N1 (1.6.0): drugi start obok działającego dashboardu kończy się jak dotąd (kod 0), a inny program na porcie jest nazwany wprost (kod 1),
+    // bo wcześniej log mówił „dashboard już działa”, a przeglądarka otwierała cudzą aplikację
+    fetch(`http://${HOST}:${PORT}/api/ping`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).then((j) => j?.app === 'trading-hq', () => false).then((ours) => {
+      if (ours) { console.log(`Port ${PORT} is busy: the dashboard is already running.`); process.exit(0); }
+      console.error(`Port ${PORT} is used by another program (inny program zajmuje port ${PORT}). Close it or set another port: README, FAQ.`);
+      process.exit(1);
+    });
+    return;
   }
   console.error(e.message);
   process.exit(1);
@@ -777,7 +1018,7 @@ server.on('error', (e) => {
 
 server.listen(PORT, HOST, () => console.log(`JustJournal ${APP_VERSION}: http://${HOST}:${PORT}`));
 // P25: kolejka okien 1s przechodzi co 5 minut (puste = zero sieci). Start dopiero tu, nie przy imporcie modułu candles.
-setInterval(() => { candles.tick().catch((e) => console.error('[candles] kolejka:', e.message)); }, 5 * 60_000).unref();
+setInterval(queueTick, 5 * 60_000).unref();
 // Newsy: pierwszy przebieg po 5 s od startu, potem co 10 minut (tick sam pilnuje godzinnego odstępu feedu i dobowego FRED; brak sieci nic nie psuje).
 if (process.env.THQ_NO_NEWS !== '1') {
   setTimeout(() => news.tick().catch((e) => console.error('[news]', e.message)), 5000).unref();

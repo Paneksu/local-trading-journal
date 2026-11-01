@@ -47,21 +47,24 @@ export default ({ test, H, assert, ROOT }) => {
     const A = await H.atrapa(4877);
     const S = await H.server(4878, { NOTION_API_BASE: A.base, NOTION_TOKEN: 'secret_x', ...H.IDS, NOTION_ROOT_URL: H.PARENT_URL, THQ_CONFIG_DIR: H.tmp() });
     try {
-      const until = `(() => { const b = document.querySelector('#tabs [data-v="backtest"]'); if (!b) return false; if (!window.__btClicked) { window.__btClicked = 1; b.click(); } return !!document.querySelector('.bt-view .empty [data-bt="new"]'); })()`;
-      const extract = `JSON.stringify({ tab: !!document.querySelector('#tabs [data-v="backtest"]'), bar: !!document.querySelector('#tabbar [data-v="backtest"]'), sel: document.querySelector('#tabs [data-v="backtest"]').getAttribute('aria-selected'), btn: document.querySelector('.bt-view .empty [data-bt="new"]').textContent })`;
+      const until = `(() => { const b = document.querySelector('#tabs [data-v="backtest"]'); if (!b) return false; if (!window.__btClicked) { window.__btClicked = 1; b.click(); } return !!document.querySelector('.bt-view .sec-h [data-bt="new"]') && !!document.querySelector('.bt-view .empty'); })()`;
+      const extract = `JSON.stringify({ tab: !!document.querySelector('#tabs [data-v="backtest"]'), bar: !!document.querySelector('#tabbar [data-v="backtest"]'), sel: document.querySelector('#tabs [data-v="backtest"]').getAttribute('aria-selected'), btn: document.querySelector('.bt-view .sec-h [data-bt="new"]').textContent, nodata: document.querySelector('.bt-view .bt-nodata a[href="#ustawienia/zrodla/databento"]')?.textContent || '' })`;
       const r = JSON.parse(await P.cdpPage(S.base + '/', { width: 1400, height: 900, timeoutMs: 60_000, until, extract }));
       assert.equal(r.tab, true, '[data-v="backtest"] w pasku zakładek');
       assert.equal(r.bar, true, 'zakładka w dolnym pasku (telefon)');
       assert.equal(r.sel, 'true');
       assert.match(r.btn, /Nowa sesja/);
+      // N1 (1.6.0): katalog testowy bez świec, więc pusta lista mówi, skąd wziąć świece (wcześniej: „Nowa sesja” w pustej karcie)
+      assert.match(r.nodata, /Połącz Databento/);
     } finally { S.stop(); A.stop(); }
   });
-  test('backtest-C1: formularz klasyczny', () => tagged('formularz', 10));
-  test('backtest-C1: start dnia z historią', () => tagged('start', 11));
+  test('backtest-C1: formularz klasyczny', () => tagged('formularz', 11));
+  test('backtest-C1: start z pełną historią (K)', () => tagged('start', 12));
   test('backtest-C1: krok i odtwarzanie', async () => { await tagged('krok', 4); await tagged('play', 4); });
   test('backtest-C1: series.update zamiast setData', () => tagged('setData', 4));
   test('backtest-C1: TF sekundowy przed 9:30', () => tagged('tf15s', 7));
-  test('backtest-C1: ukryta data', () => tagged('ukryta', 9));
+  // K (31.10.2026): zastępuje „backtest-C1: ukryta data” (kolejność losowa usunięta, [U] «Filtr jako skok»)
+  test('backtest-K: kursor przez 16:00, przerwę i noc do końca danych, bez „Zakończ dzień” (ekran)', () => tagged('ciagly', 10));
   test('backtest-C1: stan sesji po ponownym otwarciu i pagehide', () => tagged('zapis', 6));
   test('backtest-C1: koszt kroku na syntetycznym dniu', async () => {
     const res = await tagged('koszt', 4);

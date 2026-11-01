@@ -1,13 +1,18 @@
 // „Pierwsze kroki”: nakładka nad dashboardem (tło widoczne) z kreatorem instalacji i sprawdzeniem gotowości.
-// Świeża instalacja: Witaj (język) → Token (wklejenie sprawdza od razu) → Strona (odpytywanie co 3 s, bez wklejania adresów)
-// → Dziennik (jeden przycisk, postęp, „Ponów”) → Gotowość (sprawdzenie końcowe) → Przewodnik. Skonfigurowana instalacja:
-// Witaj → Gotowość („Napraw wszystko”) → Przewodnik; token i dostęp do strony wracają do odpowiedniego kroku kreatora.
+// N6 (1.6.0), §4.5 specyfikacji N: świeża instalacja: Witaj (język) → Notion (token, wklejenie sprawdza od razu) → Strona (odpytywanie co 3 s)
+// → Dziennik (jeden przycisk, postęp, „Ponów”) → Dane rynkowe (opcjonalne: te same karty co Ustawienia → Źródła danych) → Gotowość
+// (4 grupy z jednym statusem) → Gotowe (bez automatycznego przejścia: przewodnik, pierwszy trade, usunięcie DEMO). Skonfigurowana instalacja:
+// Witaj → Gotowość („Napraw wszystko”) → Gotowe; token, dostęp do strony i dane rynkowe wracają do odpowiedniego kroku kreatora.
+// [U] 31.10.2026 «oraz zaktualizuj wyglad pierwszych krokow w journalu»
+// [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 3: nowa instalacja bez kredytu, dopóki użytkownik go nie wpisze; decyzja 4: okno 1s NQ domyślnie wyłączone)
 // Sprawdzenia tylko czytają; zapis w Notion wyłącznie po jawnym kliknięciu. Token nie trafia do localStorage ani do konsoli.
 // English: onboarding overlay with the in-browser setup wizard and readiness checks.
 import { esc } from './format.js';
 import { overlay, trapTab, toast } from './modal.js';
-import { t, getLang, rememberLang } from './i18n.js';
+import { t, getLang, rememberLang, locale } from './i18n.js';
 import { poradnikLink, bindPoradniki, platform } from './poradnik.js';
+import { createZrodla } from './ust-zrodla.js';
+import { fmtBytes } from './ust-wspolne.js';
 
 const svg = (body, s = 16, sw = 1.8) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 // Logo usług tylko do identyfikacji (Notion, GitHub, Node.js), monochromatyczne, w kolorze tekstu.
@@ -22,6 +27,9 @@ export const LOGO = {
   pen: svg('<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>', 18, 1.6),
   tag: svg('<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3-8.7 8.7Z"/><circle cx="8" cy="8" r="1.4"/>', 18, 1.5),
   page: svg('<path d="M6 3.5h8l4 4v13H6Z"/><path d="M14 3.5v4h4M9 12h6M9 15.5h6"/>', 18, 1.5),
+  chart: svg('<path d="M4 20V4M4 20h16"/><path d="M8.5 9v6M8.5 7v2M8.5 15v2M13 6v5M13 4v2M13 11v3M17.5 10v4M17.5 8v2M17.5 14v2"/>', 18, 1.5),
+  coin: svg('<circle cx="12" cy="12" r="8.5"/><path d="M14.6 9.4c-.5-.9-1.5-1.4-2.6-1.4-1.4 0-2.5.8-2.5 1.9s1 1.6 2.5 2 2.5.9 2.5 2-1.1 2-2.5 2c-1.1 0-2.1-.5-2.6-1.4M12 6.5V8M12 16v1.5"/>', 18, 1.5),
+  disk: svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 14.5h17M7.5 17h.01"/>', 18, 1.5),
 };
 const ICON = {
   ok: svg('<path d="m5 12.5 4.5 4.5L19 7.5"/>', 16, 2.4),
@@ -33,7 +41,7 @@ const ICON = {
   ext: svg('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>', 13, 1.8),
   copy: svg('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>', 13, 1.8),
 };
-const STEP_NAME = { witaj: 'Witaj', token: 'Token', strona: 'Strona', dostep: 'Dostęp', dziennik: 'Dziennik', gotowosc: 'Gotowość', przewodnik: 'Przewodnik', kod: 'Kod', gotowe: 'Gotowe' };
+const STEP_NAME = { witaj: 'Witaj', token: 'Notion', strona: 'Strona', dostep: 'Dostęp', dziennik: 'Dziennik', dane: 'Dane rynkowe', gotowosc: 'Gotowość', kod: 'Kod', gotowe: 'Gotowe' };
 const PATH_KEY = 'thq.obPath';
 // trzy ścieżki pierwszego uruchomienia
 const PATHS = [
@@ -48,6 +56,16 @@ const STATUS_WORD = { ok: 'gotowe', warn: 'uwaga', error: 'błąd', info: 'infor
 const INTEGRATIONS_URL = 'https://www.notion.so/profile/integrations';
 const INTEGRATION_NAME = 'JustJournal';
 const RESUME_KEY = 'thq.obResume';
+const fmtUsd = (x) => new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(x) || 0);
+
+// N6: przebieg kreatora (czysta funkcja, test w przeglądarce). Dane rynkowe po połączeniu Notion w każdej ścieżce, bo klucze są per komputer.
+export function flowFor({ configured = false, hasToken = false, path = 'nowy' } = {}) {
+  if (configured) return ['witaj', 'gotowosc', 'gotowe'];
+  const tokenStep = hasToken ? [] : ['token'];
+  if (path === 'kod') return ['witaj', 'kod', 'dane', 'gotowosc', 'gotowe'];
+  if (path === 'polacz') return ['witaj', ...tokenStep, 'strona', 'dane', 'gotowosc', 'gotowe'];
+  return ['witaj', ...tokenStep, 'strona', 'dziennik', 'dane', 'gotowosc', 'gotowe'];
+}
 
 async function call(url, body) {
   const r = await fetch(url, body === undefined ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify(body) });
@@ -61,10 +79,11 @@ const get = (url) => call(url);
 const L = (s, p) => esc(t(s, p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onUpdate = () => {}, onDone = () => {}, onConfigured = async () => {}, onAttention = () => {} } = {}) {
-  let root = null, card = null, step = 0, opener = null, flow = ['witaj', 'gotowosc', 'przewodnik'];
+// onAddTrade(): „Dodaj pierwszy trade” na ekranie Gotowe (formularz dashboardu)
+export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onUpdate = () => {}, onDone = () => {}, onConfigured = async () => {}, onAttention = () => {}, onAddTrade = () => {} } = {}) {
+  let root = null, card = null, step = 0, opener = null, flow = flowFor({ configured: true });
   let setup = null;            // /api/setup/state
-  let fresh = false;           // kreator świeżej instalacji (po sprawdzeniu OK przechodzi sam do przewodnika)
+  let fresh = false;           // kreator świeżej instalacji (N6: bez automatycznego przejścia z Gotowości)
   let res = null, running = false, runErr = '';
   const open = { schema: null, demo: null, fix: null };
   const tok = { replace: false, checking: false, ok: null, err: '', timer: 0, last: '' };
@@ -74,12 +93,20 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   let path = 'nowy';                        // wybrana ścieżka świeżej instalacji
   const kd = { code: '', pin: '', busy: false, err: '', left: null, ok: null };
   // przebieg po kroku „Witaj” dla wybranej ścieżki
-  function pathFlow(p) {
-    const tokenStep = setup?.hasToken ? [] : ['token'];
-    if (p === 'kod') return ['kod', 'gotowosc', 'gotowe'];
-    if (p === 'polacz') return [...tokenStep, 'strona', 'gotowosc', 'gotowe'];
-    return [...tokenStep, 'strona', 'dziennik', 'gotowosc', 'przewodnik'];
-  }
+  const pathFlow = (p) => flowFor({ configured: false, hasToken: !!setup?.hasToken, path: p }).slice(1);
+  // N6: krok „Dane rynkowe”: moduł Źródeł danych z Ustawień z kontekstem kreatora (te same karty, ten sam zapis do .env przez serwer)
+  let diagState = null;
+  const testing = new Set();
+  const zr = createZrodla({
+    root: () => card,
+    diag: () => diagState,
+    testing: () => testing,
+    getMeta,
+    opts: { onConfig: async (patch) => { await post('/api/config', patch); await onConfigured({ meta: true }); }, loadNewsStatus: async () => null, onSourcesChanged: () => onConfigured({ meta: true }) },
+    rerender: () => paintDane(),
+    isActive: () => !!card && cur() === 'dane',
+    reloadDiag: () => loadDiag(),
+  });
   function setPath(p, { keepStep = false } = {}) {
     path = p;
     try { sessionStorage.setItem(PATH_KEY, p); } catch { /* brak */ }
@@ -98,15 +125,16 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       ? [['macos-open', 'macOS: „Nie można otworzyć aplikacji”'], ['smartscreen', 'Windows: ostrzeżenie SmartScreen']]
       : [['smartscreen', 'Windows: ostrzeżenie SmartScreen'], ['macos-open', 'macOS: „Nie można otworzyć aplikacji”']];
     return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Pierwsze kroki')}</h1>
-      <p class="ob-lead">${fresh ? L('Połączymy dashboard z Twoim Notion. Wkleisz token i udostępnisz jedną stronę, resztę zrobimy sami.') : L('Najpierw sprawdzimy, czy dashboard jest gotowy do pracy z Twoim dziennikiem w Notion. Potem w kilku krokach pokażemy, jak działa, na danych przykładowych.')}</p>
+      <p class="ob-lead">${fresh ? L('Połączymy dashboard z Twoim Notion w kilku krokach: wkleisz token, udostępnisz jedną stronę, a dziennik utworzymy sami. Na końcu możesz podłączyć dane rynkowe do wykresów.') : L('Najpierw sprawdzimy, czy dashboard jest gotowy do pracy z Twoim dziennikiem w Notion. Potem w kilku krokach pokażemy, jak działa, na danych przykładowych.')}</p>
       <div class="ob-lang"><span class="lbl" id="ob-lang">${L('Język')}</span><div class="seg" role="group" aria-labelledby="ob-lang"><button type="button" data-ob="lang" data-v="pl" aria-pressed="${lang === 'pl'}" lang="pl">Polski</button><button type="button" data-ob="lang" data-v="en" aria-pressed="${lang === 'en'}" lang="en">English</button></div></div>
+      ${fresh ? `<p class="fhint ob-lang-h">${L('Język ustala też nazwy baz i pól w Twoim Notion. Później zmienisz już tylko język interfejsu.')}</p>` : ''}
       <ul class="ck-list plain">
         ${row(LOGO.notion, 'Dane zostają w Twoim Notion', 'Dashboard czyta i zapisuje wpisy przez Twoją integrację. Nie ma tu żadnej chmury pośredniej.')}
         ${row(LOGO.lock, 'Działa tylko na tym komputerze', 'Serwer słucha na 127.0.0.1, a token Notion nie trafia do przeglądarki.')}
         ${row(LOGO.github, 'Aktualizacje bez utraty danych', 'Nowe wersje z GitHub. Przed zmianami w Notion zawsze powstaje kopia baz.')}
       </ul>
       ${fresh ? `<div class="ob-paths" role="radiogroup" aria-label="${L('Jak zaczynasz?')}"><span class="lbl">${L('Jak zaczynasz?')}</span>${PATHS.map(([id, title, text]) => `<button type="button" class="pg ob-path" role="radio" aria-checked="${path === id}" data-ob="path" data-v="${id}"><span class="ck-logo">${id === 'nowy' ? LOGO.notion : id === 'kod' ? LOGO.lock : LOGO.db}</span><span class="ck-txt"><b>${L(title)}</b><span>${L(text)}</span></span></button>`).join('')}</div>` : ''}
-      <div class="ob-help"><span class="lbl">${L('Pomoc z instalacją')}</span>${help.map(([id, label]) => poradnikLink([id], { label: t(label) })).join('')}</div>`;
+      <details class="ob-more ob-help"><summary>${L('Problem z uruchomieniem?')}</summary>${help.map(([id, label]) => poradnikLink([id], { label: t(label) })).join('')}</details>`;
   }
 
   // ---------- krok: Token ----------
@@ -118,7 +146,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   }
   function tokenHtml() {
     return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Token Notion')}</h1>
-      <p class="ob-lead">${tok.replace ? L('Wklej nowy token. Stary zostanie zastąpiony dopiero wtedy, gdy nowy zadziała.') : L('Dashboard łączy się z Notion przez Twoją własną integrację. Utwórz ją i wklej jej token.')}</p>
+      <p class="ob-lead">${tok.replace ? L('Wklej nowy token. Stary zostanie zastąpiony dopiero wtedy, gdy nowy zadziała.') : L('Dashboard łączy się z Notion przez Twoją własną integrację. To klucz, który pozwala mu czytać i zapisywać tylko te strony, które mu udostępnisz. Utwórz ją i wklej jej token.')}</p>
       <a class="btn ob-cta" href="${INTEGRATIONS_URL}" target="_blank" rel="noopener">${LOGO.notion}${L('Utwórz integrację w Notion')}${ICON.ext}</a>
       <ol class="ck-how ob-how">
         <li>${L('Kliknij New integration.')}</li>
@@ -156,12 +184,13 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const access = cur() === 'dostep';
     const pages = pg.pages || [];
     const waiting = `<p class="ob-wait live"><span class="pulse" aria-hidden="true"></span>${L('Czekam na udostępnienie strony…')}</p>`;
-    const how = `<ol class="ck-how ob-how"><li>${L('Otwórz w Notion dowolną stronę na dziennik (może być pusta).')}</li><li>${L('Kliknij ••• → Połączenia (Connections) i wybierz integrację JustJournal.')}</li></ol>`;
+    const how = `<ol class="ck-how ob-how"><li>${L('Najprościej: utwórz w Notion pustą stronę, np. „Trading”.')}</li><li>${L('Kliknij ••• → Połączenia (Connections) i wybierz integrację JustJournal.')}</li></ol>`;
     if (pg.err) return `<p class="ob-status err" role="alert">${ICON.error}${esc(pg.err)}</p>${how}`;
     if (pg.pages === null) return `<p class="ob-wait"><span class="spin" aria-hidden="true"></span>${L('Szukam stron udostępnionych integracji…')}</p>`;
     if (!pages.length || (access && !pages.some((p) => p.journal))) return `${how}${waiting}${poradnikLink(['notion-polaczenia'])}`;
     const sel = pages.find((p) => p.id === pg.sel);
-    return `<ul class="pg-list" role="radiogroup" aria-label="${L('Strony w Notion')}">${pages.map((p) => `<li><button type="button" class="pg" role="radio" aria-checked="${p.id === pg.sel}" data-ob="page" data-v="${esc(p.id)}">
+    const many = pages.length > 20 ? `<p class="fhint ob-many">${esc(t('Integracja widzi {n} stron. Wystarczy jedna, w której ma powstać dziennik.', { n: pages.length }))}</p>` : '';
+    return `${many}<ul class="pg-list" role="radiogroup" aria-label="${L('Strony w Notion')}">${pages.map((p) => `<li><button type="button" class="pg" role="radio" aria-checked="${p.id === pg.sel}" data-ob="page" data-v="${esc(p.id)}">
         <span class="ck-logo">${pageIcon(p)}</span><span class="ck-txt"><b>${esc(p.title || t('Bez tytułu'))}</b><span>${p.journal ? L('Jest tu już dziennik') : p.partial ? esc(t('Niepełny dziennik, brakuje: {list}', { list: p.partial.map((d) => t(DB_NAME[d] || d)).join(', ') })) : L('Nowy dziennik powstanie w tej stronie')}</span></span>
         ${p.journal ? `<span class="um-add">${L('dziennik')}</span>` : ''}</button></li>`).join('')}</ul>
       ${sel?.journal ? `<p class="fhint">${L('Na tej stronie jest już dziennik (np. z innego komputera). Połączymy go bez zmian w Notion.')}</p>` : ''}
@@ -177,23 +206,16 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     try {
       const r = await post('/api/setup/pages');
       pg.err = '';
-      const before = (pg.pages || []).length;
       pg.pages = r.pages || [];
       if (!pg.sel || !pg.pages.some((p) => p.id === pg.sel)) pg.sel = (pg.pages.find((p) => p.journal) || pg.pages[0])?.id || '';
       const sig = JSON.stringify([pg.pages.map((p) => [p.id, p.title, !!p.journal, p.partial]), pg.sel, pg.err]);
       if (sig !== pg.sig) { pg.sig = sig; const z = card?.querySelector('.pg-zone'); if (z) { z.innerHTML = pagesZoneHtml(); bindPoradniki(z); } paintFoot(); }
       // przejście dalej bez klikania: dostęp przywrócony albo pierwsza udostępniona strona (jedna, bez dziennika)
       if (cur() === 'dostep' && pg.pages.some((p) => p.journal)) { stopTimers(); toast(t('Integracja widzi dziennik.')); goTo('gotowosc', { recheck: true }); return; }
-      // ścieżka „dziennik w Notion”: jedyny znaleziony dziennik łączy się sam
+      // ścieżka „dziennik w Notion”: jedyny znaleziony dziennik jest od razu zaznaczony
       const journals = pg.pages.filter((p) => p.journal);
-      if (cur() === 'strona' && path === 'polacz' && journals.length === 1 && !pg.autoConnect) {
-        pg.autoConnect = true; pg.sel = journals[0].id;
-        clearTimeout(pg.autoNext);
-        pg.autoNext = setTimeout(() => { if (cur() === 'strona') choosePage(); }, 900);
-      } else if (cur() === 'strona' && path !== 'polacz' && before === 0 && pg.pages.length === 1 && !pg.pages[0].journal) {
-        clearTimeout(pg.autoNext);
-        pg.autoNext = setTimeout(() => { if (cur() === 'strona') choosePage(); }, 900);
-      }
+      if (cur() === 'strona' && path === 'polacz' && journals.length === 1 && !pg.autoConnect) { pg.autoConnect = true; pg.sel = journals[0].id; paintFoot(); }
+      // final (ocena wyglądu P3): krok Strona nie przechodzi dalej sam (ani przy jednej stronie, ani przy jednym dzienniku); wybór potwierdza „Dalej”
     } catch (e) {
       if (e.code === 'no-token') { stopTimers(); goTo('token'); return; }
       pg.err = e.message;
@@ -234,7 +256,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     }
     return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Utwórz dziennik')}</h1>
       <p class="ob-lead">${L('W stronie „{title}” powstanie podstrona z czterema bazami: Trade\'y, Konta, Dziennik oraz Wydatki i payouty. Niczego obok nie zmienimy.', { title: mk.title || t('wybrana strona') })}</p>
-      <label class="check big ob-demo"><input type="checkbox" id="ob-demo" ${mk.demo ? 'checked' : ''} ${job?.running || mk.starting || job?.done ? 'disabled' : ''}><span>${L('Dodaj przykładowe wpisy DEMO (usuniesz je jednym kliknięciem w gotowości)')}</span></label>
+      <label class="check big ob-demo"><input type="checkbox" id="ob-demo" ${mk.demo ? 'checked' : ''} ${job?.running || mk.starting || job?.done ? 'disabled' : ''}><span>${L('Dodaj przykładowe wpisy DEMO (usuniesz je jednym kliknięciem na końcu)')}</span></label>
       <div class="ob-build" aria-live="polite">${body}</div>`;
   }
   function paintBuild() { const b = card?.querySelector('.ob-build'); if (b && cur() === 'dziennik') { const keepDemo = card.querySelector('#ob-demo'); card.querySelector('.ob-body').innerHTML = buildHtml(); void keepDemo; } paintFoot(); }
@@ -313,25 +335,19 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     kd.err = ''; paintCodeStatus();
     card?.querySelector('#ob-pin')?.focus();
   }
-  function doneHtml() {
-    return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Gotowe, masz tu wszystkie swoje dane')}</h1>
-      <p class="ob-lead">${L('Dziennik z Notion i Twoje ustawienia (paleta, marginesy BE, język, motyw) są już na tym urządzeniu. Filtry i układ paneli ustawisz tu osobno.')}</p>
-      <ul class="ck-list plain"><li class="ck"><span class="ck-logo">${LOGO.notion}</span><span class="ck-txt"><b>${L('Te same dane na każdym urządzeniu')}</b><span>${L('Wpisy dodane tutaj od razu widać na pozostałych urządzeniach po odświeżeniu.')}</span></span></li></ul>`;
-  }
-
   async function afterInstall(lang, { sync = false } = {}) {
     void sync;
-    if (lang && lang !== getLang()) { rememberLang(lang); try { sessionStorage.setItem(RESUME_KEY, 'gotowosc'); } catch { /* brak */ } location.reload(); return; }
+    if (lang && lang !== getLang()) { rememberLang(lang); try { sessionStorage.setItem(RESUME_KEY, 'dane'); } catch { /* brak */ } location.reload(); return; }
     await onConfigured({ installed: true, sync: true });
     setup = await get('/api/setup/state').catch(() => setup);
-    goTo('gotowosc', { recheck: true });
+    // N6: po połączeniu Notion opcjonalne dane rynkowe, potem Gotowość od nowa
+    res = null;
+    goTo('dane');
   }
 
-  // ---------- krok: Gotowość ----------
+  // ---------- krok: Gotowość (N6: 4 grupy z jednym statusem, szczegóły rozwijane) ----------
   const statusHtml = (st) => `<span class="ck-st st-${st}">${st === 'run' ? '<span class="spin" aria-hidden="true"></span>' : ICON[st]}<span class="sr">${L(STATUS_WORD[st] || st)}</span></span>`;
-  let issueCount = 0;
   function row({ key, logo, title, text, st, fix = '', action = '' }) {
-    if (st === 'error' || st === 'warn') issueCount++;
     return `<li class="ck${st === 'error' || st === 'warn' ? ' has-fix' : ''}" data-ck="${esc(key)}"><span class="ck-logo">${logo}</span>
       <span class="ck-txt"><b>${esc(title)}</b><span>${text}</span></span>${statusHtml(st)}
       ${fix || action ? `<div class="ck-fix">${fix}${action ? `<div class="ck-act">${action}</div>` : ''}</div>` : ''}</li>`;
@@ -372,78 +388,183 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     }[id] || [LOGO.db, id];
     return { logo: base[0], title: t(base[1]) };
   }
+  // stan grupy: błąd > uwaga > gotowe; same informacje (np. dane rynkowe bez klucza) = informacja
+  const groupSt = (sts) => (sts.includes('error') ? 'error' : sts.includes('warn') ? 'warn' : sts.includes('ok') ? 'ok' : sts.includes('run') ? 'run' : 'info');
+  const GROUPS = [
+    { id: 'komputer', title: 'Ten komputer', logo: LOGO.lock },
+    { id: 'notion', title: 'Notion', logo: LOGO.notion },
+    { id: 'rynek', title: 'Dane rynkowe', logo: LOGO.chart },
+    { id: 'aktualizacje', title: 'Aktualizacje', logo: LOGO.github },
+  ];
+  // otwarcie szczegółów grupy wybrane przez użytkownika (przeżywa przerysowanie po „Sprawdź ponownie”)
+  const grpOpen = {};
+  // grupa z jednym punktem (Aktualizacje) nie ma szczegółów: punkt jest nagłówkiem
+  function groupHtml(g, rows, { st, summary, action = '' }) {
+    const issues = rows.filter((r) => r.st === 'error' || r.st === 'warn').length;
+    const isOpen = grpOpen[g.id] ?? (st === 'error' || st === 'warn');
+    return `<li class="ck-grp" data-grp="${g.id}" data-st="${st}"><div class="ck ck-grp-h"><span class="ck-logo">${g.logo}</span>
+        <span class="ck-txt"><b>${L(g.title)}</b><span>${summary}</span></span>${statusHtml(st)}
+        ${action ? `<div class="ck-fix ck-grp-act"><div class="ck-act">${action}</div></div>` : ''}</div>
+      ${rows.length > 1 ? `<details class="ck-grp-d" data-grp="${g.id}"${isOpen ? ' open' : ''}><summary>${issues ? esc(t('Szczegóły ({n} do poprawienia)', { n: issues })) : esc(t('Szczegóły ({n})', { n: rows.length }))}</summary>
+        <ul class="ck-list">${rows.map((r) => r.html).join('')}</ul></details>` : ''}</li>`;
+  }
+  // wiersze grupy „Dane rynkowe” z wyniku serwera (check 'market', bez sieci)
+  function marketRows(mk) {
+    const out = [];
+    const put = (spec) => out.push({ st: spec.st, html: row(spec) });
+    const dane = (label) => `<button type="button" class="btn sm" data-ob="goto-dane">${L(label)}</button>`;
+    for (const it of mk?.items || []) {
+      if (it.id === 'databento') put({ key: 'm-databento', logo: LOGO.chart, title: t('Świece: Databento'), st: it.status, text: it.code === 'no-key' ? L('Brak klucza. Wykresy i Backtest pokażą tylko świece, które już są na dysku.') : L('Klucz zapisany na tym komputerze.'), action: it.code === 'no-key' ? dane('Połącz Databento') : '' });
+      else if (it.id === 'credit') put({ key: 'm-credit', logo: LOGO.coin, title: t('Kredyt Databento'), st: it.status,
+        text: it.code === 'no-credit' ? L('Nie jest wpisany. Płatne pobieranie świec czeka na stan z portalu Databento.') : it.code === 'expired' ? L('Wygasł {d}. Pobieranie stoi, żeby nie płacić z karty.', { d: it.expires }) : it.code === 'expiring' ? L('Wygasa za {n} dni ({d}). Sprawdź stan w portalu Databento.', { n: it.days, d: it.expires }) : it.code === 'empty' ? L('Wykorzystany. Wpisz nowy stan, jeśli doładowałeś konto.') : L('Zostało {left} z {start} USD, ważny do {d}.', { left: fmtUsd(it.leftUsd), start: fmtUsd(it.startUsd), d: it.expires }),
+        action: it.status === 'warn' ? dane('Wpisz stan kredytu') : '' });
+      else if (it.id === 'queue') put({ key: 'm-queue', logo: LOGO.views, title: t('Kolejka pobierania'), st: it.status, text: it.code === 'blocked' ? L('Zablokowane okna: {n}. Powód zobaczysz w Ustawieniach → Źródła danych.', { n: it.blocked }) : L('Czeka na pobranie: {n}.', { n: it.pending }) });
+      else if (it.id === 'disk') put({ key: 'm-disk', logo: LOGO.disk, title: t('Miejsce na dysku'), st: it.status, text: it.code === 'low' ? L('Zostało {free}. Przenieś dane albo usuń warstwy świec w Ustawieniach → Dane na dysku.', { free: fmtBytes(it.freeBytes) }) : L('Wolne: {free}.', { free: fmtBytes(it.freeBytes) }) });
+      else if (it.id === 'fred' || it.id === 'finnhub') put({ key: `m-${it.id}`, logo: LOGO.page, title: it.id === 'fred' ? t('Newsy makro: FRED') : t('Earningsy: Finnhub'), st: it.status, text: it.status === 'ok' ? L('Klucz zapisany. Przyszłe terminy odświeżają się raz dziennie.') : L('Bez klucza (bezpłatny, opcjonalny): terminy z wydania programu.') });
+    }
+    return out;
+  }
+  function marketSummary(mk) {
+    const by = Object.fromEntries((mk?.items || []).map((i) => [i.id, i]));
+    if (!mk) return L('Sprawdzam…');
+    if (by.databento?.code === 'no-key') return L('Bez klucza Databento: wykresy i Backtest bez nowych świec. To opcjonalne, dodasz go też później.');
+    const warn = (mk.items || []).find((i) => i.status === 'warn');
+    if (warn) return warn.id === 'credit' ? L('Klucz Databento jest, ale kredyt wymaga uwagi.') : warn.id === 'disk' ? L('Mało miejsca na dysku z danymi.') : L('Kolejka pobierania świec ma zablokowane okna.');
+    const c = by.credit;
+    return c ? L('Databento połączone, kredyt: {left} USD do {d}.', { left: fmtUsd(c.leftUsd), d: c.expires }) : L('Databento połączone.');
+  }
   function checksHtml() {
     const head = `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Gotowość')}</h1>`;
+    const lead = `<p class="ob-lead">${L('Cztery rzeczy, od których zależy dashboard. Zielone są zwinięte; kliknij „Szczegóły”, żeby zobaczyć każdy punkt.')}</p>`;
     if (!res && running) {
-      const ids = ['node', 'token', 'root', 'databases', 'schema', 'views', 'write', 'security', 'update'];
-      return `${head}<p class="ob-lead">${L('Sprawdzam połączenie z Notion i bazy. To tylko odczyt.')}</p><ul class="ck-list">${ids.map((id) => row({ key: id, ...rowBase(id), text: L('Sprawdzam…'), st: 'run' })).join('')}</ul>`;
+      return `${head}${lead}<ul class="ck-list ck-grps">${GROUPS.map((g) => groupHtml(g, [], { st: 'run', summary: L('Sprawdzam…') })).join('')}</ul>`;
     }
     if (!res) return `${head}<p class="ob-lead">${runErr ? L('Nie udało się sprawdzić: {msg}', { msg: runErr }) : ''}</p><div class="ck-act"><button type="button" class="btn" data-ob="recheck">${L('Sprawdź ponownie')}</button></div>`;
     const by = Object.fromEntries(res.checks.map((c) => [c.id, c]));
-    issueCount = 0;
-    const rows = [];
+    const G = { komputer: [], notion: [], rynek: [], aktualizacje: [] };
+    const put = (g, spec) => G[g].push({ st: spec.st, html: row(spec) });
     const c = (id) => by[id] || { status: 'info', detail: '' };
     const blockedSt = (x) => (x.code === 'blocked' ? 'wait' : x.status);
     const nd = c('node');
-    rows.push(row({ key: 'node', ...rowBase('node'), st: nd.status, text: nd.status === 'ok' ? L('{v}. Wymagana wersja 22 lub nowsza.', { v: nd.detail }) : L('{v}. Potrzebny jest Node.js 22 lub nowszy.', { v: nd.detail }),
-      fix: nd.status === 'ok' ? '' : `<p>${L('Zainstaluj Node.js 22 LTS ze strony')} <a href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a> ${L('i uruchom dashboard ponownie.')}</p>${poradnikLink([platform() === 'mac' ? 'node-macos' : 'node-windows'])}` }));
+    put('komputer', { key: 'node', ...rowBase('node'), st: nd.status, text: nd.status === 'ok' ? L('{v}. Wymagana wersja 22 lub nowsza.', { v: nd.detail }) : L('{v}. Potrzebny jest Node.js 22 lub nowszy.', { v: nd.detail }),
+      fix: nd.status === 'ok' ? '' : `<p>${L('Zainstaluj Node.js 22 LTS ze strony')} <a href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a> ${L('i uruchom dashboard ponownie.')}</p>${poradnikLink([platform() === 'mac' ? 'node-macos' : 'node-windows'])}` });
+    const se = c('security');
+    put('komputer', { key: 'security', ...rowBase('security'), st: se.status, text: L('Serwer słucha tylko na {host}, zapis jest chroniony przed obcymi stronami.', { host: se.detail }) });
     const tk = c('token');
-    rows.push(row({ key: 'token', ...rowBase('token'), st: tk.status,
+    put('notion', { key: 'token', ...rowBase('token'), st: tk.status,
       text: tk.status === 'ok' ? L('Połączono jako {name}.', { name: tk.detail }) : tk.code === 'missing' ? L('Brak tokenu.') : tk.code === 'invalid' ? L('Notion odrzucił token: wygasł albo jest błędny.') : esc(tk.detail),
       fix: tk.status === 'ok' ? '' : poradnikLink(['token-zmiana'], { label: t('Jak zmienić token w Ustawieniach') }),
-      action: tk.status === 'ok' ? '' : `<button type="button" class="btn primary sm" data-ob="goto-token">${L('Wklej nowy token')}</button>` }));
+      action: tk.status === 'ok' ? '' : `<button type="button" class="btn primary sm" data-ob="goto-token">${L('Wklej nowy token')}</button>` });
     const rt = c('root');
-    const noAccess = rt.code === 'noaccess' || (c('databases').items || []).some((d) => d.code === 'noaccess');
-    rows.push(row({ key: 'root', ...rowBase('root'), st: blockedSt(rt),
+    put('notion', { key: 'root', ...rowBase('root'), st: blockedSt(rt),
       text: rt.status === 'ok' ? `${esc(rt.detail)}${rt.url ? ` · <a href="${esc(rt.url)}" target="_blank" rel="noopener">${L('otwórz')}${ICON.ext}</a>` : ''}` : rt.code === 'none' ? L('Brak adresu strony z dziennikiem.') : esc(rt.detail),
       fix: rt.code === 'none' ? `<p>${L('Dashboard działa, brakuje tylko linków do Notion. „Napraw wszystko” albo ponowne połączenie strony to uzupełni.')}</p>` : '',
-      action: rt.code === 'noaccess' ? `<button type="button" class="btn primary sm" data-ob="goto-access">${L('Udostępnij stronę')}</button>` : '' }));
+      action: rt.code === 'noaccess' ? `<button type="button" class="btn primary sm" data-ob="goto-access">${L('Udostępnij stronę')}</button>` : '' });
     for (const d of c('databases').items || []) {
-      rows.push(row({ key: `db-${d.db}`, logo: LOGO.db, title: t('Baza {name}', { name: d.title || t(DB_NAME[d.db] || d.db) }), st: blockedSt(d),
+      put('notion', { key: `db-${d.db}`, logo: LOGO.db, title: t('Baza {name}', { name: d.title || t(DB_NAME[d.db] || d.db) }), st: blockedSt(d),
         text: d.status === 'ok' ? esc(t.p('{n} wpisów', d.count || 0)) : esc(d.detail || ''),
-        action: d.code === 'noaccess' && rt.code !== 'noaccess' ? `<button type="button" class="btn primary sm" data-ob="goto-access">${L('Udostępnij stronę')}</button>` : d.code === 'missing' ? `<button type="button" class="btn sm" data-ob="goto-page">${L('Wybierz stronę dziennika')}</button>` : '' }));
+        action: d.code === 'noaccess' && rt.code !== 'noaccess' ? `<button type="button" class="btn primary sm" data-ob="goto-access">${L('Udostępnij stronę')}</button>` : d.code === 'missing' ? `<button type="button" class="btn sm" data-ob="goto-page">${L('Wybierz stronę dziennika')}</button>` : '' });
     }
     const sc = c('schema');
     const missing = sc.missing || [];
     const scBlocked = sc.status === 'error' && !missing.length && !(c('databases').items || []).some((d) => d.status === 'ok');
-    rows.push(row({ key: 'schema', ...rowBase('schema'), st: scBlocked ? 'wait' : sc.status,
-      text: sc.status === 'ok' ? L('Wszystkie pola są na miejscu (schemat {v}).', { v: sc.current }) : scBlocked ? L('Najpierw popraw token i bazy.') : missing.length ? esc(t.p('Brakuje {n} pól: ', missing.length) + missing.map((m) => `${m.name} (${t(DB_NAME[m.db] || m.db)})`).join(', ')) : L('Schemat w Notion jest starszy niż ta wersja ({a} → {b}).', { a: sc.installed, b: sc.current }) }));
+    put('notion', { key: 'schema', ...rowBase('schema'), st: scBlocked ? 'wait' : sc.status,
+      text: sc.status === 'ok' ? L('Wszystkie pola są na miejscu (schemat {v}).', { v: sc.current }) : scBlocked ? L('Najpierw popraw token i bazy.') : missing.length ? esc(t.p('Brakuje {n} pól: ', missing.length) + missing.map((m) => `${m.name} (${t(DB_NAME[m.db] || m.db)})`).join(', ')) : L('Schemat w Notion jest starszy niż ta wersja ({a} → {b}).', { a: sc.installed, b: sc.current }) });
     const vw = c('views');
     const vm = vw.missing || [];
-    rows.push(row({ key: 'views', ...rowBase('views'), st: scBlocked ? 'wait' : vw.status,
-      text: scBlocked ? L('Najpierw popraw token i bazy.') : vw.status === 'ok' ? L('Widoki dziennika są w Notion.') : esc(t.p('Brakuje {n} widoków: ', vm.length) + vm.map((v) => `${v.name} (${t(DB_NAME[v.db] || v.db)})`).join(', ')) }));
+    put('notion', { key: 'views', ...rowBase('views'), st: scBlocked ? 'wait' : vw.status,
+      text: scBlocked ? L('Najpierw popraw token i bazy.') : vw.status === 'ok' ? L('Widoki dziennika są w Notion.') : esc(t.p('Brakuje {n} widoków: ', vm.length) + vm.map((v) => `${v.name} (${t(DB_NAME[v.db] || v.db)})`).join(', ')) });
     // blok ustawień w Notion (synchronizacja między urządzeniami); brak naprawia „Napraw wszystko”
     if (by.settings) {
       const sg = c('settings');
-      rows.push(row({ key: 'settings', logo: LOGO.views, title: t('Ustawienia w Notion'), st: sg.status === 'ok' ? 'ok' : sg.status,
-        text: sg.status === 'ok' ? L('Ustawienia synchronizują się między urządzeniami przez Notion.') : sg.code === 'missing' ? L('Brak bloku ustawień w Notion. „Napraw wszystko” go doda.') : esc(sg.detail || '') }));
+      put('notion', { key: 'settings', logo: LOGO.views, title: t('Ustawienia w Notion'), st: sg.status === 'ok' ? 'ok' : sg.status,
+        text: sg.status === 'ok' ? L('Ustawienia synchronizują się między urządzeniami przez Notion.') : sg.code === 'missing' ? L('Brak bloku ustawień w Notion. „Napraw wszystko” go doda.') : esc(sg.detail || '') });
     }
     const wr = c('write');
-    rows.push(row({ key: 'write', ...rowBase('write'), st: wr.code === 'skipped' ? 'info' : blockedSt(wr), text: wr.code === 'skipped' ? L('Sprawdzane przy pełnym sprawdzeniu.') : esc(wr.detail),
-      fix: wr.status === 'error' && wr.code !== 'blocked' ? `<p>${L('W ustawieniach integracji w Notion zaznacz Insert content i Update content, a potem kliknij „Sprawdź ponownie”.')}</p>` : '' }));
-    const se = c('security');
-    rows.push(row({ key: 'security', ...rowBase('security'), st: se.status, text: L('Serwer słucha tylko na {host}, zapis jest chroniony przed obcymi stronami.', { host: se.detail }) }));
-    const up = c('update');
-    rows.push(row({ key: 'update', ...rowBase('update'), st: up.status,
-      text: up.disabled ? L('Sprawdzanie aktualizacji jest wyłączone w Ustawieniach.') : up.available ? L('Dostępna wersja {v}.', { v: up.latest }) : up.offline ? L('Brak połączenia z GitHub. Dashboard działa normalnie.') : L('Masz najnowszą wersję ({v}).', { v: up.detail }),
-      action: up.available ? `<button type="button" class="btn sm" data-ob="update">${L('Zobacz aktualizację')}</button>` : '' }));
+    put('notion', { key: 'write', ...rowBase('write'), st: wr.code === 'skipped' ? 'info' : blockedSt(wr), text: wr.code === 'skipped' ? L('Sprawdzane przy pełnym sprawdzeniu.') : esc(wr.detail),
+      fix: wr.status === 'error' && wr.code !== 'blocked' ? `<p>${L('W ustawieniach integracji w Notion zaznacz Insert content i Update content, a potem kliknij „Sprawdź ponownie”.')}</p>` : '' });
     const dm = c('demo');
     const dn = dm.count || 0;
-    rows.push(row({ key: 'demo', ...rowBase('demo'), st: 'info',
+    put('notion', { key: 'demo', ...rowBase('demo'), st: 'info',
       text: dn ? esc(t.p('{n} wpisów DEMO w Notion. Usuń je, gdy zaczniesz wpisywać własne.', dn)) : L('W Notion nie ma wpisów DEMO.'),
-      action: dn ? demoAction() : '' }));
-    const issues = issueCount;
-    const sum = issues ? esc(t.p('Zostały {n} rzeczy do poprawienia.', issues)) : L('Wszystko gotowe.');
-    const fixBtn = issues ? `<button type="button" class="btn primary sm" data-ob="fixall" ${open.fix ? 'disabled' : ''}>${L('Napraw wszystko')}</button>` : '';
-    void noAccess;
-    return `${head}<div class="ck-sum ${issues ? 'bad' : 'good'}" role="status" aria-live="polite"><b>${sum}</b><span class="ck-sum-act">${fixBtn}<button type="button" class="btn sm" data-ob="recheck" ${running ? 'disabled' : ''}>${running ? L('Sprawdzam…') : L('Sprawdź ponownie')}</button></span></div>
-      ${fixAllHtml()}<ul class="ck-list">${rows.join('')}</ul>`;
+      action: dn ? demoAction() : '' });
+    for (const r of marketRows(by.market)) G.rynek.push(r);
+    const up = c('update');
+    put('aktualizacje', { key: 'update', ...rowBase('update'), st: up.status,
+      text: up.disabled ? L('Sprawdzanie aktualizacji jest wyłączone w Ustawieniach.') : up.available ? L('Dostępna wersja {v}.', { v: up.latest }) : up.offline ? L('Brak połączenia z GitHub. Dashboard działa normalnie.') : L('Masz najnowszą wersję ({v}).', { v: up.detail }),
+      action: up.available ? `<button type="button" class="btn sm" data-ob="update">${L('Zobacz aktualizację')}</button>` : '' });
+    const sts = Object.fromEntries(Object.entries(G).map(([k, rows]) => [k, groupSt(rows.map((r) => r.st))]));
+    // dane rynkowe: stan grupy liczy serwer (bez klucza Databento to informacja, nawet gdy miejsce na dysku jest w porządku)
+    if (by.market) sts.rynek = by.market.status;
+    const notionIssues = G.notion.filter((r) => r.st === 'error' || r.st === 'warn').length;
+    const sum = {
+      komputer: sts.komputer === 'ok' ? L('Node.js {v}, serwer tylko na tym komputerze.', { v: String(nd.detail || '').replace(/^Node\s*/, '') }) : L('Coś wymaga uwagi. Zobacz szczegóły.'),
+      notion: sts.notion === 'ok' || sts.notion === 'info' ? (dn ? esc(t('Dziennik działa. W Notion są jeszcze wpisy DEMO: {n}.', { n: dn })) : L('Dziennik działa: token, strona, bazy i zapis.')) : esc(t('Do poprawienia: {n}.', { n: notionIssues })),
+      rynek: marketSummary(by.market),
+      aktualizacje: up.disabled ? L('Sprawdzanie wyłączone.') : up.available ? L('Dostępna wersja {v}.', { v: up.latest }) : up.offline ? L('Brak połączenia z GitHub.') : L('Masz najnowszą wersję.'),
+    };
+    if (up.available) sum.aktualizacje = L('Dostępna wersja {v}.', { v: up.latest });
+    else if (up.offline) sum.aktualizacje = L('Brak połączenia z GitHub. Dashboard działa normalnie.');
+    const act = { aktualizacje: up.available ? `<button type="button" class="btn sm" data-ob="update">${L('Zobacz aktualizację')}</button>` : '', rynek: (by.market?.items || []).some((i) => i.code === 'no-key' && i.id === 'databento') ? `<button type="button" class="btn sm" data-ob="goto-dane">${L('Połącz dane rynkowe')}</button>` : '' };
+    const issues = Object.values(G).flat().filter((r) => r.st === 'error' || r.st === 'warn').length;
+    const sumTxt = issues ? esc(t.p('Zostały {n} rzeczy do poprawienia.', issues)) : L('Wszystko gotowe.');
+    // „Napraw wszystko” naprawia tylko Notion (pola, widoki, blok ustawień, skrót); dane rynkowe poprawiasz w kroku Dane rynkowe
+    const fixBtn = notionIssues ? `<button type="button" class="btn primary sm" data-ob="fixall" ${open.fix ? 'disabled' : ''}>${L('Napraw wszystko')}</button>` : '';
+    return `${head}${lead}<div class="ck-sum ${issues ? 'bad' : 'good'}" role="status" aria-live="polite"><b>${sumTxt}</b><span class="ck-sum-act">${fixBtn}<button type="button" class="btn sm" data-ob="recheck" ${running ? 'disabled' : ''}>${running ? L('Sprawdzam…') : L('Sprawdź ponownie')}</button></span></div>
+      ${fixAllHtml()}<ul class="ck-list ck-grps">${GROUPS.map((g) => groupHtml(g, G[g.id], { st: sts[g.id], summary: sum[g.id], action: act[g.id] || '' })).join('')}</ul>`;
   }
 
-  function guideHtml() {
-    return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Jak działa dziennik')}</h1>
-      <p class="ob-lead">${fresh ? L('Dziennik jest gotowy. Przewodnik pokaże dashboard krok po kroku na danych przykładowych; możesz go pominąć.') : L('Przewodnik pokaże dashboard krok po kroku na danych przykładowych. Twoje dane i ustawienia zostają bez zmian, a w tym trybie nic nie zapisuje się w Notion.')}</p>
-      <ol class="ob-tour">${['Filtry: typ, okres, konta', 'Najważniejsze liczby', 'Krzywa kapitału i spadki', 'Rozbicia i rozkład R', 'Dodawanie trade\'ów', 'Konta prop i payouty', 'Ustawienia'].map((x) => `<li>${L(x)}</li>`).join('')}</ol>`;
+  // ---------- krok: Dane rynkowe (N6): te same karty co Ustawienia → Źródła danych ----------
+  function daneHtml() {
+    return `<h1 class="ob-h" id="ob-title" tabindex="-1">${L('Dane rynkowe')}</h1>
+      <p class="ob-lead">${L('Bez tego kroku dziennik działa. Wykresy świecowe i Backtest potrzebują klucza Databento; resztę dodasz, kiedy zechcesz.')}</p>
+      <div class="ob-dane">${zr.wizardHtml()}</div>
+      <p class="fhint">${L('Wszystko z tego kroku zmienisz później w Ustawieniach → Źródła danych.')}</p>`;
+  }
+  const daneConfigured = () => !!zr.sources()?.keys?.databento?.configured || !!zr.sources()?.keys?.fred?.configured || !!zr.sources()?.keys?.finnhub?.configured;
+  // przerysowanie treści kroku z zachowaniem fokusu, przewinięcia i wpisanych, jeszcze niezapisanych wartości (jak w Ustawieniach)
+  function paintDane() {
+    if (!card || cur() !== 'dane') return;
+    const body = card.querySelector('.ob-body');
+    const fk = document.activeElement?.dataset?.fk;
+    const typed = zr.keepTyped.map((id) => [id, body.querySelector(id)?.value || '']);
+    const top = body.scrollTop;
+    body.innerHTML = daneHtml();
+    for (const [id, v] of typed) if (v) { const k = body.querySelector(id); if (k) k.value = v; }
+    body.scrollTop = top;
+    if (fk) body.querySelector(`[data-fk="${fk}"]`)?.focus({ preventScroll: true });
+    paintFoot();
+  }
+  async function loadDiag() {
+    try { diagState = await get('/api/diag'); } catch { diagState = diagState || null; }
+    paintDane();
+  }
+  async function testSource(s) {
+    testing.add(s); paintDane();
+    try { const r = await post('/api/diag/test', { source: s }); if (diagState?.connections?.[s]) diagState.connections[s].last = { ok: r.ok, code: r.code, detail: r.detail, checkedAt: r.checkedAt }; }
+    catch (e) { if (diagState?.connections?.[s]) diagState.connections[s].last = { ok: false, detail: e.message }; }
+    finally { testing.delete(s); }
+    paintDane();
+  }
+
+  // ---------- krok: Gotowe (N6): bez automatycznego przejścia, kolejne kroki do wyboru ----------
+  function gotoweHtml() {
+    const by = Object.fromEntries((res?.checks || []).map((c) => [c.id, c]));
+    const dn = by.demo?.count || 0;
+    const noKey = (by.market?.items || []).some((i) => i.id === 'databento' && i.code === 'no-key');
+    const issues = (res?.checks || []).filter((c) => (c.status === 'error' || c.status === 'warn') && c.id !== 'update').length;
+    const kod = fresh && path === 'kod';
+    const item = (logo, title, text, action) => `<li class="ck ob-next-i"><span class="ck-logo">${logo}</span><span class="ck-txt"><b>${L(title)}</b><span>${text}</span></span><div class="ck-act">${action}</div></li>`;
+    const items = [
+      item(LOGO.views, 'Zobacz, jak działa', L('Przewodnik krok po kroku na danych przykładowych. Twoje dane zostają bez zmian, a w tym trybie nic nie zapisuje się w Notion.'), `<button type="button" class="btn sm" data-ob="guide">${L('Pokaż przewodnik')}</button>`),
+      item(LOGO.pen, 'Dodaj pierwszy trade', L('Formularz zapisze trade prosto w bazie Trade\'y w Twoim Notion.'), `<button type="button" class="btn sm" data-ob="add-trade">${L('Dodaj pierwszy trade')}</button>`),
+    ];
+    if (dn) items.push(item(LOGO.tag, 'Dane przykładowe DEMO', esc(t.p('{n} wpisów DEMO w Notion. Usuń je, gdy zaczniesz wpisywać własne.', dn)), demoAction()));
+    if (noKey) items.push(item(LOGO.chart, 'Wykresy świecowe', L('Czekają na klucz Databento. Dodasz go teraz albo później w Ustawieniach → Źródła danych.'), `<button type="button" class="btn sm" data-ob="goto-dane">${L('Połącz dane rynkowe')}</button>`));
+    return `<h1 class="ob-h" id="ob-title" tabindex="-1">${kod ? L('Gotowe, masz tu wszystkie swoje dane') : L('Gotowe. Dziennik działa.')}</h1>
+      <p class="ob-lead">${kod ? L('Dziennik z Notion i Twoje ustawienia (paleta, marginesy BE, język, motyw) są już na tym urządzeniu. Filtry i układ paneli ustawisz tu osobno.') : L('Co dalej? Wybierz, od czego zaczniesz. Do pierwszych kroków wrócisz w Ustawieniach → Konto i Notion.')}</p>
+      ${issues ? `<div class="ck-sum bad"><b>${esc(t('Gotowość pokazała rzeczy do poprawienia: {n}.', { n: issues }))}</b><span class="ck-sum-act"><button type="button" class="btn sm" data-ob="goto-ready">${L('Wróć do gotowości')}</button></span></div>` : ''}
+      <ul class="ck-list ob-next">${items.join('')}</ul>`;
   }
 
   // ---------- rysowanie ----------
@@ -451,11 +572,18 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     if (!card) return;
     const id = cur();
     const last = step === flow.length - 1;
-    const back = step && !['dziennik'].includes(id) && !(id === 'gotowosc' && fresh) ? `<button type="button" class="btn ghost" data-ob="back">${L('Wstecz')}</button>` : '';
+    // N6: bez „Wstecz” z Gotowe. final (ocena wyglądu P2-8, P3): „Wstecz” w Dzienniku tylko przed utworzeniem (i po błędzie), w Danych rynkowych
+    // tylko do kroku, który niczego nie powtórzy (Dziennik po utworzeniu w tej sesji kreatora albo Strona z istniejącym dziennikiem)
+    const prev = flow[step - 1];
+    const backOk = id === 'dziennik' ? !mk.starting && !mk.job?.running && !mk.job?.done
+      : id === 'dane' ? (prev === 'dziennik' && !!mk.job?.done) || prev === 'strona'
+        : id !== 'gotowe';
+    const back = step && backOk ? `<button type="button" class="btn ghost" data-ob="back">${L('Wstecz')}</button>` : '';
     let main;
     if (id === 'token') main = `<button type="button" class="btn primary" data-ob="next" ${tok.ok ? '' : 'disabled'}>${L('Dalej')}</button>`;
     else if (id === 'kod') main = `<button type="button" class="btn primary" data-ob="import" ${codeReady() && !kd.busy ? '' : 'disabled'}>${kd.busy ? L('Łączę…') : L('Dalej')}</button>`;
-    else if (id === 'gotowe') main = `<button type="button" class="btn" data-ob="guide">${L('Pokaż przewodnik')}</button><button type="button" class="btn primary" data-ob="finish">${L('Przejdź do dashboardu')}</button>`;
+    else if (id === 'gotowe') main = `<button type="button" class="btn primary" data-ob="finish">${L('Przejdź do dashboardu')}</button>`;
+    else if (id === 'dane') main = `<button type="button" class="btn primary" data-ob="next">${daneConfigured() ? L('Dalej') : L('Pomiń ten krok')}</button>`;
     else if (id === 'strona') {
       const sel = (pg.pages || []).find((p) => p.id === pg.sel);
       main = `<button type="button" class="btn primary" data-ob="choose" ${sel ? '' : 'disabled'}>${sel?.journal ? L('Połącz istniejący dziennik') : L('Dalej')}</button>`;
@@ -465,10 +593,10 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       main = job?.error ? `<button type="button" class="btn primary" data-ob="build">${L('Ponów')}</button>`
         : job?.done ? `<button type="button" class="btn primary" data-ob="next">${L('Dalej')}</button>`
           : `<button type="button" class="btn primary" data-ob="build" ${mk.starting || job?.running ? 'disabled' : ''}>${mk.starting || job?.running ? L('Tworzę…') : L('Utwórz dziennik')}</button>`;
-    } else if (last && id === 'przewodnik') main = `<button type="button" class="btn" data-ob="finish">${L('Przejdź do dashboardu')}</button><button type="button" class="btn primary" data-ob="guide">${L('Pokaż przewodnik')}</button>`;
-    else if (last) main = `<button type="button" class="btn primary" data-ob="finish">${L('Zakończ')}</button>`;
+    } else if (last) main = `<button type="button" class="btn primary" data-ob="finish">${L('Zakończ')}</button>`;
     else main = `<button type="button" class="btn primary" data-ob="next">${L('Dalej')}</button>`;
-    const html = `${last && (id === 'przewodnik' || id === 'gotowe') ? '' : `<button type="button" class="ob-skip" data-ob="skip">${L('Pomiń')}</button>`}<span class="grow"></span>${back}${main}`;
+    // „Zamknij kreator” kończy pierwsze kroki; w Danych rynkowych i na Gotowe go nie ma (tam główny przycisk idzie dalej)
+    const html = `${last || id === 'dane' || id === 'gotowe' ? '' : `<button type="button" class="ob-skip" data-ob="skip">${L('Zamknij kreator')}</button>`}<span class="grow"></span>${back}${main}`;
     // bez przerysowania, gdy nic się nie zmieniło: zdarzenie change przy opuszczaniu pola nie podmienia klikanego przycisku
     const foot = card.querySelector('.ob-foot');
     if (foot.dataset.html !== html) { foot.innerHTML = html; foot.dataset.html = html; }
@@ -480,11 +608,12 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const keep = focusTitle ? 0 : body.scrollTop;
     card.querySelector('.ob-steps').innerHTML = flow.map((s, i) => `<li class="${i < step ? 'done' : i === step ? 'on' : ''}"${i === step ? ' aria-current="step"' : ''}><i></i><span>${L(STEP_NAME[s])}</span></li>`).join('');
     card.querySelector('.ob-count').textContent = t('Krok {a} z {b}', { a: step + 1, b: flow.length });
-    body.innerHTML = id === 'kod' ? codeHtml() : id === 'gotowe' ? doneHtml() : id === 'witaj' ? welcomeHtml() : id === 'token' ? tokenHtml() : id === 'strona' || id === 'dostep' ? pagesHtml() : id === 'dziennik' ? buildHtml() : id === 'gotowosc' ? checksHtml() : guideHtml();
+    body.innerHTML = id === 'kod' ? codeHtml() : id === 'gotowe' ? gotoweHtml() : id === 'witaj' ? welcomeHtml() : id === 'token' ? tokenHtml() : id === 'strona' || id === 'dostep' ? pagesHtml() : id === 'dziennik' ? buildHtml() : id === 'dane' ? daneHtml() : checksHtml();
     bindPoradniki(body);
     body.scrollTop = keep;
     paintFoot();
     if (focusTitle) (id === 'token' ? card.querySelector('#ob-token') : id === 'kod' ? card.querySelector('#ob-code') : card.querySelector('#ob-title'))?.focus({ preventScroll: true });
+    card.dataset.step = id;
   }
 
   async function runChecks({ quick = false } = {}) {
@@ -494,15 +623,17 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     try { res = await post('/api/health/full', quick ? { quick: true } : {}); } catch (e) { runErr = e.message; res = null; }
     running = false;
     open.schema = null; open.demo = null; open.fix = null;
-    if (cur() === 'gotowosc') paint();
-    onAttention(!!res?.checks?.some((c) => c.status === 'error'));
-    // świeża instalacja: po udanym sprawdzeniu od razu przewodnik (z „Pomiń”)
-    if (fresh && cur() === 'gotowosc' && res && !res.checks.some((c) => c.status === 'error')) setTimeout(() => { if (cur() === 'gotowosc') go(step + 1); }, 1200);
+    if (cur() === 'gotowosc' || cur() === 'gotowe') paint();
+    onAttention(needsAttention(res));
+    // N6 (§4.5): bez automatycznego przejścia po 1,2 s; dalej prowadzą wyraźne przyciski
     return res;
   }
 
+  // pigułka „Wymaga uwagi”: błąd w dowolnej grupie albo uwaga w danych rynkowych (kredyt, kolejka, miejsce na dysku)
+  const needsAttention = (r) => !!r?.checks?.some((c) => c.status === 'error' || (c.id === 'market' && c.status === 'warn'));
   function go(n) {
     stopTimers();
+    if (cur() === 'dane') zr.leave();
     step = Math.max(0, Math.min(flow.length - 1, n));
     card.classList.remove('enter'); void card.offsetWidth; card.classList.add('enter');
     const id = cur();
@@ -510,6 +641,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     paint({ focusTitle: true });
     if (id === 'strona' || id === 'dostep') startPagesPoll();
     if (id === 'gotowosc' && !res && !running) runChecks();
+    if (id === 'dane') { zr.enter(); loadDiag(); }
   }
   const next = () => go(step + 1);
   // przejście do kroku; brakujący krok kreatora (token, dostęp, strona) wstawiamy przed „Gotowość”
@@ -531,10 +663,19 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   }
 
   async function onClick(e) {
+    // Dane rynkowe: przyciski kart źródeł (data-act) obsługuje moduł Źródeł danych; nie trafiają do obsługi Ustawień w app.js
+    const za = cur() === 'dane' ? e.target.closest('[data-act]') : null;
+    if (za && card?.contains(za)) {
+      e.stopPropagation();
+      if (za.dataset.act === 'diag-test') testSource(za.dataset.v); else zr.handle(za.dataset.act, za.dataset.v, za);
+      return;
+    }
     const b = e.target.closest('[data-ob]');
     if (!b) return;
     const a = b.dataset.ob;
-    if (a === 'next') { if (cur() === 'witaj' && fresh) setPath(path); next(); }
+    if (a === 'next') { if (cur() === 'witaj' && fresh) setPath(path); if (cur() === 'dane') res = null; next(); }
+    else if (a === 'goto-dane') goTo('dane');
+    else if (a === 'add-trade') { await finish(true); onAddTrade(); }
     else if (a === 'path') { path = b.dataset.v; card.querySelectorAll('[data-ob="path"]').forEach((x) => x.setAttribute('aria-checked', String(x.dataset.v === path))); b.focus(); }
     else if (a === 'import') importCode();
     else if (a === 'no-code') { setPath('polacz', { keepStep: true }); go(step); }
@@ -583,12 +724,14 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     } else if (a === 'demo-cancel') { open.demo = null; paint(); }
     else if (a === 'demo-apply') {
       open.demo = { ...open.demo, applying: true }; paint();
-      try { const r = await post('/api/demo/remove', { apply: true }); toast(t.p('Usunięto {n} wpisów DEMO.', r.count || 0)); await onConfigured({ demo: true }); await runChecks(); }
+      try { const r = await post('/api/demo/remove', { apply: true }); toast(t.p('Usunięto {n} wpisów DEMO.', r.count || 0)); await onConfigured({ demo: true }); open.demo = null; await runChecks(); paint(); }
       catch (err) { open.demo = { ...open.demo, applying: false, err: err.message }; paint(); }
     }
   }
 
   function onInput(e) {
+    // Dane rynkowe: przełącznik okna 1s NQ i pola kredytu (zdarzenie change) obsługuje moduł Źródeł danych
+    if (cur() === 'dane' && e.type === 'change' && card?.contains(e.target)) { if (zr.onChange(e)) e.stopPropagation(); return; }
     if (e.target.id === 'ob-token') {
       clearTimeout(tok.timer);
       const v = e.target.value;
@@ -605,16 +748,16 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   }
 
   // Ustala przebieg kreatora na podstawie stanu instalacji.
-  function planFlow({ mode }) {
+  function planFlow({ mode, at }) {
     if (mode === 'token-replace') { fresh = false; tok.replace = true; return ['token', 'gotowosc']; }
-    // powrót po przeładowaniu (zmiana języka po przeniesieniu albo połączeniu): ta sama ścieżka do końca
+    // powrót po przeładowaniu (zmiana języka po przeniesieniu albo połączeniu): ta sama ścieżka do końca, od Danych rynkowych
     let saved = '';
     try { saved = sessionStorage.getItem(PATH_KEY) || ''; } catch { /* brak */ }
-    if (setup?.configured && mode === 'resume' && (saved === 'kod' || saved === 'polacz')) { fresh = true; path = saved; return ['gotowosc', 'gotowe']; }
-    if (!setup || setup.configured) { fresh = false; return ['witaj', 'gotowosc', 'przewodnik']; }
+    if (setup?.configured && mode === 'resume' && (at === 'dane' || saved === 'kod' || saved === 'polacz')) { fresh = true; path = saved || 'nowy'; return ['dane', 'gotowosc', 'gotowe']; }
+    if (!setup || setup.configured) { fresh = false; return flowFor({ configured: true }); }
     if (saved) path = saved;
     fresh = true;
-    if (setup.resumable && setup.parentPageId) { mk.pageId = setup.parentPageId; mk.title = mk.title || t('wybrana strona'); return ['witaj', 'dziennik', 'gotowosc', 'przewodnik']; }
+    if (setup.resumable && setup.parentPageId) { mk.pageId = setup.parentPageId; mk.title = mk.title || t('wybrana strona'); return ['witaj', 'dziennik', 'dane', 'gotowosc', 'gotowe']; }
     return ['witaj', ...pathFlow(path)];
   }
 
@@ -623,7 +766,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     if (root) { goTo(typeof at === 'string' ? at : flow[at] || flow[0]); return; }
     opener = from || document.activeElement;
     setup = await get('/api/setup/state').catch(() => null);
-    flow = planFlow({ mode });
+    flow = planFlow({ mode, at });
     root = document.createElement('div');
     root.className = 'ob';
     root.innerHTML = `<div class="ob-card enter" role="dialog" aria-modal="true" aria-labelledby="ob-title">
@@ -633,13 +776,17 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     document.documentElement.classList.add('lb-lock');
     card = root.querySelector('.ob-card');
     overlay.current = { onKey(ev) {
-      if (ev.key === 'Escape') { ev.preventDefault(); if (!mk.job?.running) finish(true); }
+      if (ev.key === 'Escape') { ev.preventDefault(); if (cur() === 'dane' && zr.onEscape()) return; if (!mk.job?.running) finish(true); }
       else trapTab(ev, card);
     } };
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
+    // final (P2-8): rozwinięcie „Więcej (opcjonalne)” w Danych rynkowych przeżywa przerysowanie kroku (toggle nie bubbluje, więc faza przechwytywania)
+    root.addEventListener('toggle', (e) => { if (e.target.matches?.('.ob-dane-more')) zr.setWizMore(e.target.open); }, true);
     root.addEventListener('paste', (e) => { if (e.target.id === 'ob-token') { clearTimeout(tok.timer); setTimeout(() => checkToken(e.target.value), 0); } });
     root.addEventListener('change', onInput);
+    // otwarcie szczegółów grupy Gotowości zapamiętane do przerysowania
+    root.addEventListener('toggle', (e) => { if (e.target.matches?.('.ck-grp-d')) grpOpen[e.target.dataset.grp] = e.target.open; }, true);
     // plik .ltj upuszczony na pole kodu; Enter w polu PIN to „Dalej”
     root.addEventListener('dragover', (e) => { if (e.target.closest('#ob-drop')) { e.preventDefault(); e.target.closest('#ob-drop').classList.add('over'); } });
     root.addEventListener('dragleave', (e) => { e.target.closest('#ob-drop')?.classList.remove('over'); });
@@ -651,12 +798,14 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     paint({ focusTitle: true });
     if (cur() === 'gotowosc' && !res) runChecks();
     if (cur() === 'strona' || cur() === 'dostep') startPagesPoll();
+    if (cur() === 'dane') { zr.enter(); loadDiag(); }
   }
   function goToInit(id) { step = 0; paint(); goTo(id); }
 
   function close() {
     if (!root) return;
     stopTimers();
+    if (cur() === 'dane') zr.leave();
     root.remove();
     root = card = null;
     overlay.current = null;
@@ -683,7 +832,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     let r = null;
     try { r = await post('/api/health/full', { quick: true }); } catch { return false; }
     const bad = r.checks.some((c) => c.status === 'error');
-    onAttention(bad);
+    onAttention(needsAttention(r));
     if (bad && loadFailed) { res = r; await show({ at: 'gotowosc' }); return true; }
     return false;
   }

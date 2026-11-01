@@ -121,7 +121,7 @@ export default ({ test, H, assert, ROOT }) => {
     assert.match(f.slice(f.indexOf('export function releaseVideo')), /URL\.revokeObjectURL\(url\)/, 'releaseVideo zwalnia adres obiektu');
     assert.ok(!/let video\b/.test(u.slice(u.indexOf('export function createShare'), u.indexOf('async function open'))), 'film tła nie w zasięgu createShare (nie przeżywa zamknięcia okna)');
     // P21: zero opcji dźwięku w UI i ustawieniach
-    assert.ok(!/filmAudio|Dźwięk z filmu/.test(src('public/js/udostepnij.js') + src('public/js/ustawienia.js') + src('public/js/styl-wykresu.js')));
+    assert.ok(!/filmAudio|Dźwięk z filmu/.test(src('public/js/udostepnij.js') + src('public/js/ust-wykresy.js') + src('public/js/styl-wykresu.js')));
     // notka o prawach pod wyborem pliku (karta etapu 18) i jej tłumaczenie
     const note = 'Film zostaje na tym urządzeniu. Używaj tylko nagrań, do których masz prawa (także muzyki).';
     assert.ok(src('public/js/udostepnij.js').includes(note));
@@ -139,13 +139,15 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(C.sanitizeChart({ filmFormat: '1:1' }).filmFormat, '1:1');
     assert.equal(C.sanitizeChart({ filmSeconds: 20 }).filmSeconds, 10);
     assert.equal(C.sanitizeChart({ filmSeconds: 6, filmDim: 0.3 }).filmDim, 0.3);
-    const s = src('public/js/ustawienia.js');
+    // N2 (1.6.0): Ustawienia w modułach sekcji (ust-*.js), strefa i B-ADJ w ust-wykresy.js; licencje w ust-diag.js
+    const s = src('public/js/ust-wykresy.js');
     assert.match(s, /'ch-film-format'/); assert.match(s, /'ch-film-seconds'/); assert.match(s, /chk\('filmBw'/); assert.match(s, /data-range="filmDim"/);
     assert.match(s, /data-v="cards"/, '„Przywróć domyślne” grupy kart obejmuje filmy');
     assert.deepEqual(C.CHART_GROUPS.cards.filter((k) => k.startsWith('film')), ['filmFormat', 'filmSeconds', 'filmBw', 'filmDim']);
     assert.ok(!/Dźwięk|audio/i.test(s.slice(s.indexOf('function karty'), s.indexOf('function czas'))), 'P21: bez opcji dźwięku');
     // Licencje: notka o prawach do filmów tła (pominięta w pakiecie H)
-    const lic = s.slice(s.indexOf('function licencje'), s.indexOf('function wykresyHtml'));
+    const dg = src('public/js/ust-diag.js');
+    const lic = dg.slice(dg.indexOf('function licencje'), dg.indexOf('function html'));
     assert.match(lic, /Filmy tła/);
     const en = JSON.parse(src('public/i18n/en.json'));
     for (const k of ['Format filmu', 'Długość filmu', 'Czarno-białe', 'Przyciemnienie tła', 'Obraz', 'Film', 'Nagraj film', 'Anuluj', 'Jakość', '30 kl./s', 'Wybierz film', 'Zmień film', 'Pobierz MP4', 'Pobierz WebM']) assert.ok(k in en, `brak EN: ${k}`);

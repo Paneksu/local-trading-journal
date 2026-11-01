@@ -482,7 +482,12 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
 .cr-hex { grid-column: 2 / 4; font-size: var(--t-sm); color: var(--fg-2); }
 .cr-ct { grid-column: 1 / 4; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--t-sm); min-height: 24px; }
 .okb { color: var(--fg-2); }
-.warnb { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); font-weight: 600; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, transparent); }
+/* Statusy jako tekst w kolorze stanu z kropką, bez zaokrąglonego tła (przyciski i kafle bez zmian). */
+/* [U] 1.11.2026 «Tak, ujednolić na tekst z kropką» */
+.warnb { display: inline; color: var(--warn); font-weight: 600; overflow-wrap: anywhere; }
+p.warnb, div.warnb { display: block; }
+.okb::before, .warnb::before, .um-add::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.okb::before { background: var(--n-green); }
 .cr-pick { grid-column: 1 / 4; padding: 10px; border-radius: 10px; background: var(--popover); box-shadow: var(--pop-shadow); }
 .swgrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; justify-items: center; }
 .sw { position: relative; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: var(--c); cursor: pointer; box-shadow: inset 0 0 0 1px rgb(var(--fg-rgb) / .28); }
@@ -536,7 +541,8 @@ svg .bar-g.pick:focus-visible .hitc { fill: rgb(var(--fg-rgb) / .07); stroke: rg
 .um-plan ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .um-plan li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .um-plan li small { flex-basis: 100%; padding-left: 0; color: var(--fg-2); font-size: var(--t-sm); }
-.um-add { padding: 1px 7px; border-radius: 999px; background: var(--seg-on); font-size: var(--t-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+/* [U] 1.11.2026 «Tak, ujednolić na tekst z kropką»: etykieta stanu („to urządzenie”, „dodane”, „dziennik”) bez podkładki */
+.um-add { color: var(--fg-2); font-size: var(--t-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .um-none { font-weight: 600; }
 .um-loading { display: flex; align-items: center; gap: 8px; color: var(--fg-2); }
 .um .spin { display: inline-block; animation: spin .8s linear infinite; }
@@ -1099,7 +1105,7 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-ctl { border-top: 1px solid var(--line); }
 .bt-ttl { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-right: auto; min-width: 0; }
 .bt-name { font-size: var(--t-md); font-weight: 700; }
-.bt-dayn, .bt-date, .bt-daytype, .bt-stats { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-date, .bt-daytype, .bt-stats { font-size: var(--t-sm); color: var(--fg-2); }
 .bt-daytype:empty, .bt-date:empty { display: none; }
 .bt-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
 .bt-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; align-items: center; }
@@ -1203,11 +1209,9 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-todo-l { position: absolute; top: 100%; right: 0; z-index: 30; display: flex; flex-direction: column; gap: 4px; min-width: 200px; max-height: 50vh; overflow-y: auto; margin-top: 4px; padding: 6px; background: var(--popover); border: 1px solid var(--line); border-radius: 10px; }
 .bt-todo-l .btn { justify-content: flex-start; }
 .bt-l-todo { margin-left: 8px; }
-.bt-fin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 28px; text-align: center; }
-.bt-fin[hidden] { display: none; }
-.bt-fin h3 { margin: 0; }
-.bt-fin p { margin: 0; }
-.bt-fin-b { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+/* K (31.10.2026): dolny panel pozycji i konta (jak w FX Replay), wypełnia go pakiet L; do tego czasu ukryty */
+.bt-dock { flex: 0 0 auto; border-top: 1px solid var(--line); max-height: 32vh; overflow: auto; }
+.bt-dock[hidden] { display: none; }
 @media (max-width: 640px) {
   .bt-jr { width: auto; left: 8px; right: 8px; }
   .bt-jr[data-corner="left"], .bt-jr[data-corner="right"] { left: 8px; right: 8px; }
@@ -1256,3 +1260,539 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-st-tab th.bt-st-grp { text-align: center; padding-right: 0; border-bottom: 1px solid var(--line); }
 /* H2 #21: replay w Platinum stoi na tej samej ramie --chrome co podgląd: podpisy sesji i newsów w ciemniejszym pomarańczu i żółci (≥ 5:1), jak --lb-n-* */
 :root[data-theme="platinum"] .bt-screen { --n-orange: var(--chrome-n-orange); --n-yellow: var(--chrome-n-yellow); --warn: var(--chrome-warn); }
+
+/* Backtest L (31.10.2026): handel i journaling jak w FX Replay. Wygląd porządny w tokenach dashboardu; szlif całego modułu robi pakiet M. */
+/* pasek konta: saldo, equity, otwarty, dziś; wynik sesji w $, % i R */
+.bt-acct { display: inline-flex; flex-wrap: wrap; gap: 4px 14px; }
+.bt-ac { white-space: nowrap; }
+.bt-ac .lbl { color: var(--fg-2); }
+.bt-ac b { font-weight: 600; color: var(--fg); }
+.bt-ac b.pos, .bt-res.pos { color: var(--profit); }
+.bt-ac b.neg, .bt-res.neg { color: var(--loss); }
+/* podgląd zlecenia przed złożeniem */
+.bt-ord-prev { margin: 0 0 4px; align-self: center; font-size: var(--t-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.bt-unit { align-self: flex-end; }
+/* warstwa handlu nad wykresem: etykieta pozycji z X i procentami, przeciągane etykiety zleceń oczekujących */
+.bt-plot { position: relative; }
+.bt-tl { position: absolute; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; }
+.bt-tag { position: absolute; transform: translateY(-50%); display: flex; align-items: center; gap: 2px; max-width: calc(100% - 80px); padding: 0 2px 0 8px; height: 22px; border-radius: 4px; background: var(--popover); border: 1px solid var(--line); color: var(--fg); font-size: var(--t-xs); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: auto; box-shadow: 0 1px 4px color-mix(in srgb, var(--fg) 10%, transparent); }
+.bt-tag[hidden] { display: none; }
+.bt-tag-t { overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
+.bt-tag-pos.pos { border-color: var(--profit); } .bt-tag-pos.pos .bt-tag-t { color: var(--profit); }
+.bt-tag-pos.neg { border-color: var(--loss); } .bt-tag-pos.neg .bt-tag-t { color: var(--loss); }
+.bt-tag-o.buy { border-color: var(--profit); } .bt-tag-o.sell { border-color: var(--loss); }
+.bt-tag-o.sl { border-style: dashed; border-color: var(--loss); } .bt-tag-o.tp { border-style: dashed; border-color: var(--profit); }
+.bt-tag-o.sl, .bt-tag-o.tp { padding-right: 8px; }
+.bt-tag-o.drag { cursor: ns-resize; touch-action: none; }
+.bt-tag-o.dragging { box-shadow: 0 0 0 2px var(--fg-2); }
+.bt-tag-o.drag:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.bt-tag .icon-btn.bt-tag-x { width: 20px; height: 20px; min-width: 20px; font-size: 14px; line-height: 1; }
+.bt-tag-m { position: absolute; top: calc(100% + 4px); right: 0; display: flex; gap: 4px; padding: 4px; background: var(--popover); border: 1px solid var(--line); border-radius: 6px; }
+/* szuflada: Pozycje / Zlecenia / Historia */
+.bt-dock { max-height: 30vh; display: flex; flex-direction: column; overflow: hidden; }
+.bt-dk-h { display: flex; align-items: center; gap: 8px; padding: 6px 14px 4px; }
+.bt-dk-tabs [aria-selected="true"] { background: var(--seg-on); }
+.bt-dk-n { color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.bt-dk-fold { margin-left: auto; }
+.bt-dk-b { overflow: auto; padding: 0 14px 8px; min-height: 0; }
+.bt-dk-b[hidden] { display: none; }
+.bt-dk-t { font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.bt-dk-t th { padding: 4px 10px 4px 0; }
+.bt-dk-t td { padding: 4px 10px 4px 0; white-space: nowrap; }
+.bt-dk-t .num { text-align: right; }
+.bt-dk-t td.pos { color: var(--profit); } .bt-dk-t td.neg { color: var(--loss); }
+.bt-dk-a { display: flex; gap: 4px; justify-content: flex-end; }
+.bt-dk-empty { margin: 4px 0; }
+.bt-st-j { font-size: var(--t-xs); padding: 1px 6px; border-radius: 4px; background: var(--seg-track); color: var(--fg-2); white-space: nowrap; }
+.bt-st-j[data-st="todo"] { color: var(--be); }
+.bt-st-j[data-st="sent"] { color: var(--profit); }
+.bt-st-j[data-st="error"] { color: var(--danger, var(--loss)); }
+/* szybki panel po zamknięciu (J1): wynik + Setup + Journal */
+.bt-jr-px { margin: 0; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+/* Journal: klasyczne okno trade'a nad replayem */
+.lb.bt-jw { z-index: 145; }
+.bt-jw-mode { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-jw [data-swc="badj"], .bt-jw .swc-k-note, .bt-jw [data-swc="contract"] { display: none; }
+.bt-jw-f { display: grid; grid-template-columns: minmax(180px, 280px) minmax(0, 1fr); gap: 8px 16px; width: 100%; max-width: 900px; }
+.bt-jw-f .sp-in { width: 100%; max-width: none; }
+.bt-jw-f textarea.sp-in { resize: vertical; min-height: 64px; height: auto; }
+.bt-jw-msg { align-self: center; }
+@media (max-width: 640px) {
+  .bt-dock { max-height: 40vh; }
+  .bt-dk-h, .bt-dk-b { padding-left: 10px; padding-right: 10px; }
+  .bt-jw-f { grid-template-columns: minmax(0, 1fr); }
+  .bt-tag { font-size: 11px; }
+}
+
+/* Backtest M (31.10.2026): funkcjonalny i dopracowany design replayu. Słowa użytkownika: «do pakietu M skup sie na funkcjonalnym designie ulatwiajacym korzyustanie
+   z backtestingu ale ma byc ogolnie bardzo dopracowany dalej w stylu designu». Tylko tokeny motywu; ruch 120–160 ms na --ease, wyłączany przy prefers-reduced-motion. */
+/* pasek górny: nazwa i czas po lewej, konto jak kafle dashboardu (etykieta nad wartością), stan sesji i Notion, układ i zamknięcie po prawej */
+.bt-top { gap: 6px 20px; padding: 8px 14px; min-height: 54px; }
+.bt-ttl { align-items: center; gap: 2px 14px; }
+.bt-when { display: inline-flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+.bt-clock { font-size: var(--t-md); font-weight: 700; letter-spacing: .01em; }
+.bt-clock-ny { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-clock-ny:empty { display: none; }
+.bt-stats { gap: 6px 16px; }
+.bt-acct { display: inline-flex; flex-wrap: nowrap; gap: 0; align-items: stretch; }
+.bt-ac { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 14px; border-left: 1px solid var(--line); white-space: nowrap; }
+.bt-ac:first-child { padding-left: 0; border-left: 0; }
+.bt-ac .lbl { font-size: var(--t-xs); letter-spacing: .12em; line-height: 1.1; }
+.bt-ac-v { display: inline-flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.bt-ac b { font-size: var(--t-base); font-weight: 650; }
+.bt-ac[data-ac="eq"] b, .bt-ac[data-ac="open"] b { font-size: var(--t-md); font-weight: 700; }
+.bt-ac-x { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-ac-x.pos { color: var(--profit); } .bt-ac-x.neg { color: var(--loss); }
+.bt-res { font-size: var(--t-sm); white-space: nowrap; }
+.bt-notion[data-n="0"] { color: var(--fg-2); }
+.bt-notion[data-n="0"]::before { content: "✓"; margin-right: 5px; color: var(--profit); }
+.bt-top [data-bt="notion"][hidden] { display: none; }
+
+/* panel zleceń: Kup/Sprzedaj wypełnione kolorem danych, parametry w jednej grupie, pozycja w zwartym wierszu */
+.bt-ord { gap: 8px; padding: 8px 14px; }
+.bt-ord-main { flex-wrap: nowrap; align-items: flex-end; gap: 8px 16px; }
+.bt-ord-side { display: flex; gap: 6px; flex: none; }
+.bt-ord .bt-buy, .bt-ord .bt-sell { height: 34px; min-width: 116px; padding: 0 12px; flex-direction: column; gap: 1px; color: var(--on-fg); line-height: 1.05; }
+/* cena w przycisku zmienia się co klatkę odtwarzania: stały rozmiar i izolacja układu, żeby zmiana tekstu nie przeliczała całego ekranu */
+.bt-ord .bt-buy, .bt-ord .bt-sell { width: 128px; contain: layout paint; }
+.bt-ord .bt-buy { background: var(--profit); }
+.bt-ord .bt-sell { background: var(--loss); }
+.bt-ord-k { font-size: var(--t-sm); font-weight: 700; letter-spacing: .02em; }
+.bt-ord-px { font-size: var(--t-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+.bt-ord-px:empty { display: none; }
+.bt-ord .bt-buy:not(:disabled):active, .bt-ord .bt-sell:not(:disabled):active { filter: brightness(.92); }
+.bt-ord-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; min-width: 0; flex: 1; }
+.bt-ord-fields .bt-draw { align-self: flex-end; }
+.bt-ord-prev { margin: 0 0 6px; }
+.bt-ord-more { display: none; }
+.bt-ord-pos { gap: 6px 10px; align-items: flex-end; padding-top: 8px; border-top: 1px solid var(--line); }
+.bt-ord-pos .bt-ord-info { margin-right: 6px; align-self: center; color: var(--fg); font-weight: 500; }
+.bt-ord-part { flex-direction: row; align-items: center; gap: 6px; }
+.bt-ord-part .sp-in { width: 56px; height: 24px; }
+.bt-ord-msg[hidden] { display: none; }
+.bt-ord-note[data-state="rewound"] { font-weight: 500; }
+
+/* etykiety na wykresie: przy lewej krawędzi, SL/TP pozycji tylko do odczytu; stany najechania i fokusu */
+.bt-tag { box-shadow: var(--pill-shadow); transition: box-shadow .15s var(--ease), border-color .15s var(--ease); }
+.bt-tag-lv { pointer-events: none; padding-right: 8px; }
+.bt-tag-m { left: 0; right: auto; box-shadow: var(--pop-shadow); }
+@media (hover: hover) { .bt-tag-o.drag:hover { box-shadow: 0 0 0 1px var(--fg-2), var(--pill-shadow); } }
+
+/* sterowanie czasem: skok jako przycisk (powtarza wybrany) z menu skoków */
+.bt-jumpw { position: relative; display: inline-flex; align-items: center; }
+.bt-jumpw .bt-jump[hidden] { display: none; }
+.bt-jump-go { border-top-right-radius: 0; border-bottom-right-radius: 0; max-width: 260px; }
+.bt-jump-k { color: var(--fg-2); font-weight: 500; }
+.bt-jump-n { overflow: hidden; text-overflow: ellipsis; }
+.bt-jump-dd { margin-left: 1px; padding: 0 7px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.bt-jump-dd[aria-expanded="true"] svg { transform: rotate(180deg); }
+.bt-jump-dd svg { transition: transform .15s var(--ease); }
+.bt-jump-l { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 40; display: flex; flex-direction: column; min-width: 260px; padding: 4px; background: var(--popover); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--pop-shadow); animation: bt-pop .14s var(--ease); }
+.bt-jump-l[hidden] { display: none; }
+.bt-jump-l button { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; font-size: var(--t-sm); text-align: left; cursor: pointer; transition: background-color .12s var(--ease); }
+.bt-jump-l button[aria-current="true"] { font-weight: 650; }
+.bt-jump-l button:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+@media (hover: hover) { .bt-jump-l button:hover { background: rgb(var(--fg-rgb) / .08); } }
+.bt-jump-l button:active { background: rgb(var(--fg-rgb) / .12); }
+.bt-kbd { font: 500 var(--t-xs) ui-monospace, Consolas, monospace; color: var(--fg-2); }
+@keyframes bt-pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* szuflada: stan opisu i wysyłki jako kropka w kolorze stanu i tekst (bez podkładki pod tekstem) */
+.bt-st-j { display: inline-flex; align-items: center; gap: 6px; padding: 0; border-radius: 0; background: none; font-size: var(--t-sm); }
+.bt-st-j::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.bt-dk-t tbody tr { transition: background-color .12s var(--ease); }
+@media (hover: hover) { .bt-dk-t tbody tr:hover { background: rgb(var(--fg-rgb) / .04); } }
+
+/* szybki panel po zamknięciu: cień warstwy i krótkie wejście */
+.bt-jr { box-shadow: var(--pop-shadow); animation: bt-pop .16s var(--ease); }
+
+/* lista sesji: wynik w R, pod spodem $ i liczba trade'ów */
+.bt-l-res b { display: block; font-weight: 650; }
+.bt-l-res b.pos { color: var(--profit); } .bt-l-res b.neg { color: var(--loss); }
+.bt-l-sub { display: block; font-size: var(--t-xs); color: var(--fg-2); white-space: nowrap; }
+
+/* kreator: podpowiedzi pod polami, podstawa ryzyka tylko przy ryzyku w % */
+.bt-f[hidden] { display: none; }
+.bt-fsub { margin: 0; font-size: var(--t-xs); line-height: 1.35; }
+.bt-fsub:empty { display: none; }
+
+@media (max-width: 640px) {
+  /* pasek: wiersz 1 nazwa, czas i zamknięcie; wiersz 2 konto w czterech kolumnach; wiersz 3 wynik sesji i Notion */
+  .bt-top { gap: 6px 10px; min-height: 0; }
+  .bt-top > .bt-ttl { order: 0; flex: 1 1 0; }
+  .bt-top > [data-bt="close"], .bt-top > [data-bt="stats"] { order: 1; }
+  .bt-top > .bt-stats { order: 2; flex: 1 1 100%; }
+  .bt-daytype { display: none; }
+  .bt-acct { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; }
+  .bt-ac { padding: 0 6px; }
+  .bt-ac-x { display: none; }
+  .bt-ac b, .bt-ac[data-ac="eq"] b, .bt-ac[data-ac="open"] b { font-size: var(--t-sm); }
+  .bt-ac .lbl { font-size: var(--t-xs); letter-spacing: .08em; }
+  .bt-tag { max-width: 58%; }
+  .bt-res { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* lista sesji jako karty: znacznik „Do opisania” pod nazwą, data otwarcia bez wcięcia tabeli */
+  .bt-tab .bt-l-ago { padding-left: 0; }
+  .bt-l-todo { display: block; margin: 2px 0 0; }
+  /* panel zleceń zwinięty: Kup/Sprzedaj i podsumowanie parametrów; pola po rozwinięciu */
+  .bt-ord { padding: 6px 10px; gap: 6px; }
+  .bt-ord-main { flex-wrap: wrap; align-items: stretch; gap: 6px; }
+  .bt-ord-side { flex: 1 1 auto; }
+  .bt-ord .bt-buy, .bt-ord .bt-sell { flex: 1 1 0; min-width: 0; height: 40px; }
+  .bt-ord-more { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; flex: 1 1 130px; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--fg-2); font: inherit; font-size: var(--t-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+  .bt-ord-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bt-ord-chev::after { content: ""; display: block; width: 7px; height: 7px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); transition: transform .15s var(--ease); }
+  .bt-ord[data-more="true"] .bt-ord-chev::after { transform: translateY(1px) rotate(-135deg); }
+  .bt-ord-more:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .bt-ord-fields { flex: 1 1 100%; }
+  .bt-ord[data-more="false"] .bt-ord-fields { display: none; }
+  .bt-ord[data-more="false"] .bt-ord-part, .bt-ord[data-more="false"] [data-o="partial"] { display: none; }
+  .bt-ord-pos { flex-wrap: nowrap; align-items: center; padding-top: 6px; }
+  .bt-ord-pos .bt-ord-info { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-xs); }
+  .bt-ord-pos .btn { height: 34px; }
+  /* sterowanie: podpisy pól tylko dla czytników, skok i interwał w jednym wierszu */
+  .bt-ctl .bt-tfl .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .bt-jump-go { max-width: 170px; }
+  .bt-jump-l { min-width: 0; width: calc(100vw - 20px); max-width: 320px; }
+  /* szybki panel: bez wiersza cen i podpowiedzi klawiatury (wynik zostaje), żeby nie zakrywał wykresu */
+  .bt-jr { padding: 8px 10px; gap: 6px; }
+  .bt-jr .bt-jr-px, .bt-jr .bt-jr-hint { display: none; }
+  .bt-jr-b { justify-content: flex-end; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bt-jump-l, .bt-jr { animation: none !important; }
+  .bt-tag, .bt-jump-dd svg, .bt-jump-l button, .bt-dk-t tbody tr, .bt-ord-chev::after { transition: none !important; }
+}
+/* M: przycisk Odtwarzaj/Pauza o stałej szerokości: zmiana napisu nie przestawia paska sterowania */
+.bt-ctl [data-bt="play"] { min-width: 92px; }
+
+/* Backtest M, poprawki po ocenie wyglądu (31.10.2026, backtest-wyniki/M/review-wyglad.md) */
+/* #5: przy otwartej pozycji bilet jest spokojnym obrysem w kolorze strony z ceną (powód blokady w title), zamiast mętnego wypełnienia */
+.bt-ord .bt-buy:disabled, .bt-ord .bt-sell:disabled { opacity: 1; background: transparent; }
+.bt-ord .bt-buy:disabled { color: var(--profit); box-shadow: inset 0 0 0 1px var(--profit); }
+.bt-ord .bt-sell:disabled { color: var(--loss); box-shadow: inset 0 0 0 1px var(--loss); }
+/* #12: „Wejdź według rysunku” obok Kup/Sprzedaj */
+.bt-ord-side { align-items: center; }
+.bt-ord-side .bt-draw { margin-left: 4px; }
+/* #6: wiersz pozycji: kierunek pogrubiony, dopisek SL/TP przygaszony */
+.bt-ord-info b { font-weight: 650; }
+.bt-ord-info-x { color: var(--fg-2); font-weight: 400; }
+/* #10: wynik sesji jako piąty kafel */
+.bt-stats .bt-res { white-space: nowrap; border-left: 1px solid var(--line); padding-left: 14px; margin-left: -16px; }
+/* #7: szuflada zwarta, akcje przy danych (tabela na szerokość treści, nie na 1 900 px) */
+.bt-dk-t { width: auto; }
+.bt-dk-t th, .bt-dk-t td { padding-right: 22px; }
+.bt-dk-t .bt-dk-a { padding-left: 8px; }
+/* #8: skok w Ustawieniach: nazwa, rodzaj na pełną szerokość, potem parametr, skrót i usunięcie w jednym rytmie */
+.bt-sj > select[data-btf="cel.kind"] { flex: 1 1 100%; }
+/* #9: fokus pól Journala widoczny, podpowiedź skrótu zapisu przy przycisku */
+.bt-jw .sp-in:focus-visible { outline: 2px solid var(--lb-fg, var(--fg)); outline-offset: 1px; }
+.bt-jw-kbd { align-self: center; margin: 0; font-size: var(--t-xs); }
+/* #11: podpowiedź szybkiego panelu bez łamania wewnątrz pary „klawisz: akcja” */
+.bt-jr-hint > span { white-space: nowrap; }
+.bt-jr-hint > span + span::before { content: "· "; }
+/* #13: kreator: pola wyboru instrumentów na wysokości pól tekstowych */
+.bt-chk { min-height: 32px; align-items: center; }
+@media (max-width: 640px) {
+  .bt-stats .bt-res { margin-left: 0; padding-left: 6px; flex: 1 1 100%; border-left: 0; }
+  /* final (ocena wyglądu 2, P2-N1): wynik sesji w drugiej linii paska z mikroetykietą SESJA */
+  .bt-stats .bt-res .lbl { display: inline; margin-right: 6px; }
+  .bt-stats .bt-res .bt-ac-x { display: inline; }
+  .bt-ord-info-x { display: none; }
+  .bt-ord[data-more="false"] .bt-draw { display: none; }
+  .bt-ord-side { flex-wrap: wrap; }
+  .bt-ord-side .bt-draw { flex: 1 1 100%; margin-left: 0; height: 34px; }
+  /* #15: szuflada przy 375: tylko kolumny potrzebne do decyzji, akcje przy danych */
+  .bt-dk-pos th:nth-child(n+3):nth-child(-n+6), .bt-dk-pos td:nth-child(n+3):nth-child(-n+6),
+  .bt-dk-pos th:nth-child(n+10):nth-child(-n+12), .bt-dk-pos td:nth-child(n+10):nth-child(-n+12) { display: none; }
+  .bt-dk-ord th:nth-child(3), .bt-dk-ord td:nth-child(3), .bt-dk-ord th:nth-child(4), .bt-dk-ord td:nth-child(4),
+  .bt-dk-ord th:nth-child(6), .bt-dk-ord td:nth-child(6), .bt-dk-ord th:nth-child(7), .bt-dk-ord td:nth-child(7) { display: none; }
+  .bt-dk-hist th:nth-child(1), .bt-dk-hist td:nth-child(1), .bt-dk-hist th:nth-child(n+4):nth-child(-n+6), .bt-dk-hist td:nth-child(n+4):nth-child(-n+6),
+  .bt-dk-hist th:nth-child(9), .bt-dk-hist td:nth-child(9), .bt-dk-hist th:nth-child(10), .bt-dk-hist td:nth-child(10) { display: none; }
+  .bt-dk-t th, .bt-dk-t td { padding-right: 12px; }
+}
+.bt-sj > select[data-btf="cel.kind"] { max-width: none; }
+@media (max-width: 640px) { .bt-ctl [data-bt="play"] { min-width: 0; } }
+
+/* N1 (1.6.0): baner danych DEMO nad Statystykami (znika po usunięciu wpisów DEMO) */
+.demo-ban { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; padding: 10px 16px; }
+.demo-ban-t { flex: 1 1 320px; min-width: 0; color: var(--fg-2); font-size: var(--t-sm); }
+.demo-ban-t b { color: var(--fg); font-weight: 700; margin-right: 4px; }
+.demo-ban-a { display: flex; gap: 8px; flex-wrap: wrap; }
+.demo-ban-a .btn svg { margin-right: 4px; }
+.bt-nodata a.btn { text-decoration: none; }
+
+/* ---------- N2 (1.6.0): pełny widok Ustawień (ustawienia.js, ust-*.js) ----------
+   Układ jak powłoka dashboardu: nawigacja na ramie po lewej (jak panel Desk), treść w karcie --content po prawej; grupy jako karty --float.
+   [U] 31.10.2026 «modul ustawien zreworkuj na o wiele zrozumialszy i czyterlniejszy i dopracowny». Nadpisuje wygląd popovera .sp (te same klasy pól). */
+.sp.sv {
+  position: fixed; top: 40px; right: 0; bottom: 0; left: 0; z-index: 90; width: auto; max-height: none; overflow: hidden;
+  display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  padding: 0; border-radius: 0; background: var(--chrome); box-shadow: none; animation: none;
+}
+.sv-top { grid-column: 1; grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px 12px 10px 16px; }
+.sv-top h2 { font-size: var(--t-md); font-weight: 700; }
+.sv-wrap { display: contents; }
+.sv-nav { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 2px 10px 14px; scrollbar-width: thin; }
+.sv .sp-tabs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sv-ni { position: relative; }
+.sv .sp-tabs .sv-nb { flex: none; }
+.sv-nb {
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--fg-2); font: inherit; font-size: var(--t-base); font-weight: 500; text-align: left; cursor: pointer;
+  transition: background-color .15s var(--ease), color .15s var(--ease);
+}
+.sv-nb svg { opacity: .8; }
+.sv-nb[aria-selected="true"] { background: var(--float); color: var(--fg); font-weight: 700; box-shadow: var(--pill-shadow); }
+.sv-nb[aria-selected="true"] svg { opacity: 1; }
+@media (hover: hover) { .sv-nb:not([aria-selected="true"]):hover { background: rgb(var(--fg-rgb) / .06); color: var(--fg); } }
+.sv-nb[data-attn]::after { content: ""; margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.sv-nd { display: none; }
+.sv-nf { margin-top: auto; padding: 14px 10px 4px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; font-size: var(--t-sm); color: var(--fg-2); }
+.sv-nf-d { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.sv-nf-c { display: inline-flex; align-items: center; gap: 6px; }
+.sv-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-2); }
+.sv-dot[data-st="ok"] { background: var(--n-green); box-shadow: none; }
+.sv-dot[data-st="bad"] { background: var(--danger); box-shadow: none; }
+.sv-dot[data-st="wait"] { background: rgb(var(--fg-rgb) / .35); box-shadow: none; }
+.sv-main {
+  grid-column: 2; grid-row: 1 / 3; margin: 7px; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: clip; outline: none;
+  background: var(--content); border: 1px solid var(--edge); border-radius: 10px; scrollbar-width: thin; scrollbar-color: rgb(var(--fg-rgb) / .22) transparent;
+}
+.sv-back { display: none; }
+.sv-head { padding: 23px 23px 0; max-width: 860px; }
+.sv-head h2 { font-size: var(--t-lg); font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
+.sv-head .page-sub { margin-top: 4px; color: var(--fg-2); font-size: var(--t-sm); max-width: 70ch; }
+.sv-body { display: flex; flex-direction: column; gap: 14px; max-width: 860px; padding: 18px 23px 40px; }
+.sv-g.card { padding: 6px 20px 12px; }
+.sv-g > .sp-g:first-child, .sv-gh .sp-g { margin: 12px 0 4px; font-size: var(--t-md); }
+.sv-gh { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.sv-gh .btn { margin-top: 8px; }
+.sv-gd { margin: 0 0 4px; max-width: 72ch; line-height: 1.5; }
+.sv-g .sp-f { padding: 10px 0; }
+.sv-g .sp-f .note, .sv-g > .note { max-width: 72ch; line-height: 1.5; }
+.sv .pvc { top: 0; margin: 0; border-radius: 10px; box-shadow: var(--pop-shadow); z-index: 3; }
+.sv .sp-reset { padding: 8px 0 4px; }
+.sv-doc { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.sv-conn { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 4px; }
+.sv-conn-t { flex: 1 1 260px; min-width: 0; font-size: var(--t-base); overflow-wrap: anywhere; }
+.sv-conns { list-style: none; margin: 6px 0 4px; padding: 0; }
+.sv-cr {
+  display: grid; grid-template-columns: 10px 92px minmax(0, 1fr) auto; grid-template-areas: "d n s b" ". . c b";
+  align-items: center; column-gap: 12px; row-gap: 2px; padding: 10px 0; border-top: 1px solid var(--line);
+}
+.sv-cr:first-child { border-top: 0; }
+.sv-cr .sv-dot { grid-area: d; }
+.sv-cr > b { grid-area: n; font-weight: 600; }
+.sv-cs { grid-area: s; font-size: var(--t-base); }
+.sv-cd { grid-area: c; min-width: 0; overflow-wrap: anywhere; }
+.sv-cr .btn { grid-area: b; }
+.sv-path { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; padding: 8px 0; }
+.sv-path .lbl { flex: none; }
+.sv-pathv { flex: 1 1 240px; min-width: 0; font-family: var(--mono); font-size: var(--t-sm); color: var(--fg); overflow-wrap: anywhere; }
+.sv-path .btn { flex: none; }
+.sv-list, .sv-cmds { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sv-list li, .sv-cmds li { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
+.sv-list code, .sv-cmds code { font-family: var(--mono); font-size: var(--t-sm); color: var(--fg); overflow-wrap: anywhere; }
+.sv-list code { min-width: 150px; }
+.sv-log {
+  max-height: 320px; overflow: auto; margin: 10px 0 6px; padding: 10px 12px; border-radius: 8px; background: var(--well); box-shadow: var(--well-shadow);
+  font-family: var(--mono); font-size: var(--t-sm); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg);
+}
+.sv .upd-actions { padding: 6px 0 2px; }
+/* N3/N4 (1.6.0): tabela świec, potwierdzenia, pasek postępu i karty źródeł danych; tylko tokeny motywu */
+.sv-warn { color: var(--warn); }
+.sv-low { color: var(--warn); }
+.sv-tbl { width: 100%; border-collapse: collapse; margin: 6px 0 4px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.sv-tbl th { text-align: left; font-weight: 600; color: var(--fg-2); font-size: var(--t-xs, var(--t-sm)); letter-spacing: .04em; text-transform: uppercase; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); }
+.sv-tbl td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--line); color: var(--fg); vertical-align: middle; }
+.sv-tbl tr:last-child td { border-bottom: 0; }
+.sv-tbl .num { text-align: right; }
+.sv-tbl .act { text-align: right; padding-right: 0; width: 1%; white-space: nowrap; }
+.sv-tbl tr.on td { color: var(--fg); background: rgb(var(--fg-rgb) / .04); }
+.sv-confirm { margin: 10px 0 4px; padding: 12px 14px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; gap: 8px; }
+.sv-confirm p { margin: 0; line-height: 1.5; max-width: 72ch; }
+.sv-confirm .sp-keyrow { flex-wrap: wrap; }
+.sv-confirm .sp-keyrow .sp-in { flex: 1 1 160px; min-width: 0; width: auto; }
+.sv-prog { display: flex; flex-direction: column; gap: 6px; }
+.sv-bar { align-self: stretch; width: 100%; margin: 6px 0 2px; height: 6px; border-radius: 3px; background: rgb(var(--fg-rgb) / .12); overflow: hidden; }
+.sv-bar > i { display: block; height: 100%; background: var(--fg); border-radius: 3px; transition: width .3s ease; }
+.sv-bar.warn > i { background: var(--warn); }
+.sv-src { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; padding: 8px 0 2px; }
+.sv-src-t { flex: 1 1 240px; min-width: 0; font-size: var(--t-base); overflow-wrap: anywhere; }
+.sv-src-t code { font-family: var(--mono); font-size: var(--t-sm); }
+.sv-src .btn { flex: none; }
+.sv-sub { margin: 10px 0 2px; font-size: var(--t-sm); font-weight: 700; color: var(--fg); }
+.sv-q { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--t-sm); }
+.sv-q li { display: flex; gap: 4px 12px; flex-wrap: wrap; color: var(--fg-2); }
+.sv-q li b { color: var(--fg); font-weight: 600; }
+.sv-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 12px; align-items: end; }
+.sv-fields label { display: flex; flex-direction: column; gap: 4px; }
+.sv-fields .sp-in { width: 100%; }
+@media (prefers-reduced-motion: reduce) { .sv-bar > i { transition: none; } }
+@media (max-width: 1023px) {
+  .sv-tbl thead { display: none; }
+  .sv-tbl, .sv-tbl tbody { display: block; }
+  .sv-tbl tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "s a" "l a" "d a"; gap: 0 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .sv-tbl tr:last-child { border-bottom: 0; }
+  .sv-tbl td { border: 0; padding: 0; }
+  .sv-tbl td:nth-child(1) { grid-area: s; }
+  .sv-tbl td:nth-child(2) { grid-area: l; color: var(--fg-2); }
+  .sv-tbl td:nth-child(3) { grid-area: d; color: var(--fg-2); }
+  .sv-tbl td:nth-child(3)::after { content: " – " attr(data-to) " · " attr(data-size); }
+  .sv-tbl td:nth-child(4), .sv-tbl td:nth-child(5) { display: none; }
+  .sv-tbl td.act { grid-area: a; align-self: center; }
+}
+html.sv-open .tabbar { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .sv-nb { transition: none; } }
+@media (max-width: 1023px) {
+  .rp-scrim ~ .sp.sv, .sp.sv {
+    top: calc(50px + env(safe-area-inset-top)); bottom: 0; left: 0; right: 0; width: auto; max-height: none; z-index: 95;
+    grid-template-columns: minmax(0, 1fr); padding: 0; border-radius: 0; animation: none;
+  }
+  .sp.sv[data-m="list"] .sv-main { display: none; }
+  .sp.sv[data-m="sec"] .sv-nav, .sp.sv[data-m="sec"] .sv-top { display: none; }
+  .sv-top { padding: 12px 12px 8px 16px; }
+  .sv-top h2 { font-size: var(--t-lg); }
+  .sv-nav { grid-row: 2; padding: 0 10px calc(20px + env(safe-area-inset-bottom)); }
+  .sv .sp-tabs { gap: 4px; }
+  .sv-nb { min-height: 60px; padding: 8px 12px 28px; align-items: center; font-size: var(--t-md); background: var(--float); box-shadow: var(--pill-shadow); }
+  .sv-nb[aria-selected="true"] { box-shadow: 0 0 0 1.5px rgb(var(--fg-rgb) / .35), var(--pill-shadow); }
+  .sv-nd { display: block; position: absolute; left: 38px; right: 12px; bottom: 10px; pointer-events: none; font-size: var(--t-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sv-main { grid-column: 1; grid-row: 1 / 3; margin: 0 7px calc(7px + env(safe-area-inset-bottom)); }
+  .sv-back { display: block; padding: 10px 10px 0; }
+  .sv-back .btn { height: 36px; font-size: var(--t-base); color: var(--fg); }
+  .sv-head { padding: 8px 16px 0; }
+  .sv-body { padding: 14px 8px 28px; gap: 12px; }
+  .sv-g.card { padding: 4px 14px 10px; }
+  .sv-cr { grid-template-columns: 10px minmax(0, 1fr) auto; grid-template-areas: "d n b" ". s s" ". c c"; }
+  .sv-list code { min-width: 0; }
+  .sv-pathv { flex-basis: 100%; }
+}
+
+/* N5 (1.6.0): Ustawienia → Kopie i diagnostyka → Kopie baz Notion: lista kopii, podgląd przywracania, potwierdzenie słowem */
+.sv-bks { list-style: none; margin: 6px 0 4px; padding: 0; display: flex; flex-direction: column; }
+.sv-bk { border-top: 1px solid var(--line); padding: 10px 0; }
+.sv-bk:first-child { border-top: 0; }
+.sv-bk-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.sv-bk-txt { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sv-bk-h { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
+.sv-bk-h b { font-size: var(--t-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+.sv-bk-why { color: var(--fg-2); font-size: var(--t-xs, var(--t-sm)); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.sv-bk-why[data-why="before-restore"] { color: var(--warn); }
+.sv-bk-meta { color: var(--fg-2); font-size: var(--t-sm); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sv-bk-row .btn { flex: none; }
+.sv-bk-pv { margin-top: 10px; }
+.sv-bk-sum { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; font-size: var(--t-sm); line-height: 1.5; }
+.sv-bk-items summary { cursor: pointer; font-size: var(--t-sm); color: var(--fg-2); text-decoration: underline; text-underline-offset: 3px; width: max-content; max-width: 100%; }
+.sv-bk-items ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; font-size: var(--t-sm); }
+.sv-bk-items li { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.sv-bk-items li span:not(.note) { color: var(--fg); min-width: 0; overflow-wrap: anywhere; }
+.sv-bk-msg { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+.sv-g .note.sv-warn { color: var(--warn); }
+@media (max-width: 1023px) {
+  .sv-bk-row .btn { width: 100%; }
+}
+
+/* N6 (1.6.0): pierwsze kroki v2: Gotowość w 4 grupach, krok Dane rynkowe (karty z Ustawień → Źródła danych), ekran Gotowe */
+.ob-card { width: min(720px, 100%); }
+.ob-lang-h { margin: -6px 0 14px; }
+.ob-help { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ob-help[open] { display: flex; flex-direction: column; gap: 6px; }
+.ob-many { margin: 0 0 8px; color: var(--warn); }
+.ck-grps { gap: 10px; }
+.ck-grp { border-radius: 10px; background: var(--float); box-shadow: var(--pill-shadow), inset 0 0 0 1px var(--line); padding: 4px 14px; }
+.ck-list.ck-grps .ck-grp-h { border-top: 0; padding: 10px 0; }
+.ck-grp[data-st="warn"] { box-shadow: var(--pill-shadow), inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+.ck-grp[data-st="error"] { box-shadow: var(--pill-shadow), inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent); }
+.ck-grp-h .ck-txt b { font-size: var(--t-md); }
+.ck-grp-act { background: none; padding: 0; margin-top: 2px; }
+.ck-grp-d { border-top: 1px solid var(--line); padding: 2px 0 6px; }
+.ck-grp-d > summary { cursor: pointer; padding: 8px 0 6px; color: var(--fg-2); font-size: var(--t-sm); width: max-content; max-width: 100%; text-decoration: underline; text-underline-offset: 3px; }
+.ck-grp-d > summary:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; border-radius: 4px; }
+.ck-grp-d > .ck-list .ck:first-child { border-top: 1px solid var(--line); }
+.ob-dane { display: flex; flex-direction: column; gap: 12px; }
+.ob-dane .sv-g.card { padding: 4px 18px 12px; background: var(--float); }
+.ob-dane .sv-g > .sp-g:first-child { margin: 12px 0 4px; font-size: var(--t-md); }
+.sv-costs { margin: 6px 0 4px; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: var(--t-sm); line-height: 1.5; color: var(--fg-2); max-width: 72ch; }
+.ob-next { gap: 10px; }
+.ob-next .ob-next-i { grid-template-columns: 28px minmax(0, 1fr) auto; padding: 12px 14px; border-top: 0; border-radius: 10px; background: var(--float); box-shadow: var(--pill-shadow), inset 0 0 0 1px var(--line); }
+.ob-next .ob-next-i > .ck-act { justify-content: flex-end; }
+.ob-next .ck-plan { grid-column: 2 / 4; }
+@media (max-width: 1023px) {
+  .ck-grp { padding: 2px 12px; }
+  .ob-next .ob-next-i { grid-template-columns: 28px minmax(0, 1fr); }
+  .ob-next .ob-next-i > .ck-act { grid-column: 2; justify-content: flex-start; }
+  .ob-dane .sv-g.card { padding: 2px 12px 10px; }
+}
+
+/* ---------- final (1.6.0): poprawki po końcowej ocenie wyglądu (backtest-wyniki/final/review-wyglad.md) ---------- */
+/* [U] 1.11.2026 «Tak, ujednolić na tekst z kropką»: stan „sprawdzam” szarą kropką, ostrzeżenie kropką w kolorze uwagi */
+.waitb { color: var(--fg-2); }
+.waitb::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: rgb(var(--fg-rgb) / .35); vertical-align: 1px; }
+.sv-dot[data-st="warn"] { background: var(--warn); box-shadow: none; }
+.sv-bk-meta.sv-st { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-weight: 600; }
+.sv-more { display: flex; flex-direction: column; gap: 12px; }
+.sv-more > summary { cursor: pointer; width: max-content; max-width: 100%; color: var(--fg-2); font-size: var(--t-sm); text-decoration: underline; text-underline-offset: 3px; }
+.sv-more > summary:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; border-radius: 4px; }
+/* przycisk niebezpiecznej akcji (np. „Przywróć z tej kopii”) w Onyx: ciemny tekst na jasnej czerwieni (biały miał 2,8:1, AA wymaga 4,5:1) */
+:root:not([data-theme="platinum"]) { --on-danger: var(--on-fg); }
+/* P1-1: pole ceny zlecenia Limit/Stop (i SL/TP podawane ceną) mieści cenę z dwoma miejscami po przecinku */
+.bt-ord-price .sp-in, .bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="sl"], .bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="tp"] { width: 118px; }
+/* P2-2: podgląd ryzyka pod Kup/Sprzedaj, 13 px, kwota ryzyka w kolorze straty */
+.bt-ord-l { display: flex; flex-direction: column; gap: 5px; flex: none; min-width: 0; }
+.bt-ord-l .bt-ord-prev { margin: 0; align-self: stretch; font-size: 13px; line-height: 1.3; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.bt-ord-risk { color: var(--loss); font-weight: 650; }
+/* P1-5: licznik w aktywnej zakładce szuflady w pełnym kolorze tekstu (AA na tle --seg-on) */
+.bt-dk-tabs [aria-selected="true"] .bt-dk-n { color: var(--fg); font-weight: 600; }
+/* P1-4: komunikat w stopce replayu najwyżej w 2 liniach, dłuższy rozwija „więcej” */
+.bt-msg { flex: 0 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.bt-msg:empty { display: none; }
+.bt-msg.open { display: block; -webkit-line-clamp: unset; line-clamp: unset; }
+.bt-msg-more { flex: none; }
+.bt-msg-more[hidden] { display: none; }
+/* P3: okno Journala nad replayem w pełni kryjące (bez prześwitu wykresu replayu) */
+.lb.bt-jw { background: var(--lb-chart-bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* P2-6: skok w Ustawieniach: nazwa jako tytuł wiersza, nad polami etykiety Rodzaj, Wartość, Skrót */
+.bt-sj { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 64px 32px; grid-template-areas: "n n n n" "lk lv ls ." "k v s x"; gap: 2px 8px; align-items: center; }
+.bt-sj > [data-btf="name"] { grid-area: n; width: 100%; margin-bottom: 6px; padding-left: 0; background: transparent; box-shadow: inset 0 -1px 0 var(--line); border-radius: 0; font-weight: 650; font-size: var(--t-base); }
+.bt-sj > [data-btf="name"]:focus-visible, .bt-sj > [data-btf="name"]:hover { padding-left: 9px; background: var(--input); box-shadow: var(--well-shadow); border-radius: 6px; }
+.bt-sj > .bt-sjl-k { grid-area: lk; } .bt-sj > .bt-sjl-v { grid-area: lv; } .bt-sj > .bt-sjk { grid-area: ls; margin: 0; }
+.bt-sj > .lbl { font-size: var(--t-xs); color: var(--fg-2); }
+.bt-sj > [data-btf="cel.kind"] { grid-area: k; width: 100%; }
+.bt-sj > [data-btf^="cel."]:not([data-btf="cel.kind"]), .bt-sj > .bt-sj-nov { grid-area: v; width: 100%; min-width: 0; }
+.bt-sj > .bt-skrot { grid-area: s; width: 100%; }
+.bt-sj > .icon-btn { grid-area: x; justify-self: end; }
+/* P3: Ustawienia na szerokim ekranie: kolumna treści (860 px) wyśrodkowana w panelu zamiast przy lewej krawędzi (decyzja gustu) */
+@media (min-width: 1280px) {
+  .sv-head, .sv-body { margin-inline: auto; }
+}
+@media (max-width: 640px) {
+  .bt-sj { grid-template-columns: minmax(0, 1fr) 64px 32px; grid-template-areas: "n n n" "lk lk lk" "k k k" "lv ls ." "v s x"; }
+  /* P1-4: wykres zawsze co najmniej 45% wysokości ekranu; resztę (bilet, szuflada) przewija cały ekran replayu */
+  .bt-screen { overflow-y: auto; overscroll-behavior: contain; }
+  .bt-screen > * { flex-shrink: 0; }
+  .bt-charts { flex: 1 0 0; min-height: 45vh; }
+  /* P1-1: cena w osobnym wierszu na pełną szerokość, SL i TP podawane ceną po połowie */
+  .bt-ord-fields .bt-ord-price { flex: 1 1 100%; }
+  .bt-ord-fields .bt-ord-price .sp-in { width: 100%; }
+  .bt-ord[data-unit="px"] .bt-ord-f:has(> [name="sl"]), .bt-ord[data-unit="px"] .bt-ord-f:has(> [name="tp"]) { flex: 1 1 calc(50% - 6px); }
+  .bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="sl"], .bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="tp"] { width: 100%; }
+  /* P2-2: Kup/Sprzedaj i rozwijanie parametrów w jednym wierszu, podgląd ryzyka pod nimi na całą szerokość */
+  .bt-ord-l { display: contents; }
+  .bt-ord-main > .bt-ord-more { order: 1; }
+  .bt-ord-l .bt-ord-prev { order: 2; flex: 1 1 100%; }
+  .bt-ord-main > .bt-ord-fields { order: 3; }
+  /* P2-4: kolumna akcji szuflady przyklejona do prawej krawędzi (Journal zawsze widoczny), tabela przewija się pod nią */
+  .bt-dk-t th:last-child, .bt-dk-t td.bt-dk-a { position: sticky; right: 0; z-index: 1; background: var(--chrome); box-shadow: -1px 0 0 var(--line); padding-left: 8px; padding-right: 0; }
+}
+
+/* ---------- final, ocena potwierdzająca (backtest-wyniki/final/review-wyglad-2.md) ---------- */
+/* P2-N2: „Ryzyko za małe” tak widoczne jak podgląd ryzyka: 13 px, kolor uwagi z kropką. [U] 1.11.2026 «Tak, ujednolić na tekst z kropką» */
+.bt-ord-note[data-state="small"] { font-size: 13px; color: var(--warn); font-weight: 600; }
+.bt-ord-note[data-state="small"]::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+@media (max-width: 640px) {
+  /* P1-N1: krótka plakietka przy prawej krawędzi pola świec, półprzezroczysta, bez ucinania */
+  .bt-tag { max-width: none; padding-left: 6px; background: color-mix(in srgb, var(--popover) 72%, transparent); box-shadow: none; }
+  .bt-tag-lv { padding-right: 6px; }
+  .bt-tag-m { left: auto; right: 0; }
+}

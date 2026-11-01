@@ -71,6 +71,9 @@ try {
     const s = { calls: 0, created: null };
     s.days = async () => { s.calls++; return { days, version: 1 }; };
     s.create = async (doc) => { s.created = doc; return { rev: 1 }; };
+    // K (31.10.2026): kreator nie ma pola „do”; zakres filtra = od daty startu do końca danych (bounds). Strona ustawia koniec danych zamiast pola „do”.
+    s.toDay = days[days.length - 1].day;
+    s.bounds = async () => ({ last: Date.parse(s.toDay + 'T21:00:00Z') / 1000 });
     return s;
   };
   const host = document.getElementById('k');
@@ -78,7 +81,10 @@ try {
     host.innerHTML = '';
     const k = openKreator(host, { client, now: () => Date.parse(LAST) + 86400000 * 2, ...opts });
     const f = k.form;
-    const set = (n, v) => { const el = f.querySelector(`[name="${n}"]`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+    const set = (n, v) => {
+      if (n === 'to') { client.toDay = v; const el = f.querySelector('[name="from"]'); el.dispatchEvent(new Event('change', { bubbles: true })); return; }
+      const el = f.querySelector(`[name="${n}"]`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
     return { k, f, set };
   };
   const ev = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
@@ -216,7 +222,9 @@ try {
       set('name', 'Ręczne'); set('balance', '50000'); set('risk', '100');
       f.requestSubmit();
       await until(() => c.created);
-      rec('reczne', c.created && same(c.created.def.excluded, ['2023-01-05']) && !c.created.pool.includes('2023-01-05') && c.created.pool.length === 9, `sesja: wykluczone ${JSON.stringify(c.created?.def?.excluded)}, pula ${c.created?.pool?.length}`);
+      // K: bez puli w sesji; dni skoku „Następny dzień z filtra” = matchDays(def) (tu w zakresie strony)
+      const fd = c.created ? matchDays({ ...c.created.def, to: '2023-01-13' }, DAYS).days : [];
+      rec('reczne', c.created && !('pool' in c.created) && same(c.created.def.excluded, ['2023-01-05']) && !fd.includes('2023-01-05') && fd.length === 9, `sesja: wykluczone ${JSON.stringify(c.created?.def?.excluded)}, dni filtra ${fd.length}`);
       const r = matchDays(c.created.def, DAYS);
       rec('reczne', r.excluded.some((x) => x.day === '2023-01-05' && x.reason === 'manual'), 'powód manual');
     });
@@ -281,7 +289,8 @@ try {
       const ts3 = e3.querySelector('.bt-ftsel'); ts3.value = ts3.querySelector('option[value]:not([value=""])').value; ev(ts3, 'change');
       c3.f.requestSubmit();
       await until(() => cc.created);
-      rec('szablony', cc.created && cc.created.pool.length === cnt && cc.created.pool.every((d) => DAYS.find((x) => x.day === d).news.some((n) => n.name === 'CPI')), `sesja z szablonu: pula ${cc.created?.pool?.length} dni CPI`);
+      const fd2 = cc.created ? matchDays(cc.created.def, DAYS).days : [];
+      rec('szablony', cc.created && fd2.length === cnt && fd2.every((d) => DAYS.find((x) => x.day === d).news.some((n) => n.name === 'CPI')), `sesja z szablonu: ${fd2.length} dni CPI do skoku`);
       rec('szablony', cc.created?.def?.filter?.items?.[0]?.k === 'event', 'definicja sesji niesie filtr');
       // usunięcie szablonu z edytora
       e2.querySelector('[data-act="tdel"]').click();
@@ -329,7 +338,7 @@ try {
       rec('pasek', tags.length <= 2 && tags[0] === 'CPI', `dayTypeLabel bez filtra: „${dayTypeLabel(feat, null)}”`);
       rec('pasek', dayTypeLabel({ ...feat, news: [], opex: null, fedChair: false, opexWeek: false }, null) === 'bez newsów', 'dzień bez wydarzeń: „bez newsów”');
       const mk = async (name, filter) => {
-        const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ'], from: '2024-03-11', to: '2024-03-15', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter, excluded: [] }, pool: [DAY1], now: Date.now() });
+        const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter, excluded: [] }, now: Date.now() });
         await client.create(doc);
         return doc;
       };

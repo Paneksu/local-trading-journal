@@ -1,20 +1,31 @@
 // Kreator sesji backtestu (1.5.0, pakiet C1): formularz klasyczny (§12); F2: zwinięta sekcja „Filtr dni (zaawansowane)” (bt-filtr-widok.js) z licznikiem na żywo i szablonami.
-// Pola: nazwa, instrumenty, zakres dat, saldo startowe, ryzyko (USD albo % salda), godzina startu NY (domyślnie 09:00), kolejność dni, konto z Notion (opcjonalnie).
-// Pula = matchDays (dni z danymi: 1s NQ, 1m ES) + orderDays; sesja zapisuje się od razu (rev 0) i otwiera replay.
-// English: classic session form: builds the day pool from the coverage index and creates the session file.
+// K (31.10.2026): sesja ma datę startu i ciągły czas do końca danych ([U] «Do końca danych»), bez pola „do”, kolejności dni i ukrytej daty ([U] «Filtr jako skok»).
+// Pola: nazwa, instrumenty, data startu, saldo startowe, ryzyko (USD albo % salda), L: podstawa ryzyka % (bieżące / startowe saldo) i prowizja $ za kontrakt,
+// godzina startu NY (domyślnie 09:00), konto z Notion (opcjonalnie).
+// Filtr dni służy skokowi „Następny dzień z filtra”: licznik liczy dni od daty startu do ostatniego dnia danych. Sesja zapisuje się od razu (rev 0) i otwiera replay.
+// English: classic session form: start date + continuous time to the end of data; the day filter drives the "next filter day" jump.
 import { t } from './i18n.js';
-import { esc } from './format.js';
-import { matchDays, orderDays } from './bt-filtr.js';
+import { esc, shortDate } from './format.js';
 import { newSessionId } from './bt-klient.js';
 import { emptyBook } from './bt-wypelnienia.js';
-import { sanitizeBt } from './bt-czas.js';
+import { sanitizeBt, nyAt } from './bt-czas.js';
+import { SESSION_V, nyDayOf } from './bt-sesja.js';
 import { mountFilterEditor } from './bt-filtr-widok.js';
 
 export const INSTRUMENTS = ['NQ', 'ES', 'MNQ', 'MES'];
-export const ORDERS = ['chrono', 'newest', 'random'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+const fmtDay = (d) => `${shortDate(d)} ${d.slice(0, 4)}`;
+// M (31.10.2026): domyślna data startu = rok temu, ale w zakresie danych (kopia świec kończy się np. w 2024: wtedy rok przed końcem danych, nie przed pierwszym dniem)
+// bounds = { first, last } w sekundach epoki (GET /api/backtest/bounds) albo null
+export function defaultStart(bounds, nowMs) {
+  let d = iso(nowMs - 366 * 86400000);
+  const last = Number(bounds?.last), first = Number(bounds?.first);
+  if (Number.isFinite(last)) { const lastDay = nyDayOf(last - 1); if (d > lastDay) d = iso(Date.parse(`${lastDay}T12:00:00Z`) - 366 * 86400000); }
+  if (Number.isFinite(first)) { const firstDay = nyDayOf(first); if (d < firstDay) d = firstDay; }
+  return d;
+}
 
 // Walidacja i definicja sesji z wartości formularza; błędy jako { pole: komunikat }.
 export function readDef(v) {
@@ -23,32 +34,38 @@ export function readDef(v) {
   if (!name) err.name = t('Podaj nazwę sesji.');
   const instruments = INSTRUMENTS.filter((i) => (v.instruments || []).includes(i));
   if (!instruments.length) err.instruments = t('Wybierz co najmniej jeden instrument.');
-  if (!DAY_RE.test(v.from || '') || !DAY_RE.test(v.to || '') || v.from > v.to) err.dates = t('Podaj poprawny zakres dat (od nie później niż do).');
+  if (!DAY_RE.test(v.from || '')) err.dates = t('Podaj datę startu.');
   const balance = Number(v.balance);
   if (!(balance > 0)) err.balance = t('Saldo startowe musi być większe od zera.');
   const mode = v.riskMode === 'pct' ? 'pct' : 'usd', value = Number(v.risk);
   if (!(value > 0) || (mode === 'pct' && value > 100)) err.risk = mode === 'pct' ? t('Ryzyko w % salda: od 0 do 100.') : t('Ryzyko musi być większe od zera.');
+  // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 1: prowizja $ za kontrakt opcjonalna, domyślnie 0, bez spreadu i poślizgu)
+  const commission = v.commission === undefined || String(v.commission).trim() === '' ? 0 : Number(v.commission);
+  if (!(commission >= 0) || commission > 1000) err.commission = t('Prowizja: od 0 do 1000 USD za kontrakt.');
+  // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 2: ryzyko % od bieżącego salda, wybór bieżące / startowe)
+  const riskBase = v.riskBase === 'start' ? 'start' : 'current';
   const startTime = String(v.startTime || '09:00');
   // godzina startu leży w sesji dnia (otwarcie poprzedniego wieczoru, koniec 16:00 NY)
   if (!TIME_RE.test(startTime) || startTime >= '16:00') err.startTime = t('Godzina startu: od 00:00 do 15:59 NY.');
-  const order = ORDERS.includes(v.order) ? v.order : 'chrono';
-  const def = { instruments, from: v.from, to: v.to, balance, risk: { mode, value }, startTime, order, seed: Number(v.seed) >>> 0, accountId: v.accountId || null, filter: null, excluded: [] };
+  const def = { instruments, from: v.from, balance, risk: { mode, value }, riskBase, commission: commission >= 0 ? commission : 0, startTime, accountId: v.accountId || null, filter: null, excluded: [] };
   return { name, def, err };
 }
 
-export function newSessionDoc({ id, name, def, pool, now }) {
+export function newSessionDoc({ id, name, def, now }) {
   const at = new Date(now).toISOString();
   return {
-    v: 1, id, rev: 0, name, created: at, updated: at, def, pool, dayIdx: 0, cursor: null, hw: null,
+    v: SESSION_V, id, rev: 0, name, created: at, updated: at, def, cursor: null, hw: null,
     layout: { kind: '1', charts: [{ instrument: def.instruments[0], tf: '1m' }], active: 0 },
-    days: {}, book: emptyBook(), trades: [], drawings: {},
+    book: emptyBook(), trades: [], drawings: {},
   };
 }
 
 // openKreator(host, { client, accounts: [{ id, name }], onCreated(doc), onCancel() }) → { destroy() }
-export function openKreator(host, { client, defaults = null, getDefaults = null, onTemplates = () => {}, accounts = [], onCreated = () => {}, onCancel = () => {}, now = () => Date.now(), seed = () => (Math.random() * 2 ** 32) >>> 0 } = {}) {
+export function openKreator(host, { client, defaults = null, getDefaults = null, onTemplates = () => {}, accounts = [], onCreated = () => {}, onCancel = () => {}, now = () => Date.now() } = {}) {
   const dflt = sanitizeBt(defaults); // domyślne ryzyko i godzina startu z Ustawień → Backtest (C2)
-  const to = iso(now() - 86400000), from = iso(now() - 366 * 86400000);
+  const from = iso(now() - 366 * 86400000);
+  // K: koniec danych dla wybranych instrumentów (licznik filtra i sprawdzenie, że po dacie startu są świece); bez pamięci: świece mogą dojść w trakcie
+  const dataEnd = async (ins) => { try { return (await client.bounds(ins))?.last ?? null; } catch { return null; } };
   const seg = (k, opts, cur) => `<div class="seg sm" role="group" data-k="${k}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${v === cur}">${esc(l)}</button>`).join('')}</div>`;
   host.innerHTML = `
     <form class="card bt-form" novalidate>
@@ -56,13 +73,15 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
       <div class="bt-fgrid">
         <label class="bt-f"><span class="lbl">${esc(t('Nazwa'))}</span><input class="sp-in" name="name" maxlength="80" autocomplete="off" placeholder="${esc(t('np. NQ otwarcie 2024'))}"></label>
         <fieldset class="bt-f" data-k="instruments"><legend class="lbl">${esc(t('Instrumenty'))}</legend><div class="bt-chk">${INSTRUMENTS.map((i) => `<label class="check"><input type="checkbox" name="inst" value="${i}" ${i === 'NQ' ? 'checked' : ''}> ${i}</label>`).join('')}</div></fieldset>
-        <div class="bt-f bt-f-wide" data-k="dates"><span class="lbl">${esc(t('Zakres dat'))}</span><div class="bt-row"><input class="sp-in" type="date" name="from" value="${from}" aria-label="${esc(t('Od'))}"><span>–</span><input class="sp-in" type="date" name="to" value="${to}" aria-label="${esc(t('Do'))}"></div></div>
+        <label class="bt-f" data-k="dates"><span class="lbl">${esc(t('Data startu'))}</span><input class="sp-in" type="date" name="from" value="${from}" aria-describedby="bt-fdata"><span class="note bt-fsub" id="bt-fdata" role="status"></span></label>
         <label class="bt-f"><span class="lbl">${esc(t('Saldo startowe (USD)'))}</span><input class="sp-in" type="number" name="balance" min="1" step="1" value="50000"></label>
         <div class="bt-f" data-k="risk"><span class="lbl">${esc(t('Ryzyko na trade'))}</span><div class="bt-row">${seg('riskMode', [['usd', 'USD'], ['pct', t('% salda')]], dflt.risk.mode)}<input class="sp-in" type="number" name="risk" min="0" step="any" value="${dflt.risk.value}" aria-label="${esc(t('Wartość ryzyka'))}"></div></div>
+        <div class="bt-f" data-k="riskBase" ${dflt.risk.mode === 'pct' ? '' : 'hidden'}><span class="lbl">${esc(t('Ryzyko % liczone od'))}</span>${seg('riskBase', [['current', t('bieżącego salda')], ['start', t('salda startowego')]], 'current')}</div>
+        <label class="bt-f"><span class="lbl">${esc(t('Prowizja za kontrakt (USD)'))}</span><input class="sp-in" type="number" name="commission" min="0" step="0.01" value="0" aria-describedby="bt-fcom"><span class="note bt-fsub" id="bt-fcom">${esc(t('W obie strony, odejmowana od wyniku. 0 = bez prowizji.'))}</span></label>
         <label class="bt-f"><span class="lbl">${esc(t('Godzina startu (NY)'))}</span><input class="sp-in" type="time" name="startTime" value="${dflt.startTime}"></label>
-        <div class="bt-f bt-f-wide"><span class="lbl">${esc(t('Kolejność dni'))}</span>${seg('order', [['chrono', t('Chronologicznie')], ['newest', t('Od najnowszych')], ['random', t('Losowo, z ukrytą datą')]], 'chrono')}</div>
         <label class="bt-f"><span class="lbl">${esc(t('Konto z Notion (opcjonalnie)'))}</span><select class="sp-in sp-sel" name="account"><option value="">${esc(t('Bez konta'))}</option>${accounts.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select></label>
       </div>
+      <p class="note bt-fhint">${esc(t('Replay płynie od daty startu do końca danych, bez końca dnia. Filtr dni wyznacza skok „Następny dzień z filtra”.'))}</p>
       <details class="bt-adv"><summary aria-expanded="false">${esc(t('Filtr dni (zaawansowane)'))}<span class="bt-fbadge note" hidden></span></summary><div class="bt-advb"></div></details>
       <p class="note bt-err" role="alert"></p>
       <div class="bt-factions"><button type="button" class="btn ghost" data-bt="cancel">${esc(t('Anuluj'))}</button><button type="submit" class="btn primary" data-bt="create">${esc(t('Utwórz sesję'))}</button></div>
@@ -73,17 +92,25 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
     const b = ev.target.closest('button');
     if (!b) return;
     const g = b.closest('.seg[data-k]');
-    if (g) { g.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); return; }
+    if (g) {
+      g.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      // M: podstawa ryzyka ma sens tylko przy ryzyku w % salda
+      if (g.dataset.k === 'riskMode') form.querySelector('[data-k="riskBase"]').hidden = b.dataset.v !== 'pct';
+      return;
+    }
     if (b.dataset.bt === 'cancel') onCancel();
   });
   // ---- filtr zaawansowany (F2): edytor budowany przy pierwszym rozwinięciu; indeks dni pobierany raz na zakres dat i instrumenty ----
   const adv = form.querySelector('details.bt-adv'), advSum = adv.querySelector('summary'), badge = advSum.querySelector('.bt-fbadge');
   const createBtn = form.querySelector('[data-bt="create"]');
   let editor = null, ctxKey = '', loadSeq = 0, loadTimer = 0, tpls = dflt.templates;
-  const fieldsCtx = () => {
+  const fieldsCtx = async () => {
     const f = new FormData(form);
+    const instruments = INSTRUMENTS.filter((i) => f.getAll('inst').includes(i));
+    const end = instruments.length ? await dataEnd(instruments) : null;
     // [U] 30.10.2026 «Gap od ceny startu»: cechy rynku w filtrze liczone do godziny startu sesji, więc indeks dni zależy też od niej
-    return { instruments: INSTRUMENTS.filter((i) => f.getAll('inst').includes(i)), from: String(f.get('from') || ''), to: String(f.get('to') || ''), start: String(f.get('startTime') || '09:00') };
+    // K: dni filtra od daty startu do ostatniego dnia danych ([U] 31.10.2026 «Do końca danych»)
+    return { instruments, from: String(f.get('from') || ''), to: Number.isFinite(end) ? nyDayOf(end - 1) : '', start: String(f.get('startTime') || '09:00') };
   };
   const onEditor = (filter, info) => {
     badge.hidden = !info.active; badge.textContent = info.active ? ` · ${t('aktywny')}` : '';
@@ -92,7 +119,8 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
   };
   async function loadIndex(force = false) {
     if (!editor) return;
-    const c = fieldsCtx();
+    const c = await fieldsCtx();
+    if (!editor) return;
     editor.setContext(c);
     const key = JSON.stringify(c);
     if (!force && key === ctxKey) return;
@@ -110,7 +138,7 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
   adv.addEventListener('toggle', () => {
     advSum.setAttribute('aria-expanded', String(adv.open));
     if (!adv.open) { onEditor(editor?.value() ?? null, editor?.info() ?? { active: false, ready: false, count: 0 }); return; }
-    if (!editor) editor = mountFilterEditor(adv.querySelector('.bt-advb'), { ...fieldsCtx(), days: [], templates: tpls, getTemplates: () => (getDefaults ? sanitizeBt(getDefaults()).templates : tpls), onChange: onEditor, onTemplates: (list) => { tpls = list; onTemplates(list); } });
+    if (!editor) editor = mountFilterEditor(adv.querySelector('.bt-advb'), { instruments: ['NQ'], from: '', to: '', days: [], templates: tpls, getTemplates: () => (getDefaults ? sanitizeBt(getDefaults()).templates : tpls), onChange: onEditor, onTemplates: (list) => { tpls = list; onTemplates(list); } });
     loadIndex();
   });
   form.addEventListener('change', (ev) => {
@@ -119,16 +147,36 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
     if (!adv.open && !editor.info().active) return;
     const n = ev.target.name;
     if (n === 'inst') loadIndex();
-    else if (n === 'from' || n === 'to' || n === 'startTime') { clearTimeout(loadTimer); loadTimer = setTimeout(loadIndex, 60); }
+    else if (n === 'from' || n === 'startTime') { clearTimeout(loadTimer); loadTimer = setTimeout(loadIndex, 60); }
   });
+  // M: zakres danych wybranych instrumentów pod datą startu, a domyślna data (dopóki użytkownik jej nie zmienił) w tym zakresie
+  let fromTouched = false, dataSeq = 0;
+  const fromIn = form.querySelector('[name="from"]'), dataNote = form.querySelector('#bt-fdata');
+  fromIn.addEventListener('input', () => { fromTouched = true; });
+  async function showData() {
+    const ins = INSTRUMENTS.filter((i) => new FormData(form).getAll('inst').includes(i));
+    const my = ++dataSeq;
+    if (!ins.length) { dataNote.textContent = ''; return; }
+    let b = null;
+    try { b = await client.bounds(ins); } catch { b = null; }
+    if (my !== dataSeq || !form.isConnected) return;
+    // N1 (1.6.0): brak świec z głębokim linkiem do Ustawień → Źródła danych → Databento
+    if (!Number.isFinite(b?.first) || !Number.isFinite(b?.last)) { dataNote.innerHTML = `${esc(t('Brak świec dla wybranych instrumentów.'))} <a href="#ustawienia/zrodla/databento">${esc(t('Połącz Databento'))}</a>`; return; }
+    const a = nyDayOf(b.first), z = nyDayOf(b.last - 1);
+    fromIn.min = a; fromIn.max = z;
+    dataNote.textContent = t('Dane: {a} – {z}', { a: fmtDay(a), z: fmtDay(z) });
+    if (!fromTouched) fromIn.value = defaultStart(b, now());
+  }
+  form.addEventListener('change', (ev) => { if (ev.target.name === 'inst') showData(); });
+  showData();
   let busy = false;
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     if (busy) return;
     const f = new FormData(form);
     const { name, def, err } = readDef({
-      name: f.get('name'), instruments: f.getAll('inst'), from: f.get('from'), to: f.get('to'), balance: f.get('balance'),
-      riskMode: segVal('riskMode'), risk: f.get('risk'), startTime: f.get('startTime'), order: segVal('order'), seed: seed(), accountId: f.get('account'),
+      name: f.get('name'), instruments: f.getAll('inst'), from: f.get('from'), balance: f.get('balance'),
+      riskMode: segVal('riskMode'), risk: f.get('risk'), riskBase: segVal('riskBase'), commission: f.get('commission'), startTime: f.get('startTime'), accountId: f.get('account'),
     });
     // filtr z edytora (jeśli był otwarty i ma warunki albo ręcznie wyrzucone dni); bez rozwijania sekcji filter zostaje null
     if (editor) { def.filter = editor.value(); def.excluded = editor.excludedDays(); }
@@ -139,20 +187,15 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
       out.textContent = Object.values(err).join(' ');
       return;
     }
-    busy = true; out.textContent = t('Liczę pulę dni…');
+    busy = true; out.textContent = t('Sprawdzam dane…');
     try {
-      const idx = await client.days({ instruments: def.instruments, from: def.from, to: def.to, start: def.startTime });
-      const m = matchDays(def, idx.days || []);
-      const pool = orderDays(m.days, def.order, def.seed);
-      if (!pool.length) {
-        // F1/F2: powód 'filter' (dzień nie spełnia filtra) nie jest brakiem danych, więc nie wchodzi do liczby wykluczonych
-        const noData = m.counts.no1s + m.counts.no1m;
-        out.textContent = m.counts.filter > 0 || m.counts.manual > 0
-          ? t('Żaden dzień z zakresu nie spełnia filtra (wykluczone z braku danych: {n}). Zmień warunki albo zakres dat.', { n: noData })
-          : t('W tym zakresie nie ma dni z danymi dla wybranych instrumentów (wykluczone: {n}). Zmień zakres albo pobierz świece.', { n: m.excluded.length });
+      // K: po dacie startu muszą być świece (koniec danych z granic); filtr dni nie jest warunkiem utworzenia (to cel skoku), ale pusty filtr przy gotowym indeksie wyłącza Utwórz
+      const end = await dataEnd(def.instruments);
+      if (!Number.isFinite(end) || end <= nyAt(def.from, def.startTime)) {
+        out.textContent = t('Po dacie startu nie ma świec dla wybranych instrumentów. Zmień datę albo pobierz świece.');
         return;
       }
-      const doc = newSessionDoc({ id: newSessionId(), name, def, pool, now: now() });
+      const doc = newSessionDoc({ id: newSessionId(), name, def, now: now() });
       await client.create(doc);
       out.textContent = '';
       onCreated(doc);

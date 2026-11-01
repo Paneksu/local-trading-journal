@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: funkcjonalny design replayu M (strona robocza)</title>
+<!-- Strona robocza testów backtest-M (testy/backtest-M-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: zegar ze strefą i godziną NY, podpowiedzi skrótów, pamięć SL/TP, etykiety pozycji przy lewej krawędzi (bez zasłaniania
+     świec przy kursorze), SL/TP pozycji z kwotą, skróty BE i połowy, szybki panel i Journal z klawiatury, menu skoków, stan Notion; ?w=375 sprawdza układ wąskiego ekranu.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { fmtMoney } = await import('/js/format.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const doc = newSessionDoc({
+    id: newSessionId(), name: 'Sesja M',
+    def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'pct', value: 1 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+    now: Date.now(),
+  });
+  await client.create(doc);
+  const notionCalls = [];
+  client.notion = async (o) => { notionCalls.push(o); return { sent: 0, skipped: 0, failed: [], pending: 0, notion: {} }; };
+  let RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const stepN = async (n) => { for (let i = 0; i < n; i++) { await RP.step(1); } await sleep(40); };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(80);
+
+  // M poprawki (ocena wyglądu #1, #2): etykiety zlecenia na swoich liniach (także po zmianie wysokości wykresu) i w polu wykresu, kwota ryzyka widoczna w całości
+  const tagCheck = async (tag, risk) => {
+    const ch = RP.chart(), host = scr().querySelector('.bt-plot'), hr = host.getBoundingClientRect();
+    const o = RP.book().orders[0];
+    for (const [f, px] of [['price', o.price], ['sl', o.sl], ['tp', o.tp]]) {
+      const el = ch.tradeLayer().querySelector(`[data-k="o:${o.id}:${f}"]`), y = ch.series.priceToCoordinate(px);
+      if (!el || el.hidden) continue;
+      const r = el.getBoundingClientRect(), mid = (r.top + r.bottom) / 2 - hr.top;
+      rec(tag, Math.abs(mid - y) <= 3, `${f}: etykieta na linii (${Math.round(mid)} vs ${Math.round(y)})`);
+      const paneH = hr.height - (ch.chart.timeScale().height?.() || 0);
+      rec(tag, r.top - hr.top >= -1 && r.bottom - hr.top <= paneH + 1, `${f}: etykieta w polu świec (${Math.round(r.top - hr.top)}–${Math.round(r.bottom - hr.top)}, pole ${Math.round(paneH)})`);
+    }
+    const pt = ch.tradeLayer().querySelector(`[data-k="o:${o.id}:price"] .bt-tag-t`);
+    rec(tag, pt && pt.textContent.includes(fmtMoney(-risk)) && pt.scrollWidth <= pt.clientWidth + 1, `kwota ryzyka w etykiecie zlecenia w całości («${pt?.textContent}», ${pt?.scrollWidth}/${pt?.clientWidth})`);
+  };
+  if (narrow) {
+    await section('zlecenie375', async () => {
+      const { visibleCount, mergeBase } = await import('/js/bt-swieca.js');
+      const px = Math.round(RP.last?.()?.price ?? 0);
+      const lastP = RP.accountState() && RP.chart().bars().slice(-1)[0][4];
+      const q = (x) => Math.round(x / 0.25) * 0.25;
+      P('.bt-ord-more').click(); await sleep(30);
+      P('[data-ot="limit"]').click(); setF('price', q(lastP) + 6); setF('sl', 8); setF('tp', 16);
+      RP.orders().submit('sell'); await sleep(250);
+      const o = RP.book().orders[0];
+      rec('zlecenie375', !!o, 'zlecenie oczekujące złożone');
+      if (o) await tagCheck('zlecenie375', Math.abs(o.price - o.sl) * 20 * o.qty);
+      // zmiana wysokości wykresu bez ruchu osi czasu (zwinięcie parametrów): etykiety idą za liniami
+      P('.bt-ord-more').click(); await sleep(250);
+      if (o) await tagCheck('zlecenie375', Math.abs(o.price - o.sl) * 20 * o.qty);
+      RP.orders().cancel(o.id); await sleep(60);
+      P('[data-ot="market"]').click(); await sleep(30);
+    });
+    await section('mobile', async () => {
+      setF('sl', 10); setF('tp', 20); await sleep(30);
+      const sum = P('.bt-ord-sum');
+      rec('mobile', sum && !sum.hidden && sum.getBoundingClientRect().height > 0 && /10/.test(sum.textContent), `panel zleceń zwinięty do podsumowania («${sum?.textContent}»)`);
+      const fields = P('.bt-ord-fields');
+      rec('mobile', fields && fields.getBoundingClientRect().height === 0, 'pola zlecenia schowane na wąskim ekranie');
+      P('[data-o="buy"]').click(); await sleep(60);
+      await stepN(3);
+      const plot = scr().querySelector('.bt-plot').getBoundingClientRect();
+      rec('mobile', plot.height / innerHeight >= 0.4, `wykres z pozycją ≥ 40% ekranu (${Math.round(plot.height)} z ${innerHeight})`);
+      rec('mobile', document.documentElement.scrollWidth <= innerWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth})`);
+      const buy = P('[data-o="buy"]').getBoundingClientRect(), close = P('[data-o="close"]').getBoundingClientRect();
+      rec('mobile', buy.height >= 32 && close.height >= 32 && close.bottom <= innerHeight, `Kup i Zamknij widoczne i duże (${Math.round(buy.height)}, ${Math.round(close.height)} px)`);
+      P('.bt-ord-more').click(); await sleep(30);
+      rec('mobile', P('.bt-ord-fields').getBoundingClientRect().height > 0, 'rozwinięcie pokazuje pola');
+      P('[data-o="close"]').click(); await sleep(120);
+      const jr = scr().querySelector('.bt-jr');
+      rec('mobile', jr && jr.getBoundingClientRect().height <= 200, `szybki panel nie zakrywa wykresu (${Math.round(jr?.getBoundingClientRect().height)} px)`);
+      // M poprawki (ocena wyglądu #3): panel na pełną szerokość stoi po stronie przeciwnej do ceny przy kursorze
+      await sleep(500);
+      const ch = RP.chart(), hr = scr().querySelector('.bt-stage').getBoundingClientRect(), jrr = jr.getBoundingClientRect();
+      const bs = ch.bars(), lb = bs[bs.length - 1], yc = ch.series.priceToCoordinate(lb[4]) + scr().querySelector('.bt-plot').getBoundingClientRect().top;
+      const yh = ch.series.priceToCoordinate(lb[2]) + scr().querySelector('.bt-plot').getBoundingClientRect().top, yl = ch.series.priceToCoordinate(lb[3]) + scr().querySelector('.bt-plot').getBoundingClientRect().top;
+      rec('panel375', !(jrr.top - 4 < yl && jrr.bottom + 4 > yh), `szybki panel nie zakrywa świecy przy kursorze (panel ${Math.round(jrr.top)}–${Math.round(jrr.bottom)}, świeca ${Math.round(yh)}–${Math.round(yl)}, zamknięcie ${Math.round(yc)})`);
+    });
+  } else {
+    await section('zegar', async () => {
+      const ny = scr().querySelector('.bt-clock-ny');
+      rec('zegar', ny && /09:31(:00)? NY/.test(ny.textContent), `godzina NY przy zegarze («${ny?.textContent}»)`);
+      rec('zegar', /Warszawa|UTC/.test(scr().querySelector('.bt-clock')?.title || ''), `strefa zegara w podpowiedzi («${scr().querySelector('.bt-clock')?.title}»)`);
+      rec('notion', scr().querySelector('[data-bt="notion"]').hidden && /Notion/.test(scr().querySelector('.bt-notion').textContent), `bez zaległości: sam stan Notion, bez przycisku («${scr().querySelector('.bt-notion').textContent}»)`);
+    });
+
+    await section('podpowiedzi', async () => {
+      const ti = (s) => scr().querySelector(s)?.title || '';
+      rec('podpowiedzi', /Spacja/.test(ti('[data-bt="play"]')) && scr().querySelector('[data-bt="play"]').getAttribute('aria-keyshortcuts') === 'Space', `Odtwarzaj: «${ti('[data-bt="play"]')}»`);
+      rec('podpowiedzi', /Shift\+→/.test(ti('[data-bt="step"]')) && /Shift\+←/.test(ti('[data-bt="back"]')), `kroki: «${ti('[data-bt="step"]')}», «${ti('[data-bt="back"]')}»`);
+      rec('podpowiedzi', /\(B\)/.test(P('[data-o="buy"]').title + P('[data-o="buy"]').getAttribute('aria-keyshortcuts')) || P('[data-o="buy"]').getAttribute('aria-keyshortcuts') === 'B', `Kup: «${P('[data-o="buy"]').title}» / ${P('[data-o="buy"]').getAttribute('aria-keyshortcuts')}`);
+      rec('podpowiedzi', /\[/.test(ti('.bt-speed')) && /\]/.test(ti('.bt-speed')), `szybkość: «${ti('.bt-speed')}»`);
+      rec('podpowiedzi', /\(J\)/.test(ti('[data-bt="jump"]')), `skok: «${ti('[data-bt="jump"]')}»`);
+    });
+
+    await section('pamiec', async () => {
+      rec('pamiec', P('[name="sl"]').value === '' && P('[data-o="buy"]').disabled, 'pierwsze otwarcie: SL pusty, Kup wyłączony');
+      setF('sl', 12); setF('tp', 24); await sleep(30);
+      RP.close(); await sleep(80);
+      RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+      await RP.ready; await sleep(80);
+      rec('pamiec', P('[name="sl"]').value === '12' && P('[name="tp"]').value === '24' && !P('[data-o="buy"]').disabled, `po ponownym otwarciu SL ${P('[name="sl"]').value}, TP ${P('[name="tp"]').value}, Kup aktywny`);
+    });
+
+    await section('etykiety', async () => {
+      P('[data-o="buy"]').click(); await sleep(60);
+      await stepN(4);
+      const ch = RP.chart(), plot = scr().querySelector('.bt-plot').getBoundingClientRect();
+      const tag = ch.tradeLayer().querySelector('[data-k="pos"]'), tr = tag.getBoundingClientRect();
+      const bs = ch.bars(), lastX = ch.chart.timeScale().timeToCoordinate(bs[bs.length - 1][0]);
+      rec('etykiety', tr.left - plot.left <= 24, `etykieta pozycji przy lewej krawędzi (${Math.round(tr.left - plot.left)} px)`);
+      rec('etykiety', tr.right < plot.left + lastX - 40, `etykieta nie sięga świec przy kursorze (prawa krawędź ${Math.round(tr.right - plot.left)}, świeca ${Math.round(lastX)})`);
+      const p = pos(), slT = ch.tradeLayer().querySelector('[data-k="psl"] .bt-tag-t')?.textContent || '', tpT = ch.tradeLayer().querySelector('[data-k="ptp"] .bt-tag-t')?.textContent || '';
+      rec('etykiety', /^SL /.test(slT) && slT.includes(fmtMoney(-12 * 20 * p.qty)), `SL pozycji z kwotą («${slT}»)`);
+      rec('etykiety', /^TP /.test(tpT) && tpT.includes(fmtMoney(24 * 20 * p.qty)), `TP pozycji z kwotą («${tpT}»)`);
+      tag.querySelector('[data-tl="x"]').click(); await sleep(30);
+      const m = ch.tradeLayer().querySelector('.bt-tag-m'), mr = m?.getBoundingClientRect();
+      rec('etykiety', m && mr.left >= plot.left && mr.right < plot.left + lastX, 'menu procentów pod etykietą, w polu wykresu');
+      tag.querySelector('[data-tl="x"]').click(); await sleep(30);
+    });
+
+    await section('skroty', async () => {
+      const q0 = pos().openQty;
+      rec('skroty', q0 >= 2, `pozycja ${q0} kontr.`);
+      key('e'); await sleep(40);
+      rec('skroty', pos()?.be === true, 'E: SL na BE');
+      rec('skroty', /\(E\)/.test(P('[data-o="be"]').title), `BE w panelu: «${P('[data-o="be"]').title}»`);
+      key('h'); await sleep(40);
+      rec('skroty', pos()?.openQty === q0 - Math.max(1, Math.round(q0 / 2)), `H: zamknięta połowa (${q0} → ${pos()?.openQty})`);
+      key('C', { shiftKey: true }); await sleep(120);
+      rec('skroty', !pos() && !!scr().querySelector('.bt-jr'), 'Shift+C: zamknięcie, szybki panel');
+    });
+
+    await section('szybki', async () => {
+      key('Enter'); await sleep(30);
+      const inp = scr().querySelector('.bt-jr [name="setup"]');
+      rec('szybki', document.activeElement === inp, `Enter przenosi do setupu (fokus: ${document.activeElement?.name || document.activeElement?.tagName})`);
+      inp.value = 'Breakout'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+      key('j', { ctrlKey: true }, inp);
+      const jw = await until(() => document.querySelector('.bt-jw [name="notes"]'));
+      await until(() => document.activeElement?.name === 'notes', 3000);
+      rec('szybki', document.querySelector('.bt-jw [name="setup"]')?.value === 'Breakout', `Ctrl+J zabiera wpisany setup («${document.querySelector('.bt-jw [name="setup"]')?.value}»)`);
+      rec('journal', document.activeElement?.name === 'notes', `Journal: fokus w Notatce (${document.activeElement?.name || document.activeElement?.className})`);
+      const notes = document.querySelector('.bt-jw [name="notes"]');
+      notes.value = 'opis z klawiatury'; notes.dispatchEvent(new Event('input', { bubbles: true }));
+      key('Enter', { ctrlKey: true }, notes); await sleep(60);
+      const tr = RP.doc().trades[RP.doc().trades.length - 1];
+      rec('journal', tr.setup === 'Breakout' && tr.notes === 'opis z klawiatury', 'Ctrl+Enter zapisuje');
+      key('Escape', {}, notes); await sleep(80);
+      rec('journal', !document.querySelector('.bt-jw'), 'Esc w polu po zapisie zamyka okno');
+    });
+
+    await section('skok', async () => {
+      const c0 = RP.cursor();
+      scr().querySelector('[data-bt="jumpmenu"]').click(); await sleep(30);
+      const list = scr().querySelector('.bt-jump-l');
+      const items = [...(list?.querySelectorAll('[data-jumpid]') || [])];
+      rec('skok', list && !list.hidden && items.length === 5 && /\(5\)|5$/.test(items.find((x) => x.dataset.jumpid === 'plus15')?.textContent || ''), `menu skoków ze skrótami (${items.map((x) => x.textContent.trim()).join(' | ')})`);
+      items.find((x) => x.dataset.jumpid === 'plus15')?.click();
+      await until(() => RP.cursor() >= c0 + 900, 4000);
+      rec('skok', RP.cursor() >= c0 + 900 && list.hidden, `jedno kliknięcie w menu skacze (${RP.cursor() - c0} s)`);
+      rec('skok', /\+15 min/.test(scr().querySelector('[data-bt="jump"]').textContent), `przycisk powtarza wybrany skok («${scr().querySelector('[data-bt="jump"]').textContent}»)`);
+    });
+
+    await section('notion', async () => {
+      const b = scr().querySelector('[data-bt="notion"]');
+      rec('notion', !b.hidden || RP.doc().trades.every((x) => x.notion?.state === 'sent'), `zaległości: przycisk wysyłki widoczny («${scr().querySelector('.bt-notion').textContent}»)`);
+    });
+  }
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

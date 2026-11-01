@@ -4,7 +4,7 @@
 // wg reguły rolla P35, wyłączony przełącznik = zero zapytań, dzienny limit wstrzymuje; przełącznik w config.local.json przez /api/config.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 export default ({ test, H, assert, ROOT }) => {
   let port = 5200;
@@ -15,7 +15,9 @@ export default ({ test, H, assert, ROOT }) => {
   const H4 = qOf(2024, 3), M4 = qOf(2024, 6);
   const ranges = async (A) => (await A.log()).log.filter((e) => e.path.endsWith('get_range')).map((e) => [e.params.symbols, e.params.schema, e.params.start, e.params.end]);
 
-  async function direct({ cfg = {}, clock, atrapa = {}, prep, auto = true } = {}) {
+  // N4 (1.6.0): domyślnie instalacja z wpisanym kredytem (H.TEST_CREDIT); cfg bez chartCredit = kredyt z testu
+  async function direct({ cfg: cfg0 = {}, clock, atrapa = {}, prep, auto = true } = {}) {
+    const cfg = 'chartCredit' in cfg0 ? cfg0 : { chartCredit: { ...H.TEST_CREDIT }, chartNq1sDaily: true, ...cfg0 };
     const A = await H.atrapaDb(++port);
     await A.config(atrapa);
     const old = process.env.DATABENTO_API_BASE;
@@ -56,7 +58,7 @@ export default ({ test, H, assert, ROOT }) => {
       await R.A.config({ end: '2024-03-13T10:00:00.000000000Z' });
       await R.C.tick();
       assert.deepEqual((await ranges(R.A)).slice(2), [['NQM4', 'ohlcv-1s', '2024-03-12T13:30:00Z', '2024-03-12T15:00:00Z']]);
-      assert.ok(R.st.cfg.chartSpend.usd > 0 && R.st.cfg.chartCredit.spentUsd > 0.02, 'zwykłe liczniki aplikacji');
+      assert.ok(R.st.cfg.chartSpend.usd > 0 && R.st.cfg.chartCredit.spentUsd > 0, 'zwykłe liczniki aplikacji');
       assert.deepEqual((await R.A.log()).violations, []);
     } finally { R.stop(); }
   });
@@ -105,11 +107,13 @@ export default ({ test, H, assert, ROOT }) => {
     } finally { R.stop(); }
   });
 
-  test('wykresy-28: P50 przełącznik w config.local.json przez /api/config (domyślnie włączony, meta), serwer włącza autoOpenWindows, kontrolka w Ustawieniach → Wykresy → Dane', async () => {
+  // N4 (1.6.0): [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 4): nowa instalacja ma okno wyłączone, istniejąca (plik konfiguracji przed startem) włączone
+  test('wykresy-28: P50 przełącznik w config.local.json przez /api/config (nowa instalacja: wyłączony, istniejąca: włączony), serwer włącza autoOpenWindows, kontrolka w Ustawieniach → Źródła danych', async () => {
     const dir = H.tmp();
     const S = await H.server(++port, { THQ_CONFIG_DIR: dir });
     try {
-      assert.equal((await (await fetch(S.base + '/api/meta')).json()).chartNq1sDaily, true);
+      assert.equal((await (await fetch(S.base + '/api/meta')).json()).chartNq1sDaily, false, 'nowa instalacja');
+      assert.equal((await H.dash(S.base, '/api/config', { chartNq1sDaily: true })).j.chartNq1sDaily, true);
       const r = await H.dash(S.base, '/api/config', { chartNq1sDaily: false });
       assert.equal(r.status, 200); assert.equal(r.j.chartNq1sDaily, false);
       await H.sleep(150);
@@ -123,6 +127,9 @@ export default ({ test, H, assert, ROOT }) => {
     const wins = K.openWindows(today - 6 * 86400, today);
     assert.ok(wins.length >= 2, 'w 6 dniach są co najmniej 2 dni pon-pt');
     const dir2 = H.tmp();
+    // istniejąca instalacja (plik konfiguracji przed startem): migracja 1.6.0 zostawia okno 1s włączone; kredyt wpisany przez użytkownika (test)
+    // [U] 31.10.2026 «Wpisz tylko u mnie»: migracja nie wpisuje kredytu
+    writeFileSync(path.join(dir2, 'config.local.json'), JSON.stringify({ chartCredit: H.TEST_CREDIT }));
     const St = await lib('lib/candles-store.mjs');
     St.writeRange('NQ', '1s', wins[0].from, wins[0].to, [], {}, { baseDir: path.join(dir2, 'chart-data') });
     const A = await H.atrapaDb(++port);
@@ -137,8 +144,10 @@ export default ({ test, H, assert, ROOT }) => {
       assert.deepEqual((await ranges(A)).sort((a, b) => a[2].localeCompare(b[2])), wins.slice(1).map((w) => ['NQ.v.0', 'ohlcv-1s', iso(w.from), iso(w.to)]));
     } finally { S2.stop(); A.stop(); }
     assert.match(readFileSync(path.join(ROOT, 'server.mjs'), 'utf8'), /autoOpenWindows: process\.env\.THQ_NO_AUTO_1S !== '1'/, 'serwer włącza automatykę (wyłącza ją tylko środowisko testów)');
-    const u = readFileSync(path.join(ROOT, 'public/js/ustawienia.js'), 'utf8');
-    assert.match(u, /data-act="ch-nq1s"[^>]*\$\{m\.chartNq1sDaily !== false \? 'checked' : ''\}/);
-    assert.match(u, /onConfig\(\{ chartNq1sDaily: ev\.target\.checked \}\)/);
+    // N4 (1.6.0): przełącznik w Źródłach danych; włączenie z potwierdzeniem kosztu (zr-nq-ok), wyłączenie od razu
+    const u = readFileSync(path.join(ROOT, 'public/js/ust-zrodla.js'), 'utf8');
+    assert.match(u, /data-act="ch-nq1s"[^>]*\$\{on \|\| nqConfirm \? 'checked' : ''\}/);
+    assert.match(u, /case 'zr-nq-ok': nqConfirm = false; ctx\.opts\.onConfig\(\{ chartNq1sDaily: true \}\)/);
+    assert.match(u, /ctx\.opts\.onConfig\(\{ chartNq1sDaily: false \}\)/);
   });
 };

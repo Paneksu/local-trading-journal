@@ -38,7 +38,7 @@ export default ({ test, H, assert, ROOT }) => {
     return res;
   }
 
-  test('backtest-C2: lista skoków', () => tagged('lista', 21));
+  test('backtest-C2: lista skoków', () => tagged('lista', 20)); // K: skoki bez końca dnia
   test('backtest-C2: skrót w polu tekstowym', () => tagged('pole', 4));
   test('backtest-C2: skróty nie walczą z rysunkami', async () => { await tagged('rysunki', 4); await tagged('zamkniecie', 1); });
   test('backtest-C2: Ustawienia → Backtest', () => tagged('ustawienia', 25));
@@ -49,6 +49,6 @@ export default ({ test, H, assert, ROOT }) => {
     assert.deepEqual(out.bt.jumps.map((j) => j.skrot), bt.jumps.map((j) => j.skrot), 'skrót każdego skoku zostaje');
     assert.deepEqual(out.bt.jumps.map((j) => j.cel), bt.jumps.map((j) => j.cel), 'cel każdego skoku zostaje');
     assert.deepEqual(sanitizeBt(out.bt), bt, 'po synchronizacji blok bt jest taki sam');
-    assert.ok(Object.keys(out.bt.skroty).length === 11, 'wszystkie 11 akcji (J: drawEntry)');
+    assert.ok(Object.keys(out.bt.skroty).length === 12, 'wszystkie 12 akcji (J: drawEntry; K: bez endDay; M: be, half)');
   });
 };

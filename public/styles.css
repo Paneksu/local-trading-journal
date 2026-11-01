@@ -639,10 +639,11 @@ svg .drw .drw-rr { fill: var(--fg); }
 .bk-val small { display: block; font-size: var(--t-sm); color: var(--fg-2); }
 
 /* tabele, plakietki */
+/* final (1.6.0): status (kierunek trade'a, stan konta w Prop) jako tekst w kolorze stanu z kropką, bez zaokrąglonej podkładki; przyciski i chipy wyboru bez zmian.
+   [U] 1.11.2026 «Tak, ujednolić na tekst z kropką» (zastosowanie do całej aplikacji: decyzja sesji głównej) */
 .badge {
-  --c: var(--n-default); display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 999px;
+  --c: var(--n-default); display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0;
   font-size: var(--t-sm); font-weight: 600; color: var(--c); white-space: nowrap;
-  background: color-mix(in oklab, var(--c) 17%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c) 26%, transparent);
 }
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
 .c-default, .c-gray { --c: var(--n-default); } .c-brown { --c: var(--n-brown); } .c-orange { --c: var(--n-orange); }

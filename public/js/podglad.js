@@ -516,7 +516,8 @@ export function markOverlays(root, prefs, refSec) {
 // Model nakładek jednego wykresu: przełączniki, dzienne świece do PDH/PDL (GET /api/candles?tf=1D, tylko lokalne) i zakresy indeksów do narysowania.
 // onChange() woła się po wczytaniu danych dziennych (renderer przerysowuje). Wynik spans() jest pamiętany dla tej samej tablicy świec.
 // extra(): parametry kontraktu i back-adjust (P35) tego samego wykresu, więc PDH/PDL liczą się z kontraktu i cen, które widać (prevIn z serwera).
-export function createOverlays(instrument, onChange = () => {}, extra = () => ({})) {
+// L (31.10.2026): get(from, to, tf) zastępuje GET /api/candles (Journal backtestu: świece z danych sesji przycięte do chwili zamknięcia trade'a)
+export function createOverlays(instrument, onChange = () => {}, extra = () => ({}), get = null) {
   let prefs = loadOverlays(), daily = null, busy = false, alive = true, cache = null, ver = 0, nm = null;
   const reload = () => { if (!alive) return; prefs = loadOverlays(); cache = null; nm = null; onChange(); }; // P42: zmiana w Ustawieniach albo z innego urządzenia
   ovListeners.add(reload);
@@ -537,7 +538,7 @@ export function createOverlays(instrument, onChange = () => {}, extra = () => ({
     if (daily && daily.key === key && daily.from <= from && daily.to >= to) return;
     busy = true;
     try {
-      const j = await fetchCandles(instrument, from, Math.max(to, from + 60), '1D', extra());
+      const j = await (get ? get(from, Math.max(to, from + 60), '1D') : fetchCandles(instrument, from, Math.max(to, from + 60), '1D', extra()));
       if (!alive) return;
       daily = { key, from, to, bars: j.bars || [], missing: j.missing || [], derived: j.derived || [], availableEnd: j.availableEnd ?? null, prevIn: j.prevIn || [], gaps: j.gaps || [] };
     } catch { daily = { key, from, to, bars: [], missing: [], derived: [], availableEnd: null, prevIn: [], gaps: [] }; } finally { busy = false; }
@@ -728,7 +729,9 @@ export function levelsSvg(trade, s, iEntry, iExit, xRight, W, { mini = false, cf
 // frame: { from, to } w sekundach i tf: kadr oraz interwał, od którego zaczyna podgląd po powrocie z trybu edycji (bez skoku kadru)
 // onEdit(): przycisk „Edytuj wykres” (tryb edycji w wykres.js); setDrawings(lista) podmienia rysunki po wczytaniu z Notion
 // onContract(code) (P35): zapis pola „Kontrakt” z listy na wykresie (pusty kod = Auto); zwraca Promise, błąd zostawia poprzedni wybór. Bez niej lista jest tylko do odczytu.
-export function createPodglad(root, { trade, drawings: drawings0 = [], meta = () => ({}), openSettings = null, onState = null, onEdit = null, frame = null, tf = null, onContract = null, badj: badj0 = null } = {}) {
+// L (31.10.2026): source = { get(from, to, tf) → Promise<{ bars, … }>, maxT } zastępuje GET /api/candles (Journal backtestu: świece z danych sesji, nigdy po maxT);
+// bez source podgląd działa jak dotąd (Live).
+export function createPodglad(root, { trade, drawings: drawings0 = [], meta = () => ({}), openSettings = null, onState = null, onEdit = null, frame = null, tf = null, onContract = null, badj: badj0 = null, source = null } = {}) {
   let drawings = drawings0;
   const entry = Math.floor(trade.at / 1000);
   const exit = trade.exitAt != null ? Math.floor(trade.exitAt / 1000) : null;
@@ -760,7 +763,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
   const stateEl = root.querySelector('.swc-state');
   const ownIn = root.querySelector('.swc-own input');
   const tip = ensureTip(plot);
-  const ov = createOverlays(instrument, () => { markTf(); schedule(); }, extra);
+  const ov = createOverlays(instrument, () => { markTf(); schedule(); }, extra, source ? (a, b, f) => source.get(a, b, f) : null);
   const nwl = mountNewsLayer(plot, { fmt: () => F() }); // 1.4.0: przyciski i dymek nad znacznikami newsów i earningsów
   const tfBar = mountTfBar(root, { current: () => S.tf });
   const ovPop = mountOverlayPop(root, ov, { refSec: () => entry }); // P32: ustawienia sesji i PDH/PDL
@@ -788,7 +791,9 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
   }
 
   // ---- dane ----
-  const getCandles = (from, to, tf) => fetchCandles(instrument, from, to, tf, extra());
+  const getCandles = (from, to, tf) => (source ? source.get(from, to, tf) : fetchCandles(instrument, from, to, tf, extra()));
+  // L: koniec dostępnych świec: teraz albo (Journal backtestu) chwila zamknięcia trade'a
+  const nowCap = () => (source && Number.isFinite(source.maxT) ? Math.floor(source.maxT) : Math.floor(Date.now() / 1000));
   const takeMeta = (j) => { S.contract = j.contract || null; S.adjust = j.adjust || null; S.missing = j.missing || []; paintNotes(); };
 
   // Wczytuje świece TF `tf` dla kadru [fromT, toT] (z zapasem) i ustawia indeksy kadru po czasie.
@@ -800,7 +805,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     const my = ++S.seq, adj = S.badj;
     S.busy = true;
     const pad = padFor(tf, toT - fromT);
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowCap();
     const lf = Math.floor(fromT - pad), lt = Math.min(now, Math.ceil(toT + pad));
     try {
       const j = await getCandles(lf, Math.max(lt, lf + 60), tf);
@@ -836,7 +841,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     if (S.edgeBusy || S.busy || !S.extendable[dir]) return;
     S.edgeBusy = true;
     const tf = S.tf, pad = padFor(tf, (S.toIndex - S.fromIndex) * tfSec(tf));
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowCap();
     const [f, to] = dir === 'left' ? [S.loadedFrom - pad, S.loadedFrom] : [S.loadedTo, Math.min(now, S.loadedTo + pad)];
     try {
       if (to - f < 60) { S.extendable[dir] = false; return; }
@@ -886,7 +891,8 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
       const title = t('Brak świec {sym} dla {d}', { sym, d: fmtDay(entry) });
       if (root1s) stateEl.innerHTML = box(title, t('Świece poniżej minuty są pobierane tylko wokół trade\'ów. Wybierz 1m albo większy interwał.'));
       else if (meta().hasDatabentoKey) stateEl.innerHTML = box(title, t('Świece pobierasz z Databento po sprawdzeniu kosztu.'), `<button type="button" class="btn primary" data-swc="quote">${esc(t('Sprawdź koszt'))}</button><div class="swc-progress" hidden><div class="swc-progress-bar"></div></div>`);
-      else stateEl.innerHTML = box(title, t('Do pobrania świec potrzebny jest klucz Databento.'), openSettings ? `<button type="button" class="btn" data-swc="settings">${esc(t('Otwórz Ustawienia'))}</button>` : '');
+      // N1 (1.6.0): pusty stan mówi, skąd są świece, a przycisk prowadzi prosto do klucza Databento (Ustawienia → Źródła danych)
+      else stateEl.innerHTML = box(title, t('Świece pobierasz z Databento własnym kluczem. Bez klucza wykres pokazuje tylko świece, które już są na dysku.'), openSettings ? `<button type="button" class="btn primary" data-swc="settings">${esc(t('Połącz Databento'))}</button>` : '');
     }
   }
 
@@ -907,6 +913,13 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
       if (q.noSource) return setState('nosource');
       if (q.unavailable) return setState('unavailable', q.retryAfter);
       if (q.nothing) return loadFrame(...frameNow(), S.tf);
+      // poprawki po review N1–N4 (P2-3): nowa instalacja nie ma wpisanego kredytu Databento ([U] 31.10.2026 «Wpisz tylko u mnie»); zamiast ogólnego
+      // „przekracza limit” prosimy o wpisanie stanu kredytu i prowadzimy prosto do Źródeł danych
+      if (q.noCredit) {
+        const go = await confirmDialog({ title: t('Wpisz stan kredytu Databento'), text: t('Płatne pobieranie świec czeka, aż wpiszesz stan kredytu z portalu Databento (kwota startowa i data wygaśnięcia). Dashboard liczy wydatki sam i nie pobierze nic ponad kredyt. Wycena tego pobrania: {cost} USD.', { cost: q.costUsd.toFixed(4) }), ok: t('Wpisz stan kredytu'), cancel: t('Nie teraz') });
+        if (go && alive) { if (openSettings) openSettings(); else location.hash = '#ustawienia/zrodla/databento'; }
+        return;
+      }
       if (q.overLimit || q.overCredit) { toast(t('Koszt {cost} USD przekracza limit albo pozostały kredyt. Nic nie pobrano.', { cost: q.costUsd.toFixed(4) }), { error: true }); return; }
       const lb = root.closest('.lb');
       const ok = await confirmDialog({ title: t('Pobrać świece?'), text: t('Koszt pobrania świec 1m: {cost} USD (limit jednego pobrania {limit} USD).', { cost: q.costUsd.toFixed(4), limit: num(q.limitUsd, 2) }), ok: t('Pobierz') });

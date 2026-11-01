@@ -97,7 +97,8 @@ export default ({ test, H, assert, ROOT }) => {
     assert.match(u, /data-sh="equity"|seg\(t\('Krzywa kapitału'\)|segBtns\('equity'/, 'przełącznik w oknie');
     assert.match(u, /chartSettings\(\)\.equity/, 'wartość początkowa z settings.chart');
     assert.match(u, /equity: [^,]*st\.equity/, 'renderCard dostaje stan przełącznika');
-    const s = src('public/js/ustawienia.js');
+    // N2 (1.6.0): Ustawienia w modułach sekcji (ust-*.js), strefa i B-ADJ w ust-wykresy.js
+    const s = src('public/js/ust-wykresy.js');
     assert.match(s, /chk\('equity'/, 'kontrolka equity w Ustawieniach');
     assert.match(s, /data-v="cards"/, '„Przywróć domyślne” grupy Karty');
     const C = await lib('public/js/styl-wykresu.js');

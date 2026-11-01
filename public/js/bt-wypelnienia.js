@@ -117,6 +117,30 @@ export function placeOrder(book, order, last) {
   return { book: b, events };
 }
 
+// L (31.10.2026): przesunięcie zlecenia oczekującego (przeciągnięcie linii na wykresie jak w FX Replay). modifyOrder(book, id, { price?, sl?, tp? }, last) → { book, events }.
+// Ta sama walidacja co placeOrder: limit nie po złej stronie rynku, stop nie taki, który już by się wyzwolił, SL/TP po właściwej stronie ceny zlecenia; tp: null usuwa TP.
+export function modifyOrder(book, id, changes = {}, last) {
+  const b = clone(book);
+  const o = (b.orders || []).find((x) => x.id === id);
+  if (!o) return rej(b, 'no-order', { id });
+  if (isRewound(b, last, o.instrument)) return rej(b, 'rewound', { id });
+  const dir = o.side === 'buy' ? 'Long' : 'Short';
+  const price = 'price' in changes ? num(changes.price) : o.price;
+  const sl = 'sl' in changes ? num(changes.sl) : o.sl;
+  const tp = 'tp' in changes ? num(changes.tp) : o.tp;
+  if (!Number.isFinite(price)) return rej(b, 'bad-price', { id });
+  const lp = Number(last?.price);
+  if (Number.isFinite(lp)) {
+    const above = price > lp, below = price < lp;
+    const bad = o.type === 'limit' ? (dir === 'Long' ? above : below) : (dir === 'Long' ? below : above);
+    if (bad) return rej(b, 'bad-price', { id });
+  }
+  if (Number.isNaN(sl) || (sl !== null && !slOk(dir, sl, price))) return rej(b, 'bad-sl', { id });
+  if (Number.isNaN(tp) || (tp !== null && !tpOk(dir, tp, price))) return rej(b, 'bad-tp', { id });
+  Object.assign(o, { price, sl, tp });
+  return { book: b, events: [] };
+}
+
 export function cancelOrder(book, id) {
   const b = clone(book);
   b.orders = b.orders.filter((o) => o.id !== id);
@@ -276,4 +300,23 @@ export function excursions(pos, stream) {
     see(h); see(l);
   }
   return { maeR: r2(lo / risk), mfeR: r2(hi / risk) };
+}
+
+// K (31.10.2026): Stan konta przy kursorze (punkt podpięcia pakietu L): saldo startowe, wynik zamkniętych trade'ów, otwarte pozycje z wynikiem po cenie bieżącej (zamknięcie ostatniej
+// widocznej świecy bazowej, bez przyszłości) i equity. Czysta funkcja: book, trades, balance, last(k) = { t, price }.
+export function accountState({ book, trades = [], balance = 0, last }) {
+  const realized = trades.reduce((a, x) => a + (Number.isFinite(x?.pnl) ? x.pnl : 0), 0);
+  const open = [];
+  let upl = 0, partial = 0;
+  for (const [k, p] of Object.entries(book?.positions || {})) {
+    if (!p) continue;
+    const s = p.dir === 'Short' ? -1 : 1, m = MULT[p.instrument] || MULT[k] || 0, px = last(k).price;
+    const part = tradeResult(p).pnl || 0;
+    const u = Number.isFinite(px) ? (px - p.entryPrice) * s * p.openQty * m : 0;
+    const risk = Math.abs(p.entryPrice - p.sl0) * p.qty * m;
+    open.push({ instrument: k, dir: p.dir, qty: p.openQty, entryPrice: p.entryPrice, last: px, upl: Math.round(u * 100) / 100, uplR: risk > 0 ? Math.round((u / risk) * 100) / 100 : null });
+    upl += u; partial += part;
+  }
+  const r2 = (x) => Math.round(x * 100) / 100;
+  return { balance, realized: r2(realized + partial), upl: r2(upl), equity: r2(balance + realized + partial + upl), open };
 }

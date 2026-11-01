@@ -448,7 +448,10 @@ export default ({ test, H, assert, ROOT }) => {
     assert.ok(/newsDeskHtml\(\)/.test(app) && /newsMainHtml\(\)/.test(app) && /createNewsCards/.test(app));
     const w = readFileSync(path.join(ROOT, 'public/js/wykres.js'), 'utf8');
     assert.ok(/newsPrimitive/.test(w) && /attachPrimitive\(nprim\)/.test(w));
-    const u = readFileSync(path.join(ROOT, 'public/js/ustawienia.js'), 'utf8');
-    assert.ok(/newsSettingsHtml/.test(u) && /earnSettingsHtml/.test(u));
+    // N4 (1.6.0): grupy rozcięte: klucz i stan w Źródłach danych (ust-zrodla.js), wygląd na wykresie i w panelu w Wykresach (ust-wykresy.js)
+    const u = readFileSync(path.join(ROOT, 'public/js/ust-zrodla.js'), 'utf8');
+    assert.ok(/newsSourceHtml\(/.test(u) && /earnSourceHtml\(/.test(u));
+    const wk = readFileSync(path.join(ROOT, 'public/js/ust-wykresy.js'), 'utf8');
+    assert.ok(/newsLookHtml\(/.test(wk) && /earnLookHtml\(/.test(wk));
   });
 };

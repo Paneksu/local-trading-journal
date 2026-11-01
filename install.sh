@@ -26,10 +26,14 @@ if [ -n "$DESK" ] && [ -d "$DESK" ]; then
   if [ "$(uname)" = "Darwin" ]; then
     printf '#!/bin/sh\nexec "%s/start.sh"\n' "$DIR" > "$DESK/JustJournal.command"
     chmod +x "$DESK/JustJournal.command"
+    # N6 (1.6.0): macOS przy pierwszym otwarciu skrótu z pulpitu może go zablokować (Gatekeeper)
+    echo "Skrót JustJournal jest na pulpicie. Jeśli macOS go zablokuje: prawy przycisk na skrócie → Otwórz → Otwórz."
+    echo "The JustJournal shortcut is on your desktop. If macOS blocks it: right-click the shortcut → Open → Open."
   else
     printf '[Desktop Entry]\nType=Application\nName=JustJournal\nExec=sh "%s/start.sh"\nTerminal=false\n' "$DIR" > "$DESK/justjournal.desktop"
     chmod +x "$DESK/justjournal.desktop"
   fi
 fi
 echo "Uruchamiam dashboard i otwieram kreator: http://127.0.0.1:4321 / Starting the dashboard and the setup wizard."
+echo "Później uruchamiasz JustJournal skrótem na pulpicie albo ./start.sh. / Next time use the desktop shortcut or ./start.sh."
 exec ./start.sh

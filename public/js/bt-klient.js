@@ -37,7 +37,10 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
   const days = async ({ instruments, from, to, mkt = true, start = '' }) => getJson(`/api/backtest/days?instruments=${encodeURIComponent(instruments.join(','))}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${mkt ? '' : '&mkt=0'}${start ? `&start=${encodeURIComponent(start)}` : ''}`);
   // G: lekkie źródło statystyk (trade'y i status dni, bez rysunków); ids = tablica identyfikatorów albo null (wszystkie sesje) → { sessions, failed }
   const statsSource = async ({ ids = null } = {}) => getJson(`/api/backtest/stats-source${ids && ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : ''}`);
-  const day = async ({ instruments, day: d, ctx = 2 }) => getJson(`/api/backtest/day?instruments=${encodeURIComponent(instruments.join(','))}&day=${encodeURIComponent(d)}&ctx=${ctx}`);
+  // K (31.10.2026): ciągła oś czasu: zakres (tf=base strumień bazowy, tf=<interwał> historia wykresu), granice danych i newsy z wyprzedzeniem dla skoku „Następny news”
+  const range = async ({ instruments, from, to, tf = 'base' }) => getJson(`/api/backtest/range?instruments=${encodeURIComponent(instruments.join(','))}&from=${from}&to=${to}&tf=${encodeURIComponent(tf)}`);
+  const bounds = async (instruments) => getJson(`/api/backtest/bounds?instruments=${encodeURIComponent(instruments.join(','))}`);
+  const news = async ({ from, to }) => getJson(`/api/news?from=${Math.floor(from)}&to=${Math.floor(to)}`);
 
   async function send(doc, { keepalive = false, rev = null } = {}) {
     const id = doc.id;
@@ -83,15 +86,16 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
   function create(doc) { revs.set(doc.id, 0); queued = doc; return flush(); }
 
   // E2: wysyłka trade'ów sesji do Notion (POST /api/backtest/notion). Serwer wysyła z pliku sesji, więc najpierw idzie zaległy zapis stanu.
-  // day: tylko trade'y dnia (Zakończ dzień); all: także trade'y z błędem i bez opisu (jawne „Zapisz do Notion”); auto: tylko ponowienie próbowanych z dni zakończonych (timer). Wynik: { sent, skipped, failed, pending, notion }.
-  async function notion({ sessionId, day = null, all = false, auto = false } = {}) {
+  // K: [U] 31.10.2026 «od razu»: bez trybu dnia. Domyślnie wszystkie niewysłane (bez błędu, także bez opisu); all: także z błędem (jawne „Zapisz do Notion”);
+  // auto: tylko ponowienie już próbowanych z błędem przejściowym (timer). Wynik: { sent, skipped, failed, pending, notion }.
+  async function notion({ sessionId, all = false, auto = false } = {}) {
     await flush().catch(() => {});
-    const r = await fetchImpl('/api/backtest/notion', { method: 'POST', headers: HEADERS, body: JSON.stringify({ sessionId, ...(day ? { day } : {}), ...(all ? { all: true } : {}), ...(auto ? { auto: true } : {}) }) });
+    const r = await fetchImpl('/api/backtest/notion', { method: 'POST', headers: HEADERS, body: JSON.stringify({ sessionId, ...(all ? { all: true } : {}), ...(auto ? { auto: true } : {}) }) });
     let j = null;
     try { j = await r.json(); } catch { /* bez treści */ }
     if (!r.ok) { const e = new Error(j?.error || String(r.status)); e.status = r.status; e.code = j?.code; throw e; }
     return j;
   }
 
-  return { setOnError: (fn) => { onError = fn || onError0; }, load, list, days, statsSource, day, save, create, flush, notion, pending: () => (queued ? 1 : 0) + (inflight ? 1 : 0), lastError: () => lastError };
+  return { setOnError: (fn) => { onError = fn || onError0; }, load, list, days, statsSource, range, bounds, news, save, create, flush, notion, pending: () => (queued ? 1 : 0) + (inflight ? 1 : 0), lastError: () => lastError };
 }

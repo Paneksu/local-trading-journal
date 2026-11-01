@@ -31,7 +31,7 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
 const DAY = '2024-03-12';
-const NEXT = ['2024-03-12', '2024-04-10', '2024-05-15', '2024-06-12', '2024-07-11']; // dni, DO których idzie skok (karta H1)
+// K (31.10.2026): skoki „Następna sesja NY” idą kolejno po dniach handlowych od wtorku 2024-03-12 (także przez weekend)
 try {
   for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k);
   const { openReplay } = await import('/js/bt-replay.js');
@@ -40,11 +40,12 @@ try {
   const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
   const client = createSessionClient();
   const LAY2 = { kind: '2h', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }] };
+  // K: sesja v2 (data startu, bez puli); kursor startowy podaje wywołujący
   const mk = async (name, pool, cursor = null, layout = LAY2) => {
     const doc = newSessionDoc({
       id: newSessionId(), name,
-      def: { instruments: ['NQ', 'ES'], from: pool[0], to: pool[pool.length - 1], balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', order: 'chrono', seed: 1, accountId: null, filter: null, excluded: [] },
-      pool, now: Date.now(),
+      def: { instruments: ['NQ', 'ES'], from: pool[0], balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
     });
     doc.layout = JSON.parse(JSON.stringify(layout));
     if (cursor) doc.cursor = cursor;
@@ -60,6 +61,23 @@ try {
     return R;
   };
   const lastT = (ch) => { const b = ch.bars(); return b.length ? b[b.length - 1][0] : null; };
+  // odtwarzanie od `from` do `end` z szybkością sp: klatki (rAF) i kursor; stop po dojściu albo po limicie czasu
+  const playTo = async (R, end, sp, limitMs = 120000) => {
+    R.setSpeed(sp);
+    const ts = [], curs = [];
+    const t0 = performance.now();
+    await new Promise((done) => {
+      const loop = (t) => {
+        ts.push(t); curs.push(R.cursor());
+        if (R.cursor() >= end || performance.now() - t0 > limitMs) { R.pause(); done(); return; }
+        requestAnimationFrame(loop);
+      };
+      R.play();
+      requestAnimationFrame(loop);
+    });
+    const gaps = []; for (let i = 11; i < ts.length; i++) gaps.push(ts[i] - ts[i - 1]);
+    return { gaps, curs, wall: (performance.now() - t0) / 1000 };
+  };
 
   // ---- 1. krok: 500 kroków NQ 15s przy dwóch wykresach (NQ 15s + ES 1m) ----
   // Koszt kroku = część synchroniczna (seek + series.update obu wykresów + pasek) + rysowanie LWC: LWC rysuje w requestAnimationFrame zgłoszonym przy zmianie danych,
@@ -149,34 +167,127 @@ try {
     R.close();
   });
 
-  // ---- 3. skok „następny dzień” z pobraniem dnia: od kliknięcia „Skocz” do pierwszego narysowanego wykresu nowego dnia ----
+  // ---- 2c. L (31.10.2026): odtwarzanie 100× na NQ 1s z otwartą pozycją (etykieta P&L przy każdej klatce), szufladą Pozycje (P&L, MAE/MFE na żywo) i paskiem konta ----
+  await section('konto', async () => {
+    const doc = await mk('L konto', [DAY], nyAt(DAY, '09:30'), { kind: '1', active: 0, charts: [{ instrument: 'NQ', tf: '1s' }] });
+    const R = await open(doc);
+    R.doc().def.commission = 2.5;
+    const P = (s) => document.querySelector(`.bt-screen .bt-ord ${s}`);
+    const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+    setF('sl', 400); setF('tp', 800); setF('qty', 1);
+    P('[data-o="buy"]').click();
+    await frame();
+    R.dock().setTab('pos');
+    const ch = R.charts()[0];
+    rec('konto', !!R.book().positions.NQ && /LONG 1/.test(ch.tradeLayer().querySelector('[data-k="pos"]')?.textContent || '') && !!document.querySelector('.bt-dock [data-row="NQ"]'), 'pozycja z etykietą P&L i wiersz w szufladzie');
+    const end = nyAt(DAY, '10:30');
+    R.setSpeed(100);
+    const ts = [], txt = new Set();
+    const t0 = performance.now();
+    await new Promise((done) => {
+      const loop = (t) => {
+        ts.push(t);
+        if (ts.length % 30 === 0) txt.add(document.querySelector('.bt-dock [data-row="NQ"] [data-c="usd"]')?.textContent);
+        if (R.cursor() >= end || !R.book().positions.NQ || performance.now() - t0 > 120000) { R.pause(); done(); return; }
+        requestAnimationFrame(loop);
+      };
+      R.play();
+      requestAnimationFrame(loop);
+    });
+    const gaps = []; for (let i = 11; i < ts.length; i++) gaps.push(ts[i] - ts[i - 1]);
+    const slow = gaps.filter((g) => g > 34).length;
+    perf.acctFrames = gaps.length; perf.acctSlowPct = (slow / gaps.length) * 100; perf.acctWorst = Math.max(...gaps); perf.acctMedFrame = median(gaps);
+    rec('konto', R.cursor() >= end || !R.book().positions.NQ, `odtwarzanie do 10:30 NY albo do wyjścia (${new Date(R.cursor() * 1000).toISOString().slice(11, 19)} UTC)`);
+    rec('konto', txt.size > 3, `P&L w szufladzie zmienia się w trakcie (${txt.size} różnych wartości)`);
+    rec('konto', perf.acctSlowPct <= 1, `klatki > 34 ms: ${slow} z ${gaps.length} (${perf.acctSlowPct.toFixed(2)}%, próg 1%); mediana ${perf.acctMedFrame.toFixed(1)} ms; najdłuższa ${perf.acctWorst.toFixed(1)} ms`);
+    R.close();
+  });
+
+  // ---- 3. K: odtwarzanie przez koniec sesji, przerwę 17–18 NY, noc i weekend (piątek → niedziela), 300×, z doładowaniem danych w tle ----
+  await section('weekend', async () => {
+    const doc = await mk('K weekend', ['2024-03-08'], nyAt('2024-03-08', '16:40'), { kind: '1', active: 0, charts: [{ instrument: 'NQ', tf: '1m' }] });
+    const R = await open(doc);
+    const sun = nyAt('2024-03-10', '18:00'), end = nyAt('2024-03-10', '18:20');
+    const r = await playTo(R, end, 300, 60000);
+    const slow = r.gaps.filter((g) => g > 34).length, worst = Math.max(...r.gaps);
+    perf.weekendFrames = r.gaps.length; perf.weekendWorst = worst; perf.weekendSlowPct = (slow / r.gaps.length) * 100; perf.weekendWall = r.wall;
+    // czas ścienny: 20 min piątku + 20 min niedzieli przy 300× ≈ 8 s; bez pomijania weekendu (49 h) trwałoby ok. 10 min
+    rec('weekend', R.cursor() >= end && r.wall < 30, `kursor przeszedł weekend do niedzieli 18:20 NY w ${r.wall.toFixed(1)} s (bez pomijania przerw: ok. 600 s)`);
+    rec('weekend', !r.curs.some((c) => c > nyAt('2024-03-08', '17:00') + 60 && c < sun), 'kursor nie stanął w środku weekendu (przerwa pominięta)');
+    rec('weekend', worst <= 100, `najdłuższa klatka ${worst.toFixed(1)} ms (próg 100), klatki > 34 ms: ${slow} z ${r.gaps.length}`);
+    const cur = R.cursor();
+    rec('weekend', R.charts().every((ch) => lastT(ch) != null && lastT(ch) <= cur && lastT(ch) >= sun), 'po weekendzie świece niedzieli, bez przyszłości');
+    // granica dni: wtorek 16:45 → 18:15 (koniec sesji, przerwa, nowa sesja), 300×
+    await R.goTo(nyAt('2024-03-12', '16:45'));
+    const r2 = await playTo(R, nyAt('2024-03-12', '18:15'), 300, 30000);
+    perf.dayBoundaryWorst = Math.max(...r2.gaps);
+    rec('weekend', R.cursor() >= nyAt('2024-03-12', '18:15') && perf.dayBoundaryWorst <= 100, `granica dni (17:00 → 18:00 NY) w ${r2.wall.toFixed(1)} s, najdłuższa klatka ${perf.dayBoundaryWorst.toFixed(1)} ms`);
+    R.close();
+  });
+
+  // ---- 4. K: przewinięcie wykresu w lewo do początku danych (1h), doładowanie porcjami nie blokuje UI ----
+  await section('historia', async () => {
+    const doc = await mk('K historia', [DAY], nyAt(DAY, '09:30'), { kind: '1', active: 0, charts: [{ instrument: 'NQ', tf: '1h' }] });
+    const R = await open(doc);
+    const ch = R.charts()[0];
+    const first = R.data().bounds().first;
+    const ts = [];
+    let busy = true;
+    const watch = (t) => { ts.push(t); if (busy) requestAnimationFrame(watch); };
+    requestAnimationFrame(watch);
+    const t0 = performance.now();
+    let n = 0;
+    while (!ch.history().done && performance.now() - t0 < 120000) {
+      ch.chart.timeScale().setVisibleLogicalRange({ from: 0, to: 120 }); // przewinięcie na lewy brzeg: wykres sam dociąga porcję
+      await sleep(30); n++;
+    }
+    busy = false;
+    const ms = performance.now() - t0;
+    const gaps = []; for (let i = 1; i < ts.length; i++) gaps.push(ts[i] - ts[i - 1]);
+    perf.historyMs = Math.round(ms); perf.historyBars = ch.bars().length; perf.historyWorstFrame = Math.max(...gaps); perf.historyFirst = new Date(ch.bars()[0][0] * 1000).toISOString();
+    rec('historia', ch.history().done && ch.bars()[0][0] - first < 86400 * 4, `1h: historia do początku danych (${perf.historyFirst}, pierwsza świeca danych ${new Date(first * 1000).toISOString()}), ${perf.historyBars} świec w ${(ms / 1000).toFixed(1)} s`);
+    rec('historia', perf.historyWorstFrame <= 100, `najdłuższa klatka w trakcie doładowania ${perf.historyWorstFrame.toFixed(1)} ms (próg 100)`);
+    rec('historia', ch.bars().every((b) => b[0] < R.cursor()), 'cała historia przed kursorem (bez przyszłości)');
+    // krok po wczytaniu pełnej historii nadal tani (nakładki liczone z ogona)
+    const xs = [];
+    for (let i = 0; i < 60; i++) { await frame(); const a = performance.now(); R.step(1); xs.push(performance.now() - a); }
+    perf.stepFullHistoryP95 = pct(xs, 0.95);
+    rec('historia', perf.stepFullHistoryP95 <= 16, `krok 1h przy pełnej historii (${perf.historyBars} świec): p95 części synchronicznej ${perf.stepFullHistoryP95.toFixed(2)} ms`);
+    // 1m: dwadzieścia porcji w lewo (ok. 40 dni): czas jednej porcji
+    R.setTf('1m'); await sleep(300);
+    const c1 = R.charts()[0], t1 = performance.now();
+    let k = 0;
+    while (k < 20 && !c1.history().done) { const before = c1.history().bars; c1.chart.timeScale().setVisibleLogicalRange({ from: 0, to: 300 }); await sleep(20); if (c1.history().bars > before) k++; if (performance.now() - t1 > 60000) break; }
+    perf.history1mChunkMs = Math.round((performance.now() - t1) / Math.max(1, k));
+    rec('historia', k >= 10, `1m: ${k} porcji historii, średnio ${perf.history1mChunkMs} ms na porcję (${c1.bars().length} świec)`);
+    R.close();
+  });
+
+  // ---- 5. skok „Następna sesja NY”: od kliknięcia „Skocz” do narysowanego wykresu następnego dnia (przez weekend: piątek → poniedziałek) ----
   await section('skok', async () => {
-    const pool = ['2024-02-13', ...NEXT];
-    const doc = await mk('H1 skok', pool);
-    localStorage.setItem('thq.bt.jump.v1', 'nextDay');
+    const doc = await mk('H1 skok', ['2024-03-12'], nyAt('2024-03-12', '10:00'));
+    localStorage.setItem('thq.bt.jump.v1', 'nySession');
     const R = await open(doc);
     const scr = document.querySelector('.bt-screen');
     const times = [];
-    for (let i = 0; i < NEXT.length; i++) {
-      const want = NEXT[i], from = nyAt(want, '00:00') - 86400 * 4;
-      const sel = scr.querySelector('.bt-jump'); sel.value = 'nextDay'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const want = ['2024-03-13', '2024-03-14', '2024-03-15', '2024-03-18', '2024-03-19'];
+    for (const d of want) {
+      const sel = scr.querySelector('.bt-jump'); sel.value = 'nySession'; sel.dispatchEvent(new Event('change', { bubbles: true }));
       await frame();
       const t0 = performance.now();
       scr.querySelector('[data-bt="jump"]').click();
-      // nowy dzień: indeks dnia w sesji, oba wykresy z danymi nowego dnia (ostatnia świeca w dniu skoku), potem jedna klatka rysowania
       let ok = false;
       while (performance.now() - t0 < 15000) {
         await frame();
-        const d = R.doc();
-        if (d.pool[d.dayIdx] === want && R.charts().length === 2 && R.charts().every((ch) => lastT(ch) != null && lastT(ch) >= from && lastT(ch) <= R.cursor())) { ok = true; break; }
+        if (R.cursor() === nyAt(d, '09:00') && R.charts().every((ch) => lastT(ch) != null && lastT(ch) <= R.cursor() && lastT(ch) >= nyAt(d, '08:00'))) { ok = true; break; }
       }
       await frame();
       const ms = performance.now() - t0;
       times.push(ms);
-      rec('skok', ok, `${want}: wykresy nowego dnia po ${ms.toFixed(0)} ms (kursor ${new Date(R.cursor() * 1000).toISOString().slice(11, 19)} UTC)`);
+      rec('skok', ok, `${d}: wykresy po ${ms.toFixed(0)} ms (kursor ${new Date(R.cursor() * 1000).toISOString().slice(0, 16)} UTC)`);
     }
     perf.jumpTimes = times.map((x) => Math.round(x)); perf.jumpMedian = median(times);
-    rec('skok', perf.jumpMedian <= 1500, `mediana skoku z pobraniem dnia: ${perf.jumpMedian.toFixed(0)} ms (próg 1 500), pojedyncze: ${perf.jumpTimes.join(', ')}`);
+    rec('skok', perf.jumpMedian <= 1500, `mediana skoku: ${perf.jumpMedian.toFixed(0)} ms (próg 1 500), pojedyncze: ${perf.jumpTimes.join(', ')}`);
     R.close();
   });
 

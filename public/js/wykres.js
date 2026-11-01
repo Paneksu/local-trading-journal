@@ -404,7 +404,9 @@ export function newsPrimitive({ chart, series, getModel, getCandles, getStep, ge
 // P27: edited = last_edited_time trade'a (kontrola 409 przy zapisie cen pozycji), onTradeSaved(ceny, edited) = odświeżenie danych w aplikacji.
 // P29: zębatka przy rysunku (otwiera ustawienia rysunku)
 const GEAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
-export async function createEditor(root, { trade: trade0, tradeId, frame, doc, onDone, onSaved, edited: edited0 = '', onTradeSaved }) {
+// L (31.10.2026): Journal backtestu: source = { get(from, to, tf), maxT } zamiast GET /api/candles (świece sesji, nigdy po maxT), saveDoc(doc) zamiast zapisu do Notion
+// (migawka rysunków trade'a w pliku sesji), lockTrade = pozycja trade'a bez kłódki (ceny, czasy i wynik liczy silnik, tylko do odczytu). Live bez tych opcji jak dotąd.
+export async function createEditor(root, { trade: trade0, tradeId, frame, doc, onDone, onSaved, edited: edited0 = '', onTradeSaved, source = null, saveDoc = null, lockTrade = false }) {
   const [LWC, D] = await Promise.all([import(LWC_URL), import(DRAW_URL)]);
   let alive = true;
   const ac = new AbortController(); // W1 (przegląd 28.10.2026): listenery na trwałym root (.lb-chart) znikają razem z edytorem, nie z elementem
@@ -438,6 +440,8 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
   const anchored = Number.isFinite(trade0.at);
   let badj = anchored && frame.badj === true, adjGen = 0, adjust = frame.adjust || null;
   const query = () => ({ ...tradeQuery(trade), ...(badj ? { adjust: 1 } : {}) });
+  const getC = (a, b, f, q) => (source ? source.get(a, b, f) : fetchCandles(instrument, a, b, f, q));
+  const nowCap = () => (source && Number.isFinite(source.maxT) ? Math.floor(source.maxT) : Math.floor(Date.now() / 1000));
   const style = chartSettings().style; // Ustawienia → Wykresy; zmiana stylu działa od następnego otwarcia edycji (jak kolory świec, które zmieniają się na żywo)
   const bars = () => seriesData(candles, style, c);
   const F_PRICE = new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -491,7 +495,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     ov.model(candles); // wypełnia pamięć podręczną, z której czyta pdhlGap
     root.querySelector('.swc-ov-note').textContent = [ov.pdhlGap(candles) ? t('PDH/PDL: do linii potrzebne są pobrane świece całej poprzedniej sesji.') : '', ov.newsFailed() ? t('Newsy: nie udało się wczytać danych.') : ''].filter(Boolean).join(' ');
   };
-  const ov = createOverlays(instrument, () => { markTf(); refreshNote(); prim.requestUpdate(); nprim.requestUpdate(); ov.ensure(candles); }, () => query()); // P35: PDH/PDL z kontraktu trade'a (P38: z B-ADJ, gdy włączony)
+  const ov = createOverlays(instrument, () => { markTf(); refreshNote(); prim.requestUpdate(); nprim.requestUpdate(); ov.ensure(candles); }, () => query(), source ? (a, b, f) => source.get(a, b, f) : null); // P35: PDH/PDL z kontraktu trade'a (P38: z B-ADJ, gdy włączony)
   const prim = overlayPrimitive({ chart, series, getModel: () => ov.model(candles), getPrefs: () => ov.prefs(), getCandles: () => candles, getColors: () => c });
   series.attachPrimitive(prim);
   // newsy i earningsy (1.4.0): rysuje prymityw, interakcję (dymek, klawiatura, dotyk) daje warstwa przycisków nad wykresem
@@ -566,7 +570,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
       return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
     },
     foot: { save: root.querySelector('.swc-save'), meter: root.querySelector('.swc-meter') },
-    tradeId, doc, colors: () => c, instrument,
+    tradeId, doc, colors: () => c, instrument, ...(saveDoc ? { saveDoc } : {}), noUnlock: !!lockTrade,
     onSaved: (j) => { edited = adoptEdited(edited, j); onSaved?.(j); }, // P27: tylko własny zapis przesuwa znacznik; cudza zmiana trade'a w Notion zostaje wykryta (409)
     onChange: () => extras.requestUpdate(),
     repaint: () => extras.requestUpdate(), // J: podpisy po zaznaczeniu i najechaniu
@@ -620,11 +624,11 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     busy = true;
     const mine = tf;
     try {
-      const pad = padFor(tf, (vis.to - vis.from) * step), now = Math.floor(Date.now() / 1000);
+      const pad = padFor(tf, (vis.to - vis.from) * step), now = nowCap();
       const [f, to] = dir === 'left' ? [lEdge - pad, lEdge] : [rEdge, Math.min(now, rEdge + pad)];
       if (to - f < 60) { ext[dir] = false; return; }
       const myGen = adjGen;
-      const j = await fetchCandles(instrument, f, to, tf, query());
+      const j = await getC(f, to, tf, query());
       if (!alive || mine !== tf || myGen !== adjGen) return; // P38: odpowiedź z innym B-ADJ niż bieżący nie trafia do świec
       const got = (j.bars || []).filter((b) => (dir === 'left' ? b[0] < candles[0][0] : b[0] > candles[candles.length - 1][0]));
       const r = ts.getVisibleLogicalRange();
@@ -669,7 +673,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
       const [a, b] = clampFrameTf(a0, b0, want); // przegląd 1.3.0, pkt 1: przycięcie kadru do limitu nowego TF przed żądaniem (inaczej 422 i przycisk „nic nie robi”)
       const pad = padFor(want, b - a);
       const myGen = adjGen;
-      const j = await fetchCandles(instrument, a - pad, Math.min(Math.floor(Date.now() / 1000), b + pad), want, query());
+      const j = await getC(a - pad, Math.min(nowCap(), b + pad), want, query());
       if (myGen !== adjGen) return;
       if (!alive || !(j.bars || []).length) return;
       tf = want; step = tfSec(tf); candles = j.bars; rolls = j.rolls || []; gaps = j.gaps || [];
@@ -759,7 +763,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
       const [a, b] = times();
       const pad = padFor(tf, b - a);
       const q = { ...tradeQuery(trade), ...(on ? { adjust: 1 } : {}) };
-      const j = await fetchCandles(instrument, a - pad, Math.min(Math.floor(Date.now() / 1000), b + pad), tf, q);
+      const j = await getC(a - pad, Math.min(nowCap(), b + pad), tf, q);
       if (!alive || gen !== adjGen || !(j.bars || []).length) return;
       if (on && !(j.adjust?.anchor && j.contract?.code === j.adjust.anchor)) return; // bez kotwicy na kontrakcie trade'a nie pokazujemy przesuniętych cen w edytorze
       badj = on; adjust = j.adjust || null;

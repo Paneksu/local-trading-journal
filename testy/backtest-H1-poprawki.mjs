@@ -63,9 +63,10 @@ export default ({ test, H, assert, ROOT }) => {
   }
   test('backtest-H1: handel ES obok NQ 15s w oknie 1s (przeglądarka)', () => tagged('es', 4931, 'es', 9));
   test('backtest-H1: wyłączone Kup mówi, czego brakuje', () => tagged('es', 4931, 'podpowiedz', 1));
-  test('backtest-H1: pytanie „Zakończ dzień” stoi nad ekranem replayu', () => tagged('dialog', 4939, 'dialog', 2));
-  test('backtest-H1: podwójne „Następny dzień” nie kończy nowego dnia', () => tagged('dni', 4932, 'nastepny', 3));
-  test('backtest-H1: „Zakończ dzień” w trakcie wysyłki trafia do kolejki', () => tagged('dni', 4932, 'kolejka', 1));
+  // K (31.10.2026): trzy testy dnia zastąpione (bez „Zakończ dzień” i „Następny dzień”)
+  test('backtest-H1: okno pytania stoi nad ekranem replayu', () => tagged('dialog', 4939, 'dialog', 2));
+  test('backtest-K: dwa skoki dnia naraz to jeden ruch, po ostatnim dniu kursor stoi', () => tagged('dni', 4932, 'nastepny', 3));
+  test('backtest-K: wysyłka do Notion w trakcie innej trafia do kolejki', () => tagged('dni', 4932, 'kolejka', 1));
 
   // ---- #4 (P3): odstęp przed ponownym POST liczony od przekroczenia czasu ----
   test('backtest-H1: odstęp przed ponownym POST po przekroczonym czasie', async () => {

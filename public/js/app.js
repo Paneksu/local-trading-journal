@@ -333,6 +333,35 @@ function tile(label, val, sub, deltaHtml, { c = '', small = false } = {}) {
 
 const notionAppUrl = () => (model?.notionUrl ? model.notionUrl.replace('https://', 'notion://') : '#');
 
+// N1 (1.6.0): cienki baner nad Statystykami, dopóki w dzienniku są wpisy przykładowe z kreatora (tytuł z prefiksem „DEMO · ”, lib/workspace.mjs DEMO_PREFIX).
+// Wcześniej usunięcie DEMO było tylko w Gotowości albo w terminalu (node setup.mjs --remove-demo).
+const DEMO_PREFIX = 'DEMO · ';
+function demoCount() {
+  if (!model) return 0;
+  const n = (list) => (list || []).filter((x) => String(x.name || '').startsWith(DEMO_PREFIX)).length;
+  return n(model.trades) + n(model.konta) + n(model.finanse);
+}
+function demoBannerHtml() {
+  const n = demoCount();
+  if (!n) return '';
+  return `<div class="card demo-ban" role="status"><span class="demo-ban-t"><b>${L('To są dane przykładowe (DEMO).')}</b> ${esc(t.p('{n} wpisów DEMO w Notion. Usuń je, gdy zaczniesz wpisywać własne.', n))}</span>
+    <span class="demo-ban-a"><button type="button" class="btn sm" data-act="demo-remove">${L('Usuń dane DEMO')}</button><button type="button" class="btn primary sm" data-act="add-trade">${ICON.plus(12)}${L('Dodaj pierwszy trade')}</button></span></div>`;
+}
+// Podgląd liczby (serwer liczy wpisy we wszystkich bazach), potwierdzenie, przeniesienie do kosza Notion (POST /api/demo/remove, to samo co w Gotowości)
+async function removeDemo(opener) {
+  let n = 0;
+  try { const r = await postJson('/api/demo/remove', {}); if (!r.ok) throw new Error(r.error || ''); n = r.count || 0; }
+  catch (e) { toast(t('Nie udało się sprawdzić wpisów DEMO: {msg}', { msg: e.message || '' }), { error: true }); return; }
+  if (!n) { await load(true); return; }
+  const ok = await confirmDialog({ title: t('Usunąć dane DEMO?'), text: t.p('{n} wpisów DEMO trafi do kosza Notion (da się je przywrócić w Notion).', n), ok: t.p('Usuń {n} wpisów', n), danger: true });
+  if (!ok) { opener?.focus(); return; }
+  const r = await postJson('/api/demo/remove', { apply: true });
+  if (!r.ok) { toast(r.error || t('Nie udało się usunąć wpisów DEMO.'), { error: true }); return; }
+  toast(t.p('Usunięto {n} wpisów DEMO.', r.count || 0));
+  await load(true);
+  if (ust.isOpen()) ust.rerender();
+}
+
 function emptyState(range) {
   const what = { Live: t("trade'ów live"), Backtest: t('backtestów'), Niewzięty: t("trade'ów paper") }[state.typ];
   const filtered = state.konta || state.setups;
@@ -971,7 +1000,7 @@ function renderMain() {
   if (state.view === 'backtest') {
     const host = view.querySelector('.bt-view');
     if (!btView.isMounted(host)) {
-      view.innerHTML = `${pageHead(t('Backtest'), t('Replay świeca po świecy na lokalnych świecach: sesje, dni i wynik w R'))}<section class="sec bt-view" aria-label="${L('Sesje backtestu')}"></section>`;
+      view.innerHTML = `${pageHead(t('Backtest'), t('Replay świeca po świecy na lokalnych świecach: sesje od daty startu do końca danych, wynik w R, $ i %'))}<section class="sec bt-view" aria-label="${L('Sesje backtestu')}"></section>`;
       btView.mount(view.querySelector('.bt-view'));
     }
     viewCtx(); renderSide(); renderStatus();
@@ -1004,7 +1033,7 @@ function renderMain() {
     return;
   }
   const banner = loadError ? `<div class="card empty mini err"><h3>${L('Odświeżenie nie powiodło się')}</h3><p>${esc(loadError)} ${L('Pokazuję ostatnio pobrane dane.')}</p></div>` : '';
-  let html = pageHead(t('Statystyki'), `${typLabel(state.typ)} · ${range.label}${searchNote()}${range.prev && c && !S.calc(inRange(base, range.prev)).n ? ' · ' + t('poprzedni okres jest pusty, więc bez porównań') : ''}`) + banner;
+  let html = pageHead(t('Statystyki'), `${typLabel(state.typ)} · ${range.label}${searchNote()}${range.prev && c && !S.calc(inRange(base, range.prev)).n ? ' · ' + t('poprzedni okres jest pusty, więc bez porównań') : ''}`) + banner + demoBannerHtml();
   if (!cur.length) {
     html += `<section class="sec">${emptyState(range)}</section>` + newsMainHtml();
     if (model.trades.length) html += `<section class="sec"><div class="card" id="cal">${renderCalendar()}</div></section>`;
@@ -1300,7 +1329,8 @@ function ensureChart(x, extra = {}) {
   const box = lbEl().querySelector('.lb-chart');
   const pv = createPodglad(box, {
     trade: tradeArg(x), drawings: extra.drawings || [], frame: extra.frame, tf: extra.tf, badj: extra.badj,
-    meta: () => meta, openSettings: () => { closeLightbox({ restore: false }); if (!ust.isOpen()) ust.toggle('wykresy'); }, // klucz Databento jest w Ustawienia → Wykresy
+    // N1: głęboki link do klucza Databento (Ustawienia → Źródła danych)
+    meta: () => meta, openSettings: () => openSettingsAt('zrodla', 'databento'),
     onEdit: () => startEdit(x),
     onContract: model?.fields?.trades?.contract ? (code) => saveContract(x, code) : null, // P35: bez pola (przed migracją 005) lista tylko do odczytu
   });
@@ -1627,19 +1657,25 @@ async function postJson(url, body) {
 async function refreshMeta() { try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ } }
 
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
-const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml() + ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
-  onDatabentoKey: saveDatabentoKey, loadDataSize: async () => { const r = await fetch('/api/candles/size', { cache: 'no-store' }); return r.ok ? (await r.json()).bytes : null; },
+const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml(), onboardingHtml: () => ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), demoCount: () => demoCount(), onStop: (el) => stopServer(el), onRestored: () => load(true), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
+  // N4 (1.6.0): klucze zapisuje sekcja Źródła danych (POST /api/sources/key); po zmianie klucza, kredytu albo limitów odświeżamy meta i karty panelu
+  onSourcesChanged: async () => { await refreshMeta(); newsCards.wantEarnings(earnOn()); renderSide(); renderDesk(); if (model) renderMain(); newsCards.load(); },
   loadNewsStatus: async () => {
     const get = async (u) => { try { const r = await fetch(u, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; } };
     const [news, earnings] = await Promise.all([get('/api/news/status'), get('/api/earnings/status')]);
     return { news, earnings };
   },
-  onNewsKey: async (kind, key) => {
-    const r = await postJson(kind === 'fred' ? '/api/news/key' : '/api/earnings/key', { key });
-    if (r.ok) { await refreshMeta(); newsCards.wantEarnings(earnOn()); renderSide(); renderDesk(); if (model) renderMain(); newsCards.load(); }
-    return r;
-  },
   onEarnClass: async (body) => { const r = await postJson('/api/earnings/classes', body); if (r.ok) newsCards.load(); return r; } });
+// N1 (1.6.0): głębokie linki do Ustawień: #ustawienia/<sekcja>[/<grupa>] (puste stany wykresu i Backtestu, przewodnik, adres wpisany ręcznie)
+function openSettingsAt(section = '', group = '') {
+  if (lb.open) closeLightbox({ restore: false });
+  ust.open(section, group);
+}
+function routeHash() {
+  const m = /^#ustawienia(?:[/]([a-z]+))?(?:[/]([a-z0-9-]+))?$/.exec(location.hash);
+  if (m) openSettingsAt(m[1] || '', m[2] || '');
+}
+window.addEventListener('hashchange', routeHash);
 // Zmiana settings.chart (Ustawienia albo synchronizacja): stan bieżący, kolory świec, otwarty wykres i listy z miniaturami (cache świec zostaje, miniatury tylko rysują się od nowa)
 let chartTimer = null;
 function onChartChanged(c) {
@@ -1652,16 +1688,6 @@ function onChartChanged(c) {
   renderSide(); renderDesk(); paintNewsCards();
   clearTimeout(chartTimer);
   chartTimer = setTimeout(() => { if (model) renderMain(); }, 150);
-}
-// Klucz Databento: zapis do .env po bezpłatnym sprawdzeniu (serwer); potem świeże meta (hasDatabentoKey)
-async function saveDatabentoKey(key) {
-  try {
-    const r = await fetch('/api/candles/key', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ key }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) return { ok: false, error: j.error };
-    try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ }
-    return { ok: true };
-  } catch { return { ok: false }; }
 }
 upd.onChange = () => { if (ust.isOpen()) ust.rerender(); };
 
@@ -1689,6 +1715,8 @@ async function stopServer(opener) {
   if (!ok) { opener?.focus(); return; }
   try {
     const res = await fetch('/api/shutdown', { method: 'POST', headers: { 'X-THQ': '1' } });
+    // poprawki po review N1–N4: serwer odmawia (409) w trakcie kopii katalogu danych, importu albo pobierania świec i podaje powód
+    if (res.status === 409) { const j = await res.json().catch(() => ({})); toast(j.error || t('Nie udało się zatrzymać serwera. Zamknij okno Dashboard.cmd / terminala albo proces node.'), { error: true }); return; }
     if (!res.ok) throw new Error('odmowa');
   } catch {
     toast(t('Nie udało się zatrzymać serwera. Zamknij okno Dashboard.cmd / terminala albo proces node.'), { error: true });
@@ -1748,6 +1776,7 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'add-trade': form.open(null, t); break;
+    case 'demo-remove': removeDemo(t); break;
     case 'share-trade': share.open({ tradeId: t.dataset.id, opener: t }); break;
     case 'share-open': share.open({ kind: t.dataset.kind, anchor: t.dataset.v || shareAnchor(), clip: t.dataset.from && t.dataset.to ? { from: t.dataset.from, to: t.dataset.to } : null, opener: t }); break;
     case 'sort': {
@@ -1926,7 +1955,7 @@ const tour = createGuide({
   getModel: () => model,
   load: (f) => load(f),
   setView: (v) => { state.view = v; state.ui.sheet = ''; save(); renderTabs(); applySheetAttr(); renderMain(); $('#main').scrollTo({ top: 0 }); },
-  openSettings: () => { if (!ust.isOpen()) ust.toggle(); },
+  openSettings: () => { if (!ust.isOpen()) ust.open('konto'); },
   closeSettings: () => { if (ust.isOpen()) ust.toggle(); },
   openForm: (tr) => form.open(tr, null),
   closeOverlays: () => { if (ust.isOpen()) ust.toggle(); if (lb.open) closeLightbox({ restore: false }); ob.close(); },
@@ -1940,10 +1969,12 @@ const ob = createOnboarding({
   getMeta: () => meta,
   onGuide: () => tour.start(),
   onUpdate: () => upd.handle('upd-open', $('#gear')),
+  // N6: „Dodaj pierwszy trade” na ekranie Gotowe
+  onAddTrade: () => form.open(null, $('[data-act="add-trade"]')),
   // po zapisaniu tokenu, utworzeniu lub połączeniu dziennika i naprawach: świeża konfiguracja i dane z serwera
   onConfigured: async (what = {}) => {
     try { const r = await fetch('/api/meta', { cache: 'no-store' }); if (r.ok) meta = { ...meta, ...(await r.json()) }; } catch { /* zostaje poprzednia */ }
-    if (what.token) return; // sam token: baz jeszcze nie ma, dane wczytamy po utworzeniu dziennika
+    if (what.token || what.meta) return; // sam token: baz jeszcze nie ma, dane wczytamy po utworzeniu dziennika; meta (N6): klucz, kredyt albo okno 1s z kroku Dane rynkowe
     if (what.sync) await sync.pull(); // przeniesienie z innego urządzenia albo połączenie: ustawienia z Notion
     await load(true);
   },
@@ -1960,6 +1991,8 @@ window.__thq = {
 };
 
 translateStatic();
+// N1: adres z #ustawienia/… otwiera Ustawienia od razu
+routeHash();
 paintTheme(getTheme());
 applyLook(getTheme());
 renderDesk();

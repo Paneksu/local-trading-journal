@@ -106,11 +106,16 @@ Instalator tworzy widoki przez API Notion. Jeśli Notion któregoś nie przyjmie
 
 ## Pierwsze kroki
 
-Przy pierwszym uruchomieniu dashboard otwiera „Pierwsze kroki”. Są też zawsze dostępne w Ustawieniach (koło zębate) i pod „?” w pasku statusu.
+Przy pierwszym uruchomieniu dashboard otwiera „Pierwsze kroki”. Są też zawsze dostępne w Ustawieniach (koło zębate → Konto i Notion) i pod „?” w pasku statusu.
 
-- **Gotowość:** lista kontrolna: Node, klucz Notion, dostęp do strony, cztery bazy z liczbą wpisów, zgodność pól, widoki, uprawnienia do zapisu, ochrona serwera, aktualizacje i wpisy DEMO. Przy każdym problemie jest krótka instrukcja naprawy. „Napraw wszystko” jednym przyciskiem stosuje wszystkie bezpieczne naprawy (brakujące pola, opcje i widoki, ponowne rozpoznanie pól, skrót do Notion), a najpierw pokazuje, co zostanie dodane. Zły token albo brak dostępu przenoszą do właściwego kroku kreatora. Szybkie sprawdzenie uruchamia się w tle przy każdym starcie; przy problemie w pasku statusu pojawia się „Wymaga uwagi”. Sprawdzenia wyłącznie czytają; próba zapisu wysyła żądanie, które Notion odrzuca walidacją, więc nic nie powstaje.
-- **Jak działa dziennik:** przewodnik w kilku krokach po prawdziwym interfejsie, na przykładowych danych w pamięci przeglądarki. W tym trybie nic nie trafia do Notion, a po wyjściu wracają Twoje dane i filtry.
+Kreator prowadzi przez: **Witaj** (język, który ustala też nazwy baz w Notion) → **Notion** (token integracji) → **Strona** (udostępniona strona, w której powstanie dziennik) → **Dziennik** (cztery bazy, opcjonalnie wpisy DEMO) → **Dane rynkowe** → **Gotowość** → **Gotowe**.
 
+- **Dane rynkowe (opcjonalne):** te same karty co w Ustawieniach → Źródła danych. Klucz Databento (świece do wykresów i Backtestu) z „Zapisz i sprawdź” i „Testuj”, krótkie wyjaśnienie kosztów, stan kredytu do wpisania z portalu Databento i codzienne okno 1s NQ (wyłączone, włączenie potwierdzasz kosztem). Do tego bezpłatne klucze FRED (newsy makro) i Finnhub (earningsy). Każdy klucz zostaje w pliku `.env` na tym komputerze. Krok można pominąć.
+- **Gotowość:** cztery grupy z jednym stanem każda: Ten komputer, Notion, Dane rynkowe, Aktualizacje. Zielone są zwinięte, a „Szczegóły” pokazują każdy punkt: Node, klucz Notion, dostęp do strony, cztery bazy z liczbą wpisów, zgodność pól, widoki, uprawnienia do zapisu, ochrona serwera, wpisy DEMO, klucz i kredyt Databento (także kredyt wygasający w ciągu 30 dni), zablokowana kolejka pobierania, wolne miejsce na dysku z danymi (uwaga poniżej 2 GB), klucze FRED i Finnhub oraz aktualizacje. Przy każdym problemie jest krótka instrukcja naprawy. „Napraw wszystko” jednym przyciskiem stosuje wszystkie bezpieczne naprawy (brakujące pola, opcje i widoki, ponowne rozpoznanie pól, skrót do Notion), a najpierw pokazuje, co zostanie dodane. Zły token albo brak dostępu przenoszą do właściwego kroku kreatora. Szybkie sprawdzenie uruchamia się w tle przy każdym starcie; przy problemie w pasku statusu pojawia się „Wymaga uwagi”. Sprawdzenia wyłącznie czytają; próba zapisu wysyła żądanie, które Notion odrzuca walidacją, więc nic nie powstaje.
+- **Gotowe:** ekran nie zamyka się sam. Do wyboru: „Pokaż przewodnik”, „Dodaj pierwszy trade”, „Usuń dane DEMO” (gdy są) i „Przejdź do dashboardu”.
+- **Jak działa dziennik:** przewodnik w kilku krokach po prawdziwym interfejsie (także wykres trade'a i Backtest), na przykładowych danych w pamięci przeglądarki. W tym trybie nic nie trafia do Notion, a po wyjściu wracają Twoje dane i filtry.
+
+![Pierwsze kroki: dane rynkowe](docs/img/pierwsze-kroki-dane.png)
 ![Pierwsze kroki: gotowość](docs/img/pierwsze-kroki-gotowosc.png)
 ![Pierwsze kroki: przewodnik](docs/img/pierwsze-kroki-przewodnik.png)
 
@@ -364,6 +369,7 @@ Te same kadry pokazuje kreator pod linkiem „Pokaż krok po kroku”. To ilustr
 
 ## Uruchamianie
 
+- Log `dashboard.log` ma najwyżej 5 MB: przy starcie większy plik przechodzi w `dashboard.1.log`, a zostają najwyżej trzy pliki (`dashboard.log`, `.1`, `.2`).
 - **Windows:** `Dashboard.vbs` (bez okna konsoli; logi w `dashboard.log`) albo `Dashboard.cmd` (z oknem konsoli, do diagnozy). Skrót na pulpicie z ikoną: `powershell -ExecutionPolicy Bypass -File narzedzia\utworz-skrot.ps1`.
 - **macOS / Linux:** `./start.sh` (w tle, logi w `dashboard.log`) albo `./start.sh --foreground`.
 - Adres: http://127.0.0.1:4321. Jeśli dashboard już działa, skrypty tylko otwierają przeglądarkę.
@@ -383,7 +389,7 @@ Skąd nowa wersja:
 
 Migracje dodają wyłącznie nowe pola, opcje i widoki. Nie usuwają, nie zmieniają typów, nie zmieniają nazw pól z danymi i nie dotykają wartości we wpisach. Zasady: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Sprawdzanie aktualizacji wyłączysz w Ustawieniach → Ogólne.
+Sprawdzanie aktualizacji wyłączysz w Ustawieniach → Kopie i diagnostyka.
 
 ## Wiele urządzeń
 
@@ -409,7 +415,8 @@ Dane są w Notion, więc każde urządzenie widzi te same trade'y, konta i wpisy
 ## Kopia i przywracanie
 
 - Kopia powstaje przy każdej aktualizacji w `backups/<data>/` (JSON: schemat i wszystkie wpisy z wartościami pól). Katalog jest w `.gitignore`.
-- Przywracanie: `node restore.mjs` pokazuje **tylko podgląd** (co zostanie przywrócone z najnowszej kopii). `node restore.mjs --apply` zapisuje po wpisaniu „TAK”. Inną kopię wskażesz ścieżką: `node restore.mjs backups/2026-10-26T10-00-00Z`.
+- Bez terminala: **Ustawienia → Kopie i diagnostyka → Kopie baz Notion**. Lista pokazuje datę, powód (przy aktualizacji, ręczna, przed przywróceniem), liczbę wpisów w każdej bazie i rozmiar. „Utwórz kopię teraz” zapisuje kopię od razu. „Podgląd przywracania” porównuje kopię z tym, co jest teraz w Notion (tylko odczyt) i mówi, ile wpisów i pól się zmieni. Przywrócenie rusza po wpisaniu „TAK”, a przed zapisem dashboard robi kopię obecnego stanu, więc i to da się cofnąć. Kopii nie da się usunąć z dashboardu: stare foldery usuwasz sam w `backups/`.
+- W terminalu: `node restore.mjs` pokazuje **tylko podgląd** (co zostanie przywrócone z najnowszej kopii). `node restore.mjs --apply` zapisuje po wpisaniu „TAK”. Inną kopię wskażesz ścieżką: `node restore.mjs backups/2026-10-26T10-00-00Z`.
 - Przywracanie przywraca wartości pól, wyjmuje wpisy z kosza i odtwarza brakujące. Niczego nie usuwa: wpisy dodane po kopii zostają. Pliki wgrane do Notion (zrzuty) nie są w kopii, bo ich adresy wygasają po godzinie.
 - Rysunki z wykresów są polem „Rysunki” w Notion, więc kopia i przywracanie obejmują je bez zmian. Pobranych świec (`chart-data/`) kopia nie zawiera.
 
@@ -423,38 +430,37 @@ Od wersji 1.3.0 każdy trade ES, NQ, MES lub MNQ ma wykres świecowy z poziomami
 
 **Kontrakty i rolowanie.** Świece pochodzą z ciągłego symbolu Databento `ES.v.0` / `NQ.v.0` (kontrakt o największym obrocie), z prawdziwymi cenami kontraktów, bez wyrównania na rolowaniu. Zmianę kontraktu wykres oznacza pionową linią. W polu „Kontrakt” (np. `ESZ6`) możesz wskazać kontrakt trade'a; puste pole oznacza kontrakt według daty. Przełącznik B-ADJ (jak w TradingView, domyślnie włączony) przesuwa ceny innych kontraktów o luki rolli względem kontraktu trade'a, więc wejście, SL i TP trafiają co do ticka. Godziny sesji, PDH/PDL i strefę czasową osi ustawisz w Ustawieniach → Wykresy.
 
-**Klucz Databento.** Świece pobierasz z [Databento](https://databento.com) (zbiór CME Globex MDP 3.0, `GLBX.MDP3`) własnym kluczem, bez abonamentu, płacąc za zużycie. Załóż konto, w portalu Databento otwórz „API keys”, kliknij „Create a new key” i skopiuj klucz. W dashboardzie: Ustawienia → Wykresy → „Dane Databento” → wklej klucz → „Zapisz i sprawdź”. Klucz jest sprawdzany bezpłatnym zapytaniem i zapisuje się wyłącznie w `.env` na tym komputerze (`DATABENTO_API_KEY`). Nie trafia do przeglądarki, logów, Notion ani synchronizacji ustawień. Bez klucza wykresy pokazują świece, które już są na dysku.
+**Klucz Databento.** Świece pobierasz z [Databento](https://databento.com) (zbiór CME Globex MDP 3.0, `GLBX.MDP3`) własnym kluczem, bez abonamentu, płacąc za zużycie. Załóż konto, w portalu Databento otwórz „API keys”, kliknij „Create a new key” i skopiuj klucz. W dashboardzie: Ustawienia → Źródła danych → „Świece: Databento” → wklej klucz → „Zapisz i sprawdź”. Klucz jest sprawdzany bezpłatnym zapytaniem i zapisuje się wyłącznie w `.env` na tym komputerze (`DATABENTO_API_KEY`). Nie trafia do przeglądarki, logów, Notion ani synchronizacji ustawień. Bez klucza wykresy pokazują świece, które już są na dysku.
 
 **Co pobiera się samo, a co po kliknięciu.**
 - Dla każdego trade'a kolejka w tle dokłada okno świec 1s od 30 min przed wejściem do 30 min po wyjściu (zwykle ok. 0,02 USD na trade).
-- Codzienne okno 1s NQ 9:30–11:00 czasu Nowego Jorku: przełącznik „Codziennie pobieraj 1s NQ 9:30–11:00 NY” w Ustawieniach → Wykresy (domyślnie włączony, ustawienie tylko na tym komputerze). Kolejka pobiera okno każdego dnia pon–pt, gdy Databento je udostępni (ok. 0,02 USD na dzień), i nadrabia najwyżej 7 ostatnich dni, w których dashboard był wyłączony. Starsze dni tylko narzędziem importu (niżej).
+- Codzienne okno 1s NQ 9:30–11:00 czasu Nowego Jorku: przełącznik „Codziennie pobieraj 1s NQ 9:30–11:00 NY” w Ustawieniach → Źródła danych (w nowej instalacji wyłączony; włączenie potwierdzasz kosztem; instalacje sprzed 1.6.0 zostają z włączonym; ustawienie tylko na tym komputerze). Kolejka pobiera okno każdego dnia pon–pt, gdy Databento je udostępni (ok. 0,02 USD na dzień), i nadrabia najwyżej 7 ostatnich dni, w których dashboard był wyłączony. Starsze dni tylko narzędziem importu (niżej).
 - Minutówki sesji trade'a i dłuższą historię pobierasz przyciskiem „Sprawdź koszt” przy wykresie: najpierw widzisz wycenę z bezpłatnego zapytania Databento, potem potwierdzasz.
 - Okna i dni, które są już na dysku, nigdy nie pobierają się drugi raz.
 
 **Koszty i limity aplikacji.** Przed każdym pobraniem serwer pyta Databento o koszt (bezpłatnie) i powtarza pytanie tuż przed pobraniem. Twarde limity w aplikacji:
 - najwyżej **1 USD na jedno pobranie**;
 - najwyżej **3 USD na dobę UTC** (licznik dzisiejszych wydatków);
-- **licznik kredytu:** Databento daje nowym kontom kredyt na start (125 USD ważne 6 miesięcy według cennika Databento z października 2026). Dashboard nie widzi salda Databento, więc liczy wydatki sam i odrzuca pobranie, gdy wycena przekracza pozostały kredyt albo kredyt wygasł, żeby nie obciążyć karty. Wpisz swój stan startowy i datę wygaśnięcia w `config.local.json` (`chartCredit: { startUsd, spentUsd, expires }`).
+- **licznik kredytu:** Databento daje nowym kontom kredyt na start (125 USD ważne 6 miesięcy według cennika Databento z października 2026). Dashboard nie widzi salda Databento, więc liczy wydatki sam i odrzuca pobranie, gdy wycena przekracza pozostały kredyt albo kredyt wygasł, żeby nie obciążyć karty. Nowa instalacja nie ma wpisanego kredytu: płatne pobieranie czeka, aż w Ustawieniach → Źródła danych → „Kredyt i limity wydatków” wpiszesz stan z portalu Databento (Billing → Credits: kwota startowa, wydane, data wygaśnięcia). Zapis wymaga potwierdzenia.
 
-Ustawienia → Wykresy pokazują limity, dzisiejsze wydatki, stan kredytu i rozmiar pobranych świec tylko do podglądu. Zmieniasz je w `config.local.json` (`chartCostLimitUsd`, `chartDailyLimitUsd`, `chartCredit`). Szacunek według wycen Databento z października 2026 (ceny mogą się zmienić, prawdziwy koszt zawsze pokazuje wycena przed pobraniem): pełna historia 1m ES i NQ od 2010 ok. 41 USD, okna 1s NQ 9:30–11:00 od 2020 ok. 34 USD.
+W Ustawieniach → Źródła danych widzisz dzisiejsze wydatki i zmieniasz limity (podniesienie potwierdzasz kwotą, obniżenie od razu) oraz stan kredytu; twardych sufitów (100 USD na limit, 125 USD kredytu startowego, 50 USD na jeden import 1m, 36 USD na okna 1s) nie da się podnieść. Tam też wklejasz, testujesz i usuwasz klucze Databento, FRED i Finnhub (tylko do `.env` na tym komputerze). Szacunek według wycen Databento z października 2026 (ceny mogą się zmienić, prawdziwy koszt zawsze pokazuje wycena przed pobraniem): pełna historia 1m ES i NQ od 2010 ok. 41 USD, okna 1s NQ 9:30–11:00 od 2020 ok. 34 USD.
 
 **Embargo danych.** Bez abonamentu Databento udostępnia dane historyczne z opóźnieniem około 8 godzin. Świece z trwającej sesji pojawią się więc dopiero później: wykres pokazuje „Świece dostępne do: …”, a przy trade'ach z takiej sesji „Świece z tej sesji będą dostępne ok. …”. Kolejka sama poczeka na okna, których jeszcze nie ma.
 
 **Interwały poniżej minuty.** Prawdziwe świece sekundowe są tylko tam, gdzie leży pobrane okno 1s (trade'y i codzienne okno NQ). Poza oknami interwały poniżej minuty (np. 30s, 15s, 5s, 1s) nadal działają na całym wykresie: świeca 1m jest dzielona na części wzdłuż ścieżki open → ekstremum → drugie ekstremum → close i rysowana lekko przygaszona, a dymek ma dopisek „z 1m”. Minuta choćby częściowo pokryta oknem 1s jest w całości prawdziwa. Karty udostępniania biorą tylko prawdziwe sekundy: gdy kadr trade'a nie jest w całości pokryty oknem 1s, karta używa świec 1m.
 
-**Import historii z budżetem.** Narzędzia w `narzedzia/` rozmawiają z działającym dashboardem (klucz i liczniki zostają w serwerze) i domyślnie tylko wyceniają, nic nie kosztując:
+**Import historii z budżetem.** W Ustawieniach → Źródła danych → „Import historii” wybierasz zakres dat, dostajesz bezpłatną wycenę i pobranie rusza dopiero po wpisaniu kwoty. Te same importy w terminalu: narzędzia w `narzedzia/` rozmawiają z działającym dashboardem (klucz i liczniki zostają w serwerze) i domyślnie tylko wyceniają, nic nie kosztując:
 - `node narzedzia/import-okien-1s.mjs`: wycena okien 1s NQ 9:30–11:00 NY od 2020-01-02 (lub `--od=`/`--do=`). Pobranie startuje dopiero z `--potwierdzam-usd=KWOTA` (kwota z wyceny), z twardym budżetem `--budzet-usd` (domyślnie i najwyżej 36 USD) liczonym w `chart-data/import-1s-nq.json`. Serwer pobiera partiami do 1 USD i przed każdą partią sprawdza budżet; import liczy się do dziennego limitu 3 USD, więc w dniu importu zwykłe pobrania mogą czekać do północy UTC. Przerwany import wznawiasz tą samą komendą.
 - `node narzedzia/import-historii-1m.mjs`: wycena historii 1m ES i NQ (`--instrument=ES|NQ|ALL`). Pobranie wymaga `--potwierdzam-usd=KWOTA` i jawnego podniesienia limitów aplikacji tylko dla tego importu (`--limity-do-usd=KWOTA`); strażnik kredytu działa dalej.
 
-**Magazyn świec.** Świece leżą w katalogu `chart-data/` obok `config.local.json` (format binarny, 24 bajty na świecę, osobna warstwa 1m i 1s oraz warstwy kontraktów). Katalog jest w `.gitignore`, aktualizacja go nie rusza, a kopia przy aktualizacji go nie obejmuje. Szacunek: jedna sesja 1m jednego symbolu to ok. 35 KB, okno 1s 9:30–11:00 ok. 130 KB, a pełna historia 1m ES i NQ od 2010 z oknami 1s NQ od 2020 to około 0,5 GB. Rozmiar widzisz w Ustawieniach → Wykresy. Świece usuwasz ręcznie z dysku; ponowne pobranie jest płatne.
+**Magazyn świec.** Świece leżą w katalogu `chart-data/` obok `config.local.json` (format binarny, 24 bajty na świecę, osobna warstwa 1m i 1s oraz warstwy kontraktów). Katalog jest w `.gitignore`, aktualizacja go nie rusza, a kopia przy aktualizacji go nie obejmuje. Szacunek: jedna sesja 1m jednego symbolu to ok. 35 KB, okno 1s 9:30–11:00 ok. 130 KB, a pełna historia 1m ES i NQ od 2010 z oknami 1s NQ od 2020 to około 0,5 GB. Rozmiar każdej warstwy i folder widzisz w Ustawieniach → Dane na dysku („Otwórz folder”). Tam usuwasz warstwę świec (po wpisaniu jej nazwy; ponowne pobranie jest płatne) i przenosisz cały katalog danych na inny dysk (kopia, sprawdzenie, przełączenie i restart; stary folder zostaje).
 
-**Ustawienia → Wykresy.** Zakładka ma grupy:
+**Ustawienia.** Koło zębate otwiera pełny widok z sekcjami po lewej (adres `#ustawienia/<sekcja>` prowadzi prosto do sekcji): Konto i Notion (połączenie, dziennik, pierwsze kroki, dane DEMO, urządzenia), Źródła danych (klucze Databento, FRED i Finnhub, limity i kredyt, okno 1s NQ, import historii), Dane na dysku (foldery i rozmiar), Wygląd (język, paleta, marginesy BE, nick), Wykresy, Backtest oraz Kopie i diagnostyka (stan połączeń z „Sprawdź”, serwer z „Uruchom ponownie” i „Zatrzymaj serwer”, log bez kluczy, aktualizacje, kopie baz, licencje). Sekcja Wykresy ma grupy:
 - „Wygląd wykresu”: świece albo linia zamknięć (osobno dla miniatur), kolory z palety albo własne dla każdego motywu z kontrolą kontrastu, siatka, które poziomy trade'a pokazać;
 - „Nakładki”: tło sesji Azja, Londyn i NY (godziny w czasie Nowego Jorku) z liniami high/low do sweepu oraz PDH/PDL;
 - „Karty udostępniania”: wykres ceny w kartach (włącz / wyłącz), styl, rysunek pozycji, krzywa kapitału na kartach okresu oraz wartości początkowe filmów (format, długość, czarno-białe, przyciemnienie tła);
 - „Czas i ceny”: strefa czasowa osi i B-ADJ;
-- „Dane Databento”: klucz, limity i kredyt do podglądu, rozmiar `chart-data/`, przełącznik codziennego okna 1s NQ;
-- „Licencje”: atrybucja TradingView, paczka rysowania, notka o danych CME i o filmach tła.
+- „Edytor rysunków”: ustawienia rysunku w okienku albo w panelu przypiętym.
 
 Wygląd, nakładki i karty synchronizują się przez Notion jak reszta ustawień. Klucz, limity, kredyt i przełącznik okna 1s zostają tylko na tym komputerze.
 
@@ -468,13 +474,13 @@ Od wersji 1.4.0 dziennik pokazuje newsy makro USD i wyniki spółek (earningsy) 
 - Karty „Dzisiaj” i „Wyniki spółek” w lewym panelu: tylko dzisiejszy dzień.
 - Zakładka „Kalendarz”: widok dnia, tygodnia i miesiąca, filtry wag, rodzajów zdarzeń i klas spółek oraz wyszukiwanie newsów i earningów w całej historii od 2010.
 
-Wagi, klasy i karty włączasz w Ustawieniach → Wykresy → „Newsy” i „Earningsy”. Godziny są w strefie wykresu.
+Wagi, klasy i karty włączasz w Ustawieniach → Źródła danych → „Newsy” i „Earningsy”. Godziny są w strefie wykresu.
 
 **Co jest w historii.** Dane makro (m.in. CPI, NFP, PPI, Retail Sales, GDP, PCE, ISM, JOLTS, Unemployment Claims, UoM), decyzje, konferencje i protokoły FOMC, przemówienia i zeznania przewodniczącego Fed, komunikaty Fed poza posiedzeniami, TIC, dni wolne (Bank Holiday) i dni OPEX (3. piątek miesiąca, w marcu, czerwcu, wrześniu i grudniu kwartalny). Wagi zależą od daty, bo ForexFactory zmieniał je przez lata. Historię sprawdziliśmy z kalendarzem ForexFactory na próbie 28 miesięcy z lat 2010–2026: Bank Holiday 21 z 21 dni, czerwone z rodzajów objętych historią 98,5% z godziną co do minuty, wszystkie czerwone (z przemówieniami) 85,7% ([szczegóły](docs/plany/newsy-zgodnosc.md)).
 
 **Czego historia nie ma.** Przemówień prezydenta, sekretarza skarbu i członków FOMC poza przewodniczącym (godziny przemówień przewodniczącego są niepewne) oraz publikacji bez stałego terminu: Existing i Pending Home Sales, wstępnych PMI S&P Global i raportu walutowego Skarbu. Te pojawiają się tylko z feedu bieżącego tygodnia, więc od dnia instalacji. Publikacje, które wyszły kilka minut przed czasem albo po czasie, mają w historii godzinę planową.
 
-**Earningsy w 4 klasach.** Klasa 1 (czerwona): NVDA, MSFT, AAPL, AMZN, GOOGL, META, TSLA, AVGO. Klasa 2 (pomarańczowa): duże banki i liderzy branż, np. JPM, GS, NFLX, LLY, WMT, V. Klasa 3 (żółta): reszta pierwszej pięćdziesiątki. Klasa 4 (szara): pozostałe spółki S&P 100. W Ustawieniach → Wykresy → „Earningsy” przeniesiesz spółkę do innej klasy albo dopiszesz własną.
+**Earningsy w 4 klasach.** Klasa 1 (czerwona): NVDA, MSFT, AAPL, AMZN, GOOGL, META, TSLA, AVGO. Klasa 2 (pomarańczowa): duże banki i liderzy branż, np. JPM, GS, NFLX, LLY, WMT, V. Klasa 3 (żółta): reszta pierwszej pięćdziesiątki. Klasa 4 (szara): pozostałe spółki S&P 100. W Ustawieniach → Źródła danych → „Earningsy” przeniesiesz spółkę do innej klasy albo dopiszesz własną.
 
 **Źródła.**
 - **FRED** (Federal Reserve Bank of St. Louis): daty publikacji danych z lat 2010–2026 są w plikach wydania. Własny klucz jest opcjonalny i raz dziennie odświeża przyszłe terminy.
@@ -486,7 +492,7 @@ Wagi, klasy i karty włączasz w Ustawieniach → Wykresy → „Newsy” i „E
 **Klucze FRED i Finnhub (opcjonalne).**
 1. FRED: załóż darmowe konto na [fred.stlouisfed.org](https://fred.stlouisfed.org), w „My Account” otwórz „API Keys” i wygeneruj klucz (32 znaki).
 2. Finnhub: załóż darmowe konto na [finnhub.io](https://finnhub.io) i skopiuj klucz API z panelu.
-3. W dashboardzie: Ustawienia → Wykresy → „Newsy” → pole „Klucz FRED” → wklej → „Zapisz”; tak samo „Klucz Finnhub” w grupie „Earningsy”. Odświeżenie rusza w tle, a jego stan widać w tej samej grupie.
+3. W dashboardzie: Ustawienia → Źródła danych → „Newsy” → pole „Klucz FRED” → wklej → „Zapisz”; tak samo „Klucz Finnhub” w grupie „Earningsy”. Odświeżenie rusza w tle, a jego stan widać w tej samej grupie.
 
 Klucze zapisują się wyłącznie w `.env` na tym komputerze (`FRED_API_KEY`, `FINNHUB_API_KEY`). Nie trafiają do przeglądarki, logów, Notion ani synchronizacji ustawień, więc na każdym komputerze wpisujesz je osobno.
 
@@ -507,7 +513,7 @@ Okno „Udostępnij” ma duży podgląd i grupy: Plik (obraz albo film, format)
 
 ## Licencje i dane rynkowe
 
-**TradingView Lightweight Charts™.** Edytor wykresu używa biblioteki TradingView Lightweight Charts™ 5.2.1 (licencja Apache-2.0). Atrybucja: „TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.”, https://www.tradingview.com/. Licencja i plik NOTICE leżą w `public/vendor/lightweight-charts/`, a atrybucja z linkiem jest pod wykresem i w Ustawieniach → Wykresy → „Licencje”. Narzędzia rysowania: `lightweight-charts-drawing` 0.6.2 (MIT, `public/vendor/lightweight-charts-drawing/LICENSE`). Biblioteki są wklejone bez zmian, z sumami w `public/vendor/VENDOR.md`.
+**TradingView Lightweight Charts™.** Edytor wykresu używa biblioteki TradingView Lightweight Charts™ 5.2.1 (licencja Apache-2.0). Atrybucja: „TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.”, https://www.tradingview.com/. Licencja i plik NOTICE leżą w `public/vendor/lightweight-charts/`, a atrybucja z linkiem jest pod wykresem i w Ustawieniach → Kopie i diagnostyka → „Licencje”. Narzędzia rysowania: `lightweight-charts-drawing` 0.6.2 (MIT, `public/vendor/lightweight-charts-drawing/LICENSE`). Biblioteki są wklejone bez zmian, z sumami w `public/vendor/VENDOR.md`.
 
 **Dane CME przez Databento.** Świece to dane rynkowe CME Group pobrane Twoim kluczem z Databento, na warunkach Twojego konta Databento i licencji CME, które Databento przenosi na użytkowników. To nie jest porada prawna, tylko streszczenie przeczytanych źródeł:
 - Databento pisze, że prawa do redystrybucji zależą od zbioru danych i że przenosi ograniczenia licencyjne wydawcy, czyli tu CME ([cennik Databento](https://databento.com/pricing)).
@@ -547,7 +553,7 @@ Co z tego wynika dla Ciebie:
 
 **Dlaczego nie ma przycisku „Połącz z Notion” bez kopiowania tokenu?** Logowanie przez OAuth Notion wymaga tajnego klucza aplikacji (client secret). Takiego klucza nie da się bezpiecznie trzymać w publicznym repozytorium ani w aplikacji instalowanej lokalnie: każdy mógłby go odczytać. Bezpiecznie dałoby się to zrobić tylko przez osobny serwer pośredniczący, więc na razie zostaje token integracji wewnętrznej. To możliwość na przyszłość.
 
-**Jak zmienić token?** Ustawienia → Ogólne → „Zmień token”. Kreator sprawdzi nowy token, zanim go zapisze.
+**Jak zmienić token?** Ustawienia → Konto i Notion → „Zmień token”. Kreator sprawdzi nowy token, zanim go zapisze.
 
 **Port 4321 jest zajęty.** Ustaw inny: `PORT=4400 node server.mjs` (Windows: `set PORT=4400` w `Dashboard.cmd`).
 

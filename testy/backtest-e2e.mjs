@@ -17,7 +17,7 @@ const ROOT = H.ROOT;
 const DATA = path.resolve(process.env.TEST_CONFIG_DIR || 'R:/PROJEKTY/trading-hq-wt/backtest-dane');
 const WYNIKI = path.resolve(process.env.WYNIKI || 'R:/PROJEKTY/trading-hq-wt/backtest-wyniki');
 const PORT = Number(process.env.TEST_PORT || 4331), MOCK = Number(process.env.ATRAPA_PORT || 4399);
-const ONLY = (process.env.ONLY || 'indeks,wydajnosc,scenariusz').split(',');
+const ONLY = (process.env.ONLY || 'indeks,wydajnosc,scenariusz,L').split(',');
 const die = (m) => { console.error(m); process.exit(2); };
 const inside = (p, d) => path.resolve(p).toLowerCase().startsWith(path.resolve(d).toLowerCase() + path.sep) || path.resolve(p).toLowerCase() === path.resolve(d).toLowerCase();
 if (PORT === 4321 || MOCK === 4321) die('Port 4321 to prawdziwy dashboard: odbiór działa tylko na instancji testowej.');
@@ -99,14 +99,29 @@ try {
     tagged(res, 'odtwarzanie', 'backtest-H1: odtwarzanie 100× przez 90 min');
     tagged(res, 'podpisy', 'backtest-J: odtwarzanie 100× na 1s z trzema pozycjami „Zawsze pokazuj”');
     tagged(res, 'skok', 'backtest-H1: skok do następnego dnia ≤ 1,5 s');
+    tagged(res, 'weekend', 'backtest-K: odtwarzanie przez granicę dni i weekend (300×), klatki ≤ 100 ms');
+    tagged(res, 'historia', 'backtest-K: pełna historia do początku danych, doładowanie nie blokuje UI');
+    tagged(res, 'konto', 'backtest-L: odtwarzanie 100× na 1s z otwartą pozycją, etykietą P&L i szufladą');
+  }
+
+  // L (31.10.2026): handel i journaling jak w FX Replay na prawdziwych świecach (ta sama strona co testy/backtest-L-strona.mjs na danych syntetycznych)
+  if (ONLY.includes('L')) {
+    // prawdziwy CPI: start 10:30 NY (po fali danych), SL 40 pkt i ryzyko 5%, żeby pozycja dożyła sprawdzeń (o 9:31 rynek schodzi 80 pkt w 5 min)
+    const res = await page('backtest-L.html?sl=40&risk=5&at=10:30', { shot: path.join(WYNIKI, 'L-e2e.png') });
+    for (const [tag, name] of [
+      ['podglad', 'backtest-L: podgląd zlecenia (ryzyko $ i %, cel, R:R)'], ['pl', 'backtest-L: otwarty P&L na linii pozycji, equity = saldo + otwarty'],
+      ['szuflada', 'backtest-L: szuflada pozycji na żywo'], ['procent', 'backtest-L: zamknięcie 50% z linii, prowizja'], ['szybki', 'backtest-L: szybki panel odchudzony'],
+      ['ryzyko', 'backtest-L: ryzyko % od bieżącego salda'], ['jednostki', 'backtest-L: SL/TP w punktach, tickach, cenie'], ['zlecenie', 'backtest-L: przeciąganie zlecenia oczekującego'],
+      ['journal', 'backtest-L: Journal bez świec po zamknięciu, rysunki tylko w migawce'],
+    ]) tagged(res, tag, name);
   }
 
   if (ONLY.includes('scenariusz')) {
     const res = await page('backtest-odbior.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, 'H1-scenariusz.png') });
     report.scenario = res.info || {};
     for (const [tag, name] of [
-      ['kreator', 'backtest-H1: sesja CPI 2024'], ['dni', 'backtest-H1: trzy dni'], ['trade', "backtest-H1: trade'y"], ['rysunki', 'backtest-H1: rysunki z calloutem'],
-      ['journal', 'backtest-H1: journaling'], ['notion', 'backtest-H1: Zakończ dzień → atrapa Notion'], ['staty', 'backtest-H1: statystyki'],
+      ['kreator', 'backtest-H1: sesja CPI 2024'], ['dni', 'backtest-K: trzy dni skokiem „Następny dzień z filtra”'], ['trade', "backtest-H1: trade'y"], ['rysunki', 'backtest-H1: rysunki z calloutem'],
+      ['journal', 'backtest-H1: journaling'], ['notion', 'backtest-K: trade od razu → atrapa Notion'], ['staty', 'backtest-H1: statystyki'],
       ['tf', 'backtest-H1: TF sekundowe współgrają'], ['przyszlosc', 'backtest-H1: brak przyszłości end-to-end'],
     ]) tagged(res, tag, name);
     // atrapa Notion: strony Backtest z polami, znacznik sesji, MAE/MFE, rysunki; bez dubli po drugim „Zapisz do Notion”

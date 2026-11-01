@@ -45,6 +45,8 @@ try {
   const { sanitizeBt, nyAt, DEFAULT_JUMPS } = await import('/js/bt-czas.js');
   const { normalizeTrades } = await import('/js/stats.js');
   const { MULT } = await import('/js/bt-wypelnienia.js');
+  const { nyDayOf } = await import('/js/bt-sesja.js');
+  const { matchDays } = await import('/js/bt-filtr.js');
   const client = createSessionClient();
   let model = await getJson('/api/data');
   let liveTrades = normalizeTrades(model.data.trades);
@@ -56,8 +58,10 @@ try {
   view.mount(host);
   let R = null, rd = null;
   const days = {};
-  const loadRd = async (d) => (days[d] ||= await getJson(`/api/backtest/day?instruments=NQ,ES&day=${d}&ctx=2`));
-  const day = () => { const d = R.doc(); return d.pool[d.dayIdx]; };
+  const loadRd = async (d) => (days[d] ||= await (await import('/__testy/bt-zgodnosc.js')).replayDay(d, ["NQ","ES"]));
+  // K (31.10.2026): ciągła oś czasu: „dzień” = dzień NY kursora (bez puli dni)
+  const day = () => nyDayOf(R.cursor());
+  const filterJump = async () => { const sel = scr().querySelector('.bt-jump'); sel.value = 'nextDay'; ev(sel, 'change'); scr().querySelector('[data-bt="jump"]').click(); };
   const scr = () => document.querySelector('.bt-screen');
   const goto = (t) => {
     const sec = Math.round(t - R.cursor());
@@ -158,11 +162,19 @@ try {
   async function journalSave(setup, notes) {
     const jr = await until(() => document.querySelector('.bt-jr'));
     if (!jr) return false;
-    const s = jr.querySelector('[name="setup"]'), n = jr.querySelector('[name="notes"]');
-    s.value = setup; ev(s, 'input'); n.value = notes; ev(n, 'input');
-    key(s, 'Enter');
+    const s = jr.querySelector('[name="setup"]');
+    s.value = setup; ev(s, 'input');
+    if (!notes) { key(s, 'Enter'); await sleep(50); return !document.querySelector('.bt-jr'); }
+    // L: [U] 31.10.2026 «Przyjmuję wszystkie» (J1): notatka w Journalu (klasyczne okno trade'a), setup przechodzi z szybkiego panelu
+    jr.querySelector('[data-jr="journal"]').click();
+    const n = await until(() => document.querySelector('.bt-jw [name="notes"]'));
+    if (!n) return false;
     await sleep(50);
-    return !document.querySelector('.bt-jr');
+    n.value = notes; ev(n, 'input');
+    document.querySelector('.bt-jw [data-jw="save"]').click();
+    document.querySelector('.bt-jw [data-jw="close"]').click();
+    await until(() => !document.querySelector('.bt-jw'));
+    return !document.querySelector('.bt-jr') && !document.querySelector('.bt-jw');
   }
   function handTrade(t, { entry, qty, sl0, exits, inst = 'NQ' }) {
     const s = t.dir === 'Long' ? 1 : -1;
@@ -180,7 +192,7 @@ try {
     host.querySelector('[data-bt="new"]').click();
     const form = await until(() => host.querySelector('form.bt-form'));
     const setv = (n, v) => { const i = form.querySelector(`[name="${n}"]`); i.value = v; ev(i, 'input'); ev(i, 'change'); };
-    setv('name', 'CPI 2024'); setv('from', '2024-01-01'); setv('to', '2024-12-31'); setv('startTime', '08:00');
+    setv('name', 'CPI 2024'); setv('from', '2024-01-01'); setv('startTime', '08:00');
     const esBox = form.querySelector('[name="inst"][value="ES"]'); esBox.checked = true; ev(esBox, 'change');
     rec('kreator', [...form.querySelectorAll('[name="inst"]')].filter((x) => x.checked).map((x) => x.value).join() === 'NQ,ES', 'instrumenty: NQ i ES (H2: trade ES obok NQ)');
     const adv = form.querySelector('details.bt-adv');
@@ -199,22 +211,29 @@ try {
     await R.ready;
     window.__btCharts = R.charts();
     const doc = R.doc();
-    info.sessionId = doc.id; info.pool = doc.pool;
-    rec('kreator', doc.name === 'CPI 2024' && doc.def.instruments.join() === 'NQ,ES' && doc.def.order === 'chrono' && doc.def.filter?.items?.[0]?.k === 'event', `sesja: ${doc.name}, ${doc.def.instruments}, ${doc.def.order}, filtr ${JSON.stringify(doc.def.filter)}`);
-    rec('kreator', JSON.stringify(doc.pool) === JSON.stringify(CPI_2024), `pula = dni CPI 2024 z 1s (${doc.pool.length}): ${doc.pool.join(', ')}`);
-    // każdy dzień puli: prawdziwe 1s 9:30–11:00 i CPI w newsach dnia (trasa dnia, niezależnie od indeksu)
-    for (const d of doc.pool) {
+    // K: sesja v2: data startu, bez puli i daty końca; dni filtra = cele skoku „Następny dzień z filtra”
+    const idx = await client.days({ instruments: ['NQ', 'ES'], from: '2024-01-01', to: '2024-12-31', start: '08:00' });
+    const fd = matchDays(doc.def, idx.days).days.filter((x) => x <= '2024-12-31');
+    info.sessionId = doc.id; info.pool = fd;
+    rec('kreator', doc.v === 2 && doc.name === 'CPI 2024' && doc.def.instruments.join() === 'NQ,ES' && doc.def.from === '2024-01-01' && !('pool' in doc) && doc.def.filter?.items?.[0]?.k === 'event', `sesja: ${doc.name}, ${doc.def.instruments}, start ${doc.def.from}, filtr ${JSON.stringify(doc.def.filter)}`);
+    rec('kreator', JSON.stringify(fd) === JSON.stringify(CPI_2024), `dni skoku „Następny dzień z filtra” = dni CPI 2024 z 1s (${fd.length}): ${fd.join(', ')}`);
+    rec('kreator', R.cursor() === nyAt('2024-01-01', '08:00') || R.cursor() > nyAt('2024-01-01', '08:00'), `kursor od daty startu: ${hms(R.cursor())}`);
+    // każdy dzień filtra: prawdziwe 1s 9:30–11:00 i CPI w newsach dnia (API zakresu, niezależnie od indeksu)
+    for (const d of fd) {
       const x = await loadRd(d);
       const cpi = (x.news || []).some((e) => /CPI|Consumer Price/i.test(e.name || '') && e.day === d);
       if (!x.inst.NQ.has1s || !cpi) rec('kreator', false, `${d}: has1s ${x.inst.NQ.has1s}, CPI w newsach ${cpi}`);
     }
-    rec('kreator', true, 'każdy dzień puli ma pełne 1s 9:30–11:00 i CPI w newsach dnia (trasa /api/backtest/day)');
+    rec('kreator', true, 'każdy dzień filtra ma pełne 1s 9:30–11:00 i CPI w newsach dnia (API zakresu)');
   });
 
   // ======== 2–5. dzień 1: krok, odtwarzanie, skok do newsa i do 9:30, rysunki, trade Long z TP ========
   await section('dni', async () => {
+    // K: od daty startu (1.01, święto) skokiem „Następny dzień z filtra” do pierwszego CPI o godzinie startu
+    await filterJump();
+    await until(() => day() === '2024-01-11' && R.charts().length > 0, 15000);
     const d = day(); rd = await loadRd(d);
-    rec('dni', d === '2024-01-11' && R.cursor() === nyAt(d, '08:00'), `dzień 1 ${d}, start ${hms(R.cursor())} UTC (8:00 NY)`);
+    rec('dni', d === '2024-01-11' && R.cursor() === nyAt(d, '08:00'), `dzień 1 ${d} skokiem z filtra, start ${hms(R.cursor())} UTC (8:00 NY)`);
     // układ 2h: NQ 15s (aktywny) + NQ 1m
     R.setLayout('2h'); R.setCell(1, { instrument: 'NQ' }); R.setCell(1, { tf: '1m' }); R.setCell(0, { tf: '15s' }); R.activate(0);
     window.__btCharts = R.charts();
@@ -260,8 +279,8 @@ try {
     rec('rysunki', kinds(cs[1]) === 'callout,trend-line', `NQ 1m (ten sam instrument): ${kinds(cs[1])}`);
     const co = cs[1].manager().drawings().find((x) => x.kind === 'callout');
     rec('rysunki', co && co.points.length === 2 && (co.text === 'CPI' || co.style?.text === 'CPI'), `callout na 1m z tekstem „${co?.text ?? co?.style?.text}”`);
-    const disk = await until(async () => { const s = await getJson(`/api/backtest/session/${R.doc().id}`); const dd = s.drawings?.NQ?.[day()]; return dd && dd.d?.length === 2 ? dd : null; }, 4000);
-    rec('rysunki', !!disk, `rysunki w pliku sesji (NQ/${day()}): ${disk?.d?.map((x) => x.kind).join(',')}`);
+    const disk = await until(async () => { const s = await getJson(`/api/backtest/session/${R.doc().id}`); const dd = s.drawings?.NQ; return dd && dd.d?.length === 2 ? dd : null; }, 4000);
+    rec('rysunki', !!disk, `rysunki w pliku sesji (K: NQ, cała oś): ${disk?.d?.map((x) => x.kind).join(',')}`);
     await noFuture('po rysunkach');
   });
 
@@ -292,17 +311,15 @@ try {
     rec('journal', ok && j1.journal === 'done' && j1.setup === setup1 && /CPI/.test(j1.notes), `Enter zapisuje: setup „${j1.setup}”, notatka „${j1.notes}”, journal ${j1.journal}`);
   });
 
-  // ---- koniec dnia 1: Zakończ dzień → wysyłka do Notion, potem „Następny dzień” ----
+  // ---- K: trade od razu w Notion ([U] 31.10.2026 «od razu»), opis aktualizuje tę samą stronę; dzień 2 skokiem „Następny dzień z filtra” ----
   await section('notion', async () => {
-    scr().querySelector('[data-bt="end-day"]').click();
-    await until(() => R.doc().days[day()]?.status === 'done');
-    const n0 = await until(() => /: 0$/.test(notionLabel()) && R.doc().trades.every((x) => x.notion?.state === 'sent'), 15000);
-    rec('notion', !!n0, `dzień 1 zakończony, licznik: „${notionLabel()}”, stan: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state).join(', ')}`);
-    rec('notion', /2024/.test(scr().querySelector('.bt-date').textContent) || !scr().querySelector('.bt-date').hidden, 'data dnia widoczna po zakończeniu');
-    scr().querySelector('[data-bt="end-day"]').click(); // „Następny dzień”
-    await until(() => day() === '2024-02-13' && R.charts().length === 2 && R.charts()[0].bars().length > 0, 15000);
+    const n0 = await until(() => /^Notion: zapisane$/.test(notionLabel()) && R.doc().trades.every((x) => x.notion?.state === 'sent' && x.notion.edited === x.jEdited), 15000);
+    rec('notion', !!n0, `T1 wysłany zaraz po zamknięciu, opis dosłany: licznik „${notionLabel()}”, stan: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state).join(', ')}`);
+    rec('notion', /2024/.test(scr().querySelector('.bt-date').textContent) && !scr().querySelector('[data-bt="end-day"]'), 'data dnia zawsze widoczna, bez „Zakończ dzień”');
+    await filterJump();
+    await until(() => day() === '2024-02-13' && R.charts().length === 2 && R.charts()[0].liveBars().length > 0, 15000);
     rd = await loadRd(day());
-    rec('dni', day() === '2024-02-13', `dzień 2 przez „Następny dzień”: ${day()}, ${hms(R.cursor())} UTC`);
+    rec('dni', day() === '2024-02-13' && R.cursor() === nyAt('2024-02-13', '08:00'), `dzień 2 skokiem „Następny dzień z filtra”: ${day()}, ${hms(R.cursor())} UTC`);
     await noFuture('start dnia 2');
   });
 
@@ -342,15 +359,14 @@ try {
     await noFuture('po journalingu');
   });
 
-  // ---- przejście do dnia 3 skokiem „Następny dzień z filtra” (kończy dzień 2 i wysyła jego trade'y) ----
+  // ---- przejście do dnia 3 skokiem „Następny dzień z filtra” (trade'y dnia 2 już w Notion od zamknięcia) ----
   await section('dni', async () => {
-    const sel = scr().querySelector('.bt-jump'); sel.value = 'nextDay'; ev(sel, 'change');
-    scr().querySelector('[data-bt="jump"]').click();
-    await until(() => day() === '2024-03-12' && R.charts().length === 2 && R.charts()[0].bars().length > 0, 15000);
+    await filterJump();
+    await until(() => day() === '2024-03-12' && R.charts().length === 2 && R.charts()[0].liveBars().length > 0, 15000);
     rd = await loadRd(day());
-    rec('dni', day() === '2024-03-12' && R.doc().days['2024-02-13']?.status === 'done', `dzień 3 przez skok „Następny dzień z filtra”: ${day()}, dzień 2 zakończony`);
+    rec('dni', day() === '2024-03-12' && R.cursor() === nyAt('2024-03-12', '08:00'), `dzień 3 przez skok „Następny dzień z filtra”: ${day()}`);
     const sent = await until(() => R.doc().trades.every((x) => x.notion?.state === 'sent'), 15000);
-    rec('notion', !!sent, `po zakończeniu dnia 2 skokiem: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state).join(', ')}`);
+    rec('notion', !!sent, `trade'y dnia 2 w Notion bez kończenia dnia: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state).join(', ')}`);
     await noFuture('start dnia 3');
   });
 
@@ -387,7 +403,7 @@ try {
     rec('tf', last('1s')[0] === lr && last('5s')[0] === fl(lr, 5) && last('15s')[0] === fl(lr, 15) && last('1m')[0] === fl(lr, 60) && lr <= c - 1, `świece w budowie: 1s ${hms(last('1s')[0])}, 5s ${hms(last('5s')[0])}, 15s ${hms(last('15s')[0])}, 1m ${hms(last('1m')[0])}`);
     // 5m: przełączenie 4. wykresu i porównanie z 1m
     R.setCell(3, { tf: '5m' });
-    const m5 = R.charts()[3].bars(), m1 = by['1m'];
+    const m5 = R.charts()[3].liveBars(), m1 = by['1m'];
     const bad5 = win(m5, from).filter((b) => !sameOhlc(b, aggOf(win(m1, from).filter((x) => Math.floor(x[0] / 300) * 300 === b[0])))).map((b) => hms(b[0]));
     rec('tf', !bad5.length, `5m = agregat 1m od 9:30 (${win(m5, from).length} świec${bad5.length ? ', różnice: ' + bad5.join(' ') : ''}); 5m w budowie ${hms(m5[m5.length - 1][0])}`);
     // 9:29 → 9:30 na 15s: 9:29 to jedna świeca z 1m (sekund przed 9:30 nie ma), potem 9:30:00, 9:30:15 … bez dziury
@@ -466,19 +482,17 @@ try {
     R.activate(0);
   });
 
-  // ---- Zakończ dzień 3 → Notion, drugi „Zapisz do Notion” bez dubli, licznik 0, ekran „Sesja ukończona” ----
+  // ---- dzień 3: trade'y od razu w Notion, drugi „Zapisz do Notion” bez dubli, licznik 0 ----
   await section('notion', async () => {
-    scr().querySelector('[data-bt="end-day"]').click();
-    await until(() => R.doc().days[day()]?.status === 'done');
-    const ok = await until(() => R.doc().trades.every((x) => x.notion?.state === 'sent') && /: 0$/.test(notionLabel()), 20000);
+    const ok = await until(() => R.doc().trades.every((x) => x.notion?.state === 'sent') && /^Notion: zapisane$/.test(notionLabel()), 20000);
     rec('notion', !!ok, `dzień 3: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state + ' ' + (x.notion?.id || '').slice(0, 8)).join(', ')}; licznik „${notionLabel()}”`);
     const ids = R.doc().trades.map((x) => x.notion.id);
     const again = await R.sendNotion({ all: true });
     rec('notion', again && again.sent === 0 && !(again.failed || []).length && JSON.stringify(R.doc().trades.map((x) => x.notion.id)) === JSON.stringify(ids), `drugi „Zapisz do Notion”: wysłano ${again?.sent}, pominięto ${again?.skipped}, błędów ${(again?.failed || []).length}, id stron bez zmian`);
-    rec('notion', /: 0$/.test(notionLabel()) && scr().querySelector('[data-bt="notion"]').disabled, `licznik po drugim zapisie: „${notionLabel()}”, przycisk wyłączony`);
+    rec('notion', /^Notion: zapisane$/.test(notionLabel()) && scr().querySelector('[data-bt="notion"]').disabled, `licznik po drugim zapisie: „${notionLabel()}”, przycisk wyłączony`);
     info.sentIds = R.doc().trades.map((x) => x.id);
     info.notionIds = ids;
-    // dzień 3 to nie ostatni dzień puli (12 dni): ekran „Sesja ukończona” dopiero po ostatnim, więc statystyki z listy sesji
+    // K: bez ekranu „Sesja ukończona”: statystyki z listy sesji
   });
 
   // ======== 7. statystyki: nagłówek, „Gdzie mam przewagę” (wszystkie wiersze „za mało danych”), wykonanie, porównanie z Live ========
@@ -489,10 +503,10 @@ try {
     info.notionBacktest = liveTrades.filter((x) => x.typ === 'Backtest').length;
     scr().querySelector('[data-bt="close"]').click();
     await until(() => !scr());
-    // lista odświeża się po zamknięciu replayu: czekamy na nowy wiersz, nie na ten sprzed otwarcia sesji (0 / 12)
-    const row = await until(() => { const r = host.querySelector(`tr[data-id="${info.sessionId}"]`); return r && /3 \/ 12/.test(r.textContent) ? r : null; }, 10000) || host.querySelector(`tr[data-id="${info.sessionId}"]`);
+    // lista odświeża się po zamknięciu replayu: K: kolumna „Start → teraz” (data startu i dzień kursora)
     const sumTxt = r2(R.doc().trades.reduce((a, x) => a + x.r, 0)).toFixed(2).replace('.', ',');
-    rec('staty', row && /3 \/ 12/.test(row.textContent) && row.textContent.includes(sumTxt), `lista sesji: ${row.textContent.replace(/\s+/g, ' ').trim()}`);
+    const row = await until(() => { const r = host.querySelector(`tr[data-id="${info.sessionId}"]`); return r && r.textContent.includes(sumTxt) ? r : null; }, 10000) || host.querySelector(`tr[data-id="${info.sessionId}"]`);
+    rec('staty', row && /→/.test(row.textContent) && (row.textContent.match(/2024/g) || []).length >= 2 && row.textContent.includes(sumTxt), `lista sesji: ${row.textContent.replace(/\s+/g, ' ').trim()}`);
     row.querySelector('[data-bt="stats"]').click();
     const st = await until(() => host.querySelector('.bt-st-tiles') && host, 15000);
     await sleep(500);

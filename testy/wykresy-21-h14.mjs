@@ -177,7 +177,7 @@ export default ({ test, H, assert, ROOT }) => {
     const keep = S.sanitizeSettings({ palette: 'mono', custom: { onyx: { profit: '#111111' } }, customSeeded: true, beR: 0.2, beUsd: 5, share: { nick: 'x' }, chartTz: 'UTC', chartBadj: false, theme: 'onyx', lang: 'pl', updateCheck: true, chart: { style: 'line', overlays: { sess: { asia: { from: '20:00' } } } } });
     for (const k of ['palette', 'custom', 'customSeeded', 'beR', 'beUsd', 'share', 'chartTz', 'chartBadj', 'theme', 'lang', 'updateCheck', 'chart']) assert.ok(k in keep, `sanitizeSettings zgubił „${k}”`);
     assert.equal(keep.chart.overlays.sess.asia.from, '20:00', 'zagnieżdżone klucze chart przechodzą');
-    const gone = S.sanitizeSettings({ chart: { databentoKey: 'a', DATABENTO_API_KEY: 'b', apiKey: 'c', key: 'd' }, databentoKey: 'e', chartCostLimitUsd: 1, chartDailyLimitUsd: 2, chartCredit: { startUsd: 125 }, chartSpend: { usd: 1 }, token: 't', pin: '1' });
+    const gone = S.sanitizeSettings({ chart: { databentoKey: 'a', DATABENTO_API_KEY: 'b', apiKey: 'c', key: 'd' }, databentoKey: 'e', chartCostLimitUsd: 1, chartDailyLimitUsd: 2, chartCredit: { startUsd: 100 }, chartSpend: { usd: 1 }, token: 't', pin: '1' });
     assert.deepEqual(gone, { chart: {} }, 'klucze sekretne, limity kosztu i kredyt odpadają na każdej głębokości');
   });
 
@@ -192,7 +192,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal((await H.dash(S.base, '/api/candles/limit', { maxCostUsd: 0.37, dailyLimitUsd: 2.5 })).j.ok, true);
       const chart = { style: 'line', colorMode: 'custom', grid: false, overlays: { sessions: true, pdhl: true } };
       const t1 = new Date(Date.now() - 60_000).toISOString();
-      const p1 = await H.dash(S.base, '/api/sync', { settings: { palette: 'mono', beR: 0.2, share: { nick: 'abc' }, chartTz: 'UTC', chartBadj: false, chart, databentoKey: DBKEY, chartCostLimitUsd: 0.37, chartDailyLimitUsd: 2.5, chartCredit: { startUsd: 125 } }, updatedAt: t1 });
+      const p1 = await H.dash(S.base, '/api/sync', { settings: { palette: 'mono', beR: 0.2, share: { nick: 'abc' }, chartTz: 'UTC', chartBadj: false, chart, databentoKey: DBKEY, chartCostLimitUsd: 0.37, chartDailyLimitUsd: 2.5, chartCredit: { startUsd: 100 } }, updatedAt: t1 });
       assert.equal(p1.j.written, true, JSON.stringify(p1.j));
       const block = JSON.stringify(await A.get('/__test/loose'));
       assert.ok(block.includes('\\"chart\\"') && block.includes('\\"style\\": \\"line\\"'), 'blok ustawień ma chart');
@@ -221,17 +221,28 @@ export default ({ test, H, assert, ROOT }) => {
   });
 
   test('wykresy-14: zakładka Wykresy: strefa i B-ADJ przeniesione z „Ogólne” (P41), bez „Usuń pobrane świece” (P39), limity bez pól edycji (P40), klucz tylko w .env', async () => {
-    const u = src('public/js/ustawienia.js');
+    // N2 (1.6.0): pełny widok Ustawień, sekcje w modułach ust-*.js: Ogólne → Wygląd (ust-wyglad.js), dane Databento → Źródła danych (ust-zrodla.js)
+    const files = ['ustawienia.js', 'ust-wspolne.js', 'ust-konto.js', 'ust-zrodla.js', 'ust-dysk.js', 'ust-wyglad.js', 'ust-wykresy.js', 'ust-backtest.js', 'ust-diag.js'];
+    const u = files.map((f) => src(`public/js/${f}`)).join('\n');
     const fn = (name) => { const i = u.indexOf(`function ${name}()`); assert.ok(i > 0, name); return u.slice(i, u.indexOf('\n  }\n', i)); };
-    const ogolne = fn('ogolneHtml'), wykresy = fn('wykresyHtml'), czas = fn('czas'), dane = fn('daneDatabento');
-    assert.ok(!/tzHtml\(\)|badjHtml\(\)/.test(ogolne), 'Ogólne bez strefy i B-ADJ');
+    const ogolne = src('public/js/ust-wyglad.js'), wykresy = fn('wykresyHtml'), czas = fn('czas');
+    assert.ok(!/tzHtml\(\)|badjHtml\(\)/.test(ogolne), 'Wygląd (dawne Ogólne) bez strefy i B-ADJ');
     assert.ok(/tzHtml\(\)/.test(czas) && /badjHtml\(\)/.test(czas), 'Wykresy: strefa i B-ADJ');
     assert.match(wykresy, /czas\(\)/);
-    assert.match(u, /tabBtn\('wykresy', 'Wykresy'\)/);
-    assert.ok(!/Usuń pobrane|chart-data-clear|data-act="ch-clear"|candles\/(delete|clear|purge)/i.test(u), 'P39: bez przycisku usuwania świec');
-    assert.ok(!/<input[^>]*(chartCostLimit|chartDailyLimit|maxCostUsd|dailyLimitUsd|creditStart)/i.test(dane), 'P40: limity bez pól edycji');
-    assert.ok(!/candles\/limit/.test(u + src('public/js/app.js')), 'UI nie wywołuje /api/candles/limit');
-    assert.match(dane, /type="password" autocomplete="off"/); assert.match(src('public/js/app.js'), /'\/api\/candles\/key'/);
+    assert.match(u, /\{ id: 'wykresy', label: 'Wykresy'/);
+    // N3 (1.6.0) zastępuje P39: [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 7: usuwanie świec z UI tak, kopii baz nie). Usuwanie tylko w Danych na dysku,
+    // tylko przez /api/disk/candles/delete z wpisaną nazwą warstwy; Wykresy i pozostałe sekcje bez usuwania świec.
+    const others = files.filter((f) => f !== 'ust-dysk.js').map((f) => src(`public/js/${f}`)).join('\n');
+    assert.ok(!/Usuń pobrane|chart-data-clear|data-act="ch-clear"|candles\/(delete|clear|purge)/i.test(others), 'poza Danymi na dysku bez usuwania świec');
+    assert.match(src('public/js/ust-dysk.js'), /postJson\('\/api\/disk\/candles\/delete', \{ symbol, layer, confirm: typed \}\)/);
+    assert.ok(!/backups?\/(delete|remove)|dysk-kopie-del/.test(src('public/js/ust-dysk.js')), 'kopii baz nie usuwamy');
+    // N4 (1.6.0) zastępuje P40: [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 2: limity i kredyt z UI z potwierdzeniem, bez podnoszenia sufitów).
+    // Limity i kredyt zmienia tylko sekcja Źródła danych przez /api/candles/limit (kredyt z confirm: true); klucz przez /api/sources/key (zapis do .env po teście)
+    const zr = src('public/js/ust-zrodla.js');
+    const notZr = files.filter((f) => f !== 'ust-zrodla.js').map((f) => src(`public/js/${f}`)).join('\n');
+    assert.ok(!/candles\/limit/.test(notZr + src('public/js/app.js')), 'poza Źródłami danych UI nie zmienia limitów');
+    assert.match(zr, /postJson\('\/api\/candles\/limit', \{ creditStartUsd: cv\.startN, creditSpentUsd: cv\.spentN, creditExpires: cv\.expires, confirm: true \}\)/);
+    assert.match(zr, /type="password" autocomplete="off"/); assert.match(zr, /postJson\('\/api\/sources\/key', \{ source: s, key \}\)/);
     // przegląd HIJ, pkt 4: asercja negatywna z dowodem na zepsutym przykładzie (zachowanie w przeglądarce sprawdza E2E H: klucz nie ląduje w localStorage)
     const LS_DB = /localStorage[^\n]*(databento|DATABENTO)/i;
     for (const bad of ["localStorage.setItem('thq.databento', key);", 'try { localStorage.setItem(DATABENTO_KEY, v); } catch {}']) assert.ok(LS_DB.test(bad), `LS_DB nie łapie: ${bad}`);
@@ -245,7 +256,8 @@ export default ({ test, H, assert, ROOT }) => {
 
   test('wykresy-14: i18n: każdy tekst z L(\'…\') w ustawienia.js ma tłumaczenie EN; kontrolki filmów od pakietu J', () => {
     const en = JSON.parse(src('public/i18n/en.json'));
-    const u = src('public/js/ustawienia.js');
+    // N2 (1.6.0): Ustawienia w modułach sekcji (ust-*.js)
+    const u = ['ustawienia.js', 'ust-wspolne.js', 'ust-konto.js', 'ust-zrodla.js', 'ust-dysk.js', 'ust-wyglad.js', 'ust-wykresy.js', 'ust-backtest.js', 'ust-diag.js'].map((f) => src(`public/js/${f}`)).join('\n');
     const missing = [];
     for (const m of u.matchAll(/\bL\(\s*(['"])((?:\\.|(?!\1)[^\\])*)\1/g)) { const k = m[2].replace(/\\(['"\\])/g, '$1'); if (!(k in en)) missing.push(k); }
     for (const m of u.matchAll(/\b(?:chk|gHead|kv)\(\s*(?:'[^']*',\s*)?(?:[a-zA-Z.]+,\s*)?'([^']+)'/g)) if (!(m[1] in en) && !/^(grid|entry|ch-g|sess|sessions|pdhl)/.test(m[1])) missing.push(m[1]);
@@ -262,7 +274,9 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal((s.match(/\brgba?\(/g) || []).length, 0, `${f}: rgb(`);
     }
     const c = src('lib/candles.mjs');
-    assert.ok(!/Ustawieniach → Wykresy/.test(c), 'limity i kredyt zmienia się w config.local.json, nie w UI');
-    assert.match(c, /config\.local\.json \(chartDailyLimitUsd\)/); assert.match(c, /config\.local\.json \(chartCredit\)/);
+    // N4 (1.6.0): limity i kredyt zmienia się w Ustawieniach → Źródła danych (decyzja 2), komunikaty nie odsyłają już do edycji config.local.json
+    assert.ok(!/Ustawieniach → Wykresy/.test(c), 'nie w Wykresach');
+    assert.ok(!/config\.local\.json \(chart/.test(c), 'bez odsyłania do ręcznej edycji pliku');
+    assert.match(c, /zmień limit w Ustawieniach → Źródła danych/); assert.match(c, /popraw go w Ustawieniach → Źródła danych/);
   });
 };

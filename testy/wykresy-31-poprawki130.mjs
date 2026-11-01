@@ -120,7 +120,9 @@ export default ({ test, H, assert, ROOT }) => {
     try {
       const { createCandles } = await lib('lib/candles.mjs');
       const dir = H.tmp(), st = { clock: Date.UTC(2024, 2, 14, 12) };
-      const C = createCandles({ getKey: () => KEY, getConfig: () => ({}), baseDir: dir, now: () => st.clock });
+      // N4 (1.6.0): instalacja z wpisanym kredytem Databento (bez kredytu płatne pobieranie czeka, decyzja 3)
+      const cfg = { chartCredit: { ...H.TEST_CREDIT } };
+      const C = createCandles({ getKey: () => KEY, getConfig: () => cfg, baseDir: dir, now: () => st.clock });
       const from = at('2024-03-11T00:00:00Z'), to = at('2024-03-13T00:00:00Z');
       const dry = await C.importOpen({ instrument: 'NQ', from, to, dryRun: true });
       const r = await C.importOpen({ instrument: 'NQ', from, to, confirmedCostUsd: dry.totalUsd, budgetUsd: 36 });

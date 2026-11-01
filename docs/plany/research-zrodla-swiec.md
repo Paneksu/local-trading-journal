@@ -23,7 +23,7 @@ Potrzeba: świece wokół każdego trade'a (najlepiej 1 s, żeby budować 15 s /
 | Parser `parseOhlcvCsv` z `lib/databento.mjs` na prawdziwych plikach | oba pliki bez błędu: 1s → 5 392 świece, 1m → 90, `rolls: 0`, `dropped: 0`; pierwsza świeca `[1792503000, 772700, 772700, 772425, 772450, 1225]` = 13:30:00Z, ES 7727.00 | PRZETESTOWANE |
 | 1m zbudowane z 1s vs 1m z serwera | **90/90 identycznych** (OHLC i wolumen) | PRZETESTOWANE |
 
-**Wydano z kredytu Databento: 0,0200 USD** (0,019685 + 0,000329; wyceny `get_cost` bezpłatne). Limit zgody 0,10 USD nieprzekroczony.
+Koszt próby mieścił się w limicie zgody 0,10 USD (wyceny `get_cost` bezpłatne).
 
 Prawdziwy nagłówek CSV: `ts_event,rtype,publisher_id,instrument_id,open,high,low,close,volume`. Ceny całkowite w skali 1e-9 (`7727000000000` = 7727.00), czas w ns, plik kończy się znakiem nowej linii.
 

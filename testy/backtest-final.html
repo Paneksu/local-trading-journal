@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: poprawki final replayu (strona robocza)</title>
+<!-- Strona robocza testów backtest-final (testy/backtest-final-poprawki.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: „Ryzyko za małe” z „Użyj 1 kontraktu”, podgląd ryzyka pod Kup/Sprzedaj, pole ceny Limit z ceną ,75,
+     znaczniki otwartej pozycji przy osi cen, licznik aktywnej zakładki szuflady, komunikat w stopce do 2 linii z „więcej”; ?w=375: wykres ≥ 45% ekranu
+     przy rozwiniętych polach, cena w osobnym wierszu, kolumna akcji Historii przyklejona do prawej.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+// kolor tokenu motywu przez element wzorcowy (porównanie z kolorem wyliczonym)
+const tokenColor = (v) => { const p = document.createElement('span'); p.style.color = `var(${v})`; document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; };
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const doc = newSessionDoc({
+    id: newSessionId(), name: 'Sesja final',
+    def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'pct', value: 1 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+    now: Date.now(),
+  });
+  await client.create(doc);
+  // atrapa wysyłki do Notion: baza bez trzech pól (jeden komunikat z listą, długi na wąskim ekranie)
+  const LONG = "W bazie Trade'y brakuje pól: Sesja backtestu, MAE (R), MFE (R). Uruchom aktualizację (Aktualizuj.cmd albo update.sh), która je doda.";
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [{ tradeId: 't1', error: LONG }], pending: 1, notion: {} });
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const stepN = async (n) => { for (let i = 0; i < n; i++) { await RP.step(1); } await sleep(40); };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(80);
+  if (narrow) { P('.bt-ord-more').click(); await sleep(30); }
+
+  await section('ryzyko', async () => {
+    // ryzyko sesji 1% z 50 000 = 500 USD; SL 40 pkt NQ = 800 USD na kontrakt: wielkość automatyczna 0
+    setF('sl', 40); setF('tp', 80); setF('qty', ''); await sleep(40);
+    const one = P('[data-o="one"]');
+    rec('ryzyko', /Ryzyko za małe/.test(P('.bt-ord-note').textContent) && one && !one.hidden && /Użyj 1 kontraktu/.test(one.textContent) && /800/.test(one.textContent), `„Ryzyko za małe” z przyciskiem («${one?.textContent}»)`);
+    rec('ryzyko', P('[data-o="buy"]').disabled, 'przed kliknięciem Kup nieaktywny');
+    const nt = P('.bt-ord-note'), ncs = getComputedStyle(nt);
+    rec('ryzyko', nt.dataset.state === 'small' && ncs.fontSize === '13px' && ncs.color === tokenColor('--warn') && getComputedStyle(nt, '::before').content !== 'none', `„Ryzyko za małe” jak podgląd ryzyka: 13 px, kolor uwagi z kropką (${ncs.fontSize}, ${ncs.color})`);
+    one.click(); await sleep(40);
+    rec('ryzyko', P('[name="qty"]').value === '1' && !P('[data-o="buy"]').disabled && one.hidden, `po „Użyj 1 kontraktu”: wielkość 1, Kup aktywny (${P('[name="qty"]').value})`);
+    const prev = P('.bt-ord-prev'), side = P('.bt-ord-side'), risk = P('.bt-ord-risk');
+    const pr = prev.getBoundingClientRect(), sr = side.getBoundingClientRect();
+    const fr = P('.bt-ord-fields').getBoundingClientRect();
+    // na wąskim ekranie przy rozwiniętych polach między przyciskami a podglądem bywa przycisk „Parametry”: podgląd i tak przed polami
+    rec('ryzyko', !prev.hidden && pr.top >= sr.bottom - 1 && (narrow ? pr.bottom <= fr.top + 1 : pr.top - sr.bottom <= 24) && Math.abs(pr.left - sr.left) <= 2, `podgląd tuż pod Kup/Sprzedaj (podgląd ${Math.round(pr.left)},${Math.round(pr.top)}; przyciski ${Math.round(sr.left)},${Math.round(sr.bottom)})`);
+    rec('ryzyko', getComputedStyle(prev).fontSize === '13px' && risk && getComputedStyle(risk).color === tokenColor('--loss') && /Ryzyko/.test(risk.textContent), `13 px, kwota ryzyka w kolorze straty («${risk?.textContent}», ${getComputedStyle(prev).fontSize})`);
+  });
+
+  await section('cena', async () => {
+    P('[data-ot="limit"]').click(); setF('price', 18238.75); await sleep(40);
+    const f = P('[name="price"]'), cs = getComputedStyle(f);
+    const ctx = document.createElement('canvas').getContext('2d'); ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const need = Math.ceil(ctx.measureText('18238.75').width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 16);
+    rec('cena', f.clientWidth >= need, `pole ceny mieści 18238.75 ze strzałkami (potrzeba ${need} px, jest ${f.clientWidth} px)`);
+    if (narrow) rec('cena', f.getBoundingClientRect().width >= innerWidth * 0.8, `375 px: cena w osobnym wierszu na pełną szerokość (${Math.round(f.getBoundingClientRect().width)} px)`);
+    P('[data-ot="market"]').click(); await sleep(30);
+  });
+
+  // plakietki na wykresie a ostatnie 12 świec (prostokąt od najwyższego high do najniższego low w poziomym zakresie tych świec)
+  function tagsOverCandles(N = 12) {
+    const ch = RP.chart(), plot = scr().querySelector('.bt-cell[data-active="true"] .bt-plot') || scr().querySelector('.bt-plot'), pr = plot.getBoundingClientRect();
+    const bars = ch.bars().slice(-N), ts = ch.chart.timeScale();
+    const xs = bars.map((b) => ts.timeToCoordinate(b[0])).filter((x) => x != null);
+    const sp = ts.options().barSpacing || 6;
+    const box = { l: pr.left + Math.min(...xs) - sp / 2, r: pr.left + Math.max(...xs) + sp / 2, t: pr.top + Math.min(...bars.map((b) => ch.series.priceToCoordinate(b[2]))), b: pr.top + Math.max(...bars.map((b) => ch.series.priceToCoordinate(b[3]))) };
+    const tags = [...ch.tradeLayer().querySelectorAll('.bt-tag')].filter((e) => !e.hidden);
+    const hits = [], cut = [];
+    for (const e of tags) {
+      const r = e.getBoundingClientRect();
+      if (r.left < box.r && r.right > box.l && r.top < box.b && r.bottom > box.t) hits.push(e.textContent.trim().slice(0, 30));
+      const tx = e.querySelector('.bt-tag-t');
+      if (tx && tx.scrollWidth > tx.clientWidth + 1) cut.push(tx.textContent);
+    }
+    const posText = ch.tradeLayer().querySelector('[data-k="pos"] .bt-tag-t')?.textContent || '';
+    return { n: tags.length, hits, cut, posText, long: /^LONG [+−-]?\d/.test(posText) && posText.length <= 16 };
+  }
+
+  await section('pozycja', async () => {
+    setF('sl', 10); setF('tp', 20); setF('qty', 1); await sleep(30);
+    P('[data-o="buy"]').click(); await sleep(80);
+    await stepN(2);
+    const marks = RP.chart().positionMarks();
+    const t = marks.map((m) => m.title);
+    const p = RP.book().positions.NQ;
+    // na wąskim wykresie znaczniki osi bez tytułów (tytuł niesie krótka plakietka obok osi)
+    const okT = narrow ? t.every((x) => x === '') : t.includes('LONG') && t.includes('SL') && t.includes('TP');
+    rec('pozycja', marks.length === 3 && okT && marks.every((m) => m.axis), `znaczniki pozycji przy osi cen: ${JSON.stringify(t)}`);
+    const prices = marks.map((m) => m.price);
+    rec('pozycja', p && prices.includes(p.entryPrice) && prices.includes(p.sl) && prices.includes(p.tp), 'znaczniki na cenie wejścia, SL i TP');
+    if (narrow) {
+      const more = P('.bt-ord-more');
+      if (more.getAttribute('aria-expanded') !== 'true') { more.click(); await sleep(60); }
+      const ch = scr().querySelector('.bt-charts').getBoundingClientRect();
+      rec('pozycja', ch.height >= innerHeight * 0.45 - 1, `375 px: wykres przy rozwiniętych polach ≥ 45% ekranu (${Math.round(ch.height)} z ${innerHeight})`);
+      rec('pozycja', document.documentElement.scrollWidth <= innerWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth})`);
+      // pasek u góry (nazwa i konto) nie jest ściskany, gdy ekran replayu się przewija
+      const top = scr().querySelector('.bt-top'), acct = scr().querySelector('.bt-acct').getBoundingClientRect();
+      rec('pozycja', top.scrollHeight <= top.clientHeight + 1 && acct.height >= 20, `375 px: pasek konta w całości (${top.scrollHeight}/${top.clientHeight}, konto ${Math.round(acct.height)} px)`);
+      // ocena wyglądu 2 (P1-N1): plakietki nie leżą na świecach przy kursorze; krótka treść bez ucinania
+      await sleep(300);
+      const cov = tagsOverCandles();
+      rec('pozycja', cov.n >= 2 && !cov.hits.length, `375 px: ${cov.n} plakietek, żadna nie przecina ostatnich 12 świec (${JSON.stringify(cov.hits)})`);
+      rec('pozycja', cov.cut.length === 0 && cov.long, `375 px: plakietki krótkie i w całości (${JSON.stringify(cov.cut)}, «${cov.posText}»)`);
+      const ses = scr().querySelector('.bt-stats .bt-res .lbl');
+      rec('pozycja', ses && getComputedStyle(ses).display !== 'none' && /SESJA|Sesja/i.test(ses.textContent), `375 px: wynik sesji z etykietą („${ses?.textContent}”)`);
+    }
+    P('[data-o="close"]').click(); await sleep(400);
+    RP.chart() && rec('pozycja', RP.chart().positionMarks().length === 0, 'po zamknięciu znaczniki pozycji znikają');
+  });
+
+  await section('stopka', async () => {
+    // wysyłka po zamknięciu: komunikat o brakujących polach (jeden), najwyżej 2 linie, dłuższy rozwija „więcej”
+    let m = null;
+    for (let i = 0; i < 50 && !(m = scr().querySelector('.bt-msg'))?.textContent; i++) await sleep(60);
+    await sleep(80);
+    const lh = parseFloat(getComputedStyle(m).lineHeight) || 18;
+    rec('stopka', /brakuje pól: Sesja backtestu, MAE \(R\), MFE \(R\)/.test(m.textContent) && (m.textContent.match(/brakuje pól/g) || []).length === 1, `jeden komunikat z listą pól («${m.textContent.slice(0, 90)}»)`);
+    rec('stopka', m.clientHeight <= lh * 2 + 2, `komunikat najwyżej w 2 liniach (${m.clientHeight} px, linia ${lh})`);
+    const more = scr().querySelector('.bt-msg-more');
+    if (m.scrollHeight > m.clientHeight + 1) {
+      rec('stopka', more && !more.hidden, 'dłuższy komunikat ma „więcej”');
+      more.click(); await sleep(30);
+      rec('stopka', m.classList.contains('open') && m.clientHeight >= m.scrollHeight - 1 && more.getAttribute('aria-expanded') === 'true', 'po „więcej” pełny komunikat');
+      more.click();
+    } else rec('stopka', !more || more.hidden, 'krótki komunikat bez „więcej”');
+    if (narrow) {
+      const ch = scr().querySelector('.bt-charts').getBoundingClientRect();
+      rec('stopka', ch.height >= innerHeight * 0.45 - 1, `375 px: wykres z komunikatem w stopce ≥ 45% ekranu (${Math.round(ch.height)})`);
+    }
+  });
+
+  await section('szuflada', async () => {
+    const jr = scr().querySelector('.bt-jr [data-jr="skip"]'); jr?.click(); await sleep(60);
+    // zlecenie oczekujące: aktywna zakładka „Zlecenia” z licznikiem w pełnym kolorze tekstu
+    const last = RP.chart().bars().slice(-1)[0][4];
+    P('[data-ot="limit"]').click(); setF('price', Math.round(last) + 8.75); setF('sl', 10); setF('tp', 20); setF('qty', 1); await sleep(30);
+    RP.orders().submit('sell'); await sleep(200);
+    const tab = scr().querySelector('.bt-dock [data-dk="ord"]'); tab?.click(); await sleep(80);
+    const n = tab?.querySelector('.bt-dk-n');
+    rec('szuflada', tab?.getAttribute('aria-selected') === 'true' && n && n.textContent.trim() && getComputedStyle(n).color === tokenColor('--fg'), `licznik aktywnej zakładki w kolorze tekstu --fg (${n && getComputedStyle(n).color} vs ${tokenColor('--fg')})`);
+    P('[data-ot="market"]').click();
+    scr().querySelector('.bt-dock [data-dk="hist"]')?.click(); await sleep(80);
+    const cell = scr().querySelector('.bt-dock .bt-dk-hist tbody td.bt-dk-a');
+    if (narrow) {
+      const box = scr().querySelector('.bt-dk-b').getBoundingClientRect(), cr = cell?.getBoundingClientRect();
+      rec('szuflada', cell && getComputedStyle(cell).position === 'sticky' && cr.right <= box.right + 1 && cr.left >= box.left, `375 px: przycisk Journal w Historii widoczny przy prawej krawędzi (${cr && Math.round(cr.left)}–${cr && Math.round(cr.right)}, szuflada do ${Math.round(box.right)})`);
+    } else rec('szuflada', !!cell, 'Historia z kolumną akcji');
+  });
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

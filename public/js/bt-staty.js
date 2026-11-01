@@ -139,11 +139,8 @@ function fromNotion(t) {
   };
 }
 // Trade'y Backtest: z Notion + z lokalnych plików sesji. Duplikat po znaczniku [sesja/trade] → wygrywa lokalny (ma powód wyjścia).
-// Review G #3: w sesji z kolejnością losową dzień o statusie innym niż 'done' ma ukrytą datę (bt-replay.js: hidden), więc jego trade'y nie wchodzą do statystyk
-// (data widoczna w podpowiedzi krzywej i w rozbiciach). To samo dotyczy kopii takiego trade'a wysłanej do Notion przyciskiem „Zapisz do Notion” (ten sam znacznik).
-const isHidden = (s, tr) => s?.def?.order === 'random' && s?.days?.[tr.day || nyParts(tr.entryT * 1000).day]?.status !== 'done';
+// K (31.10.2026): bez kolejności losowej i ukrytej daty ([U] «Filtr jako skok»), więc każdy zamknięty trade sesji wchodzi do statystyk (zastępuje review G #3).
 const closedLocal = (tr) => !!tr && isNum(tr.r) && isNum(tr.entryT);
-export const hiddenCount = (sessions) => (sessions || []).reduce((a, s) => a + (s?.trades || []).filter((tr) => closedLocal(tr) && isHidden(s, tr)).length, 0);
 export function mergeBacktest(notionTrades, sessions) {
   const out = [];
   const seen = new Set();
@@ -151,7 +148,7 @@ export function mergeBacktest(notionTrades, sessions) {
     if (!closedLocal(tr)) continue;
     const x = fromSession(s, tr);
     seen.add(x.key);
-    if (!isHidden(s, tr)) out.push(x);
+    out.push(x);
   }
   for (const t of notionTrades || []) {
     // jak dashboard (app.js): tylko typ === 'Backtest' (wpis bez typu nie jest backtestem)

@@ -4,7 +4,7 @@
 // twardy stop budżetu (także przy wznowieniu), brak get_range bez potwierdzenia, skrypt CLI (wycena domyślnie, wznowienie po 429).
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
 export default ({ test, H, assert, ROOT }) => {
@@ -17,7 +17,9 @@ export default ({ test, H, assert, ROOT }) => {
   const H4 = qOf(2024, 3), M4 = qOf(2024, 6);
   const calls = async (A, name) => (await A.log()).log.filter((e) => e.path.endsWith(name));
 
-  async function direct({ cfg = {}, clock, atrapa = {}, prep } = {}) {
+  // N4 (1.6.0): domyślnie instalacja z wpisanym kredytem (H.TEST_CREDIT); cfg bez chartCredit = kredyt z testu
+  async function direct({ cfg: cfg0 = {}, clock, atrapa = {}, prep } = {}) {
+    const cfg = 'chartCredit' in cfg0 ? cfg0 : { chartCredit: { ...H.TEST_CREDIT }, ...cfg0 };
     const A = await H.atrapaDb(++port);
     await A.config(atrapa);
     const old = process.env.DATABENTO_API_BASE;
@@ -112,7 +114,7 @@ export default ({ test, H, assert, ROOT }) => {
       const rd7 = R.C.read({ instrument: 'NQ', from: String(at('2024-03-07T14:30:00Z')), to: String(at('2024-03-07T16:00:00Z')), tf: '1s' });
       assert.ok(rd7.bars.length > 50 && rd7.bars.every((b) => b[1] < 5030), 'dzień przed rollem z .v.0 (NQH4)');
       // liczniki: kredyt aplikacji i budżet importu (pesymistycznie, przed get_range)
-      assert.ok(Math.abs(R.st.cfg.chartCredit.spentUsd - (0.02 + 0.008)) < 1e-9, JSON.stringify(R.st.cfg.chartCredit));
+      assert.ok(Math.abs(R.st.cfg.chartCredit.spentUsd - 0.008) < 1e-9, JSON.stringify(R.st.cfg.chartCredit));
       assert.ok(Math.abs(R.C.status().open1s.spentUsd - 0.008) < 1e-9);
       assert.deepEqual(R.C.status().result.batches, [[4, 0.008]]);
       // drugi przebieg: wszystko w magazynie
@@ -134,7 +136,7 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal(s.error?.code, 'budget', JSON.stringify(s.error));
       assert.deepEqual(s.result.batches, [[3, 0.9]]);
       assert.equal((await calls(R.A, 'get_range')).length, 3);
-      assert.ok(Math.abs(s.open1s.spentUsd - 0.9) < 1e-9 && Math.abs(R.st.cfg.chartCredit.spentUsd - 0.92) < 1e-9);
+      assert.ok(Math.abs(s.open1s.spentUsd - 0.9) < 1e-9 && Math.abs(R.st.cfg.chartCredit.spentUsd - 0.9) < 1e-9);
       // wznowienie z tym samym budżetem: stop przed pierwszym pobraniem (licznik importu przetrwał)
       const d2 = await R.C.importOpen({ instrument: 'NQ', from, to, dryRun: true });
       assert.equal(d2.days, 4);
@@ -171,6 +173,8 @@ export default ({ test, H, assert, ROOT }) => {
 
   test('wykresy-27: P49 skrypt CLI: domyślnie sama wycena, wycena ponad budżet zatrzymuje przed pobraniem, pobranie z kwotą, wznowienie po 429, trasa tylko przez guardWrite', async () => {
     const dir = H.tmp();
+    // N4 (1.6.0): instalacja z wpisanym kredytem Databento (bez kredytu płatne pobieranie czeka, decyzja 3)
+    writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify({ chartCredit: H.TEST_CREDIT }));
     const A = await H.atrapaDb(++port);
     const S = await H.server(++port, { THQ_CONFIG_DIR: dir, DATABENTO_API_BASE: A.base, DATABENTO_API_KEY: KEY });
     const cli = (...args) => new Promise((resolve) => {

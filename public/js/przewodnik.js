@@ -15,6 +15,8 @@ export function createGuide(api) {
   const realFetch = window.fetch.bind(window);
   const realSet = Storage.prototype.setItem, realRemove = Storage.prototype.removeItem;
 
+  // zakładka dashboardu: pasek u góry na komputerze, pasek na dole na telefonie
+  const tabOf = (v) => (isMobile() ? document.querySelector(`.tb-item[data-v="${v}"]`) : document.querySelector(`.nav-tab[data-act="view"][data-v="${v}"]`));
   // ---------- kroki: cel (prawdziwy element), przygotowanie widoku, tekst ----------
   const steps = [
     { title: 'Filtry po lewej', text: 'Wybierasz tu typ (Live, Backtest albo Paper), okres i konta. Wszystkie liczby, wykresy i listy liczą się z tego wyboru.',
@@ -29,9 +31,15 @@ export function createGuide(api) {
       target: () => document.querySelector('.top-actions [data-act="add-trade"]'), extra: { label: 'Otwórz przykład', run: () => openExample() } },
     { title: 'Konta prop', text: 'Zakładka Prop zbiera konta, payouty i wydatki. Widać saldo względem rozmiaru konta, ROI każdej firmy i bilans od początku.',
       before: () => api.setView('prop'), target: () => document.querySelector('#view .gr.row-p') },
-    { title: 'Ustawienia', text: 'Koło zębate: margines BE, paleta kolorów, język i aktualizacje. Tu też wrócisz do pierwszych kroków.',
+    // N6 (1.6.0, §4.5): kroki „Wykres trade'a” i „Backtest” (po pakiecie M, nowy wygląd modułu); cel to zakładka, bez otwierania widoku na danych przykładowych
+    { title: 'Wykres trade\'a', text: 'W zakładce Trade\'y kliknij trade: szczegóły mają przełącznik „Wykres | Zrzuty”. Wykres pokazuje świece z wejściem, wyjściem, SL i TP, a „Edytuj” dodaje rysunki. Świece pobierasz z Databento własnym kluczem (Ustawienia → Źródła danych).',
+      before: () => api.setView('stats'), target: () => tabOf('trades') },
+    { title: 'Backtest', text: 'Zakładka Backtest odtwarza rynek świeca po świecy na świecach zapisanych na tym komputerze. Składasz zlecenia na wykresie, a zamknięte trade\'y trafiają do bazy Trade\'y jako typ Backtest.',
+      target: () => tabOf('backtest') },
+    // N1 (1.6.0): krok opisuje pełny widok Ustawień z sekcjami (backtest-wyniki/N-pierwsze-kroki-ustawienia.md §4.2)
+    { title: 'Ustawienia', text: 'Koło zębate otwiera Ustawienia. Po lewej masz sekcje: konto i Notion, źródła danych z kluczami i limitami, dane na dysku, wygląd, wykresy, Backtest oraz kopie i diagnostykę. Tu wrócisz też do pierwszych kroków.',
       before: () => { api.setView('stats'); if (!isMobile()) api.openSettings(); }, after: () => api.closeSettings(),
-      target: () => (isMobile() ? document.getElementById('gear') : document.querySelector('.sp')) },
+      target: () => (isMobile() ? document.getElementById('gear') : document.querySelector('.sp .sv-nav') || document.querySelector('.sp')) },
     { title: 'Gotowe. Wróć do swoich danych', text: 'Przewodnik możesz uruchomić ponownie w Ustawieniach albo przyciskiem „?” w pasku statusu.', target: () => null, final: true },
   ];
 

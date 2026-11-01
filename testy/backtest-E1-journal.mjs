@@ -89,59 +89,46 @@ export default ({ test, H, assert, ROOT }) => {
     if (opts.order) b = W.placeOrder(b, { instrument: 'NQ', side: 'buy', type: 'limit', price: 95, qty: 1, sl: 90, tp: null }, { t: 60, price: 100 }).book;
     return b;
   };
-  const sess = (book) => ({ id: 'bt-testtest', pool: ['2024-03-12', '2024-03-13'], dayIdx: 0, days: { '2024-03-12': { status: 'active' } }, book, hw: book.hw, trades: [] });
-
-  test('backtest-E1: endDay z otwartą pozycją i bez', async () => {
-    const { endDay } = await imp('public/js/bt-replay.js');
-    const s = sess(await book0({ position: true }));
-    const frozen = JSON.stringify(s);
-    const asked = [];
-    const opts = (yes) => ({ last: () => ({ t: 120, price: 105 }), confirm: async (o) => { asked.push(o); return yes; }, streamOf: () => stream, contractOf: () => 'NQH4', snapshot: () => ({ v: 1, at: 'x', d: [] }), day: '2024-03-12' });
-    const no = await endDay(s, opts(false));
-    assert.equal(no.ended, false, '„nie”: dzień się nie kończy');
-    assert.equal(no.session, s, 'sesja bez zmian');
-    assert.equal(asked.length, 1);
-    assert.match(asked[0].text, /Zamknąć po bieżącej cenie\?/);
-    const yes = await endDay(s, opts(true));
-    assert.equal(yes.ended, true);
-    assert.equal(JSON.stringify(s), frozen, 'wejściowa sesja niezmieniona');
-    assert.equal(yes.closed.length, 1);
-    const tr = yes.closed[0];
-    assert.equal(tr.exits.at(-1).reason, 'eod');
-    assert.equal(tr.exitPrice, 105, 'po cenie kursora');
-    assert.equal(tr.exitT, 120, 'w czasie kursora');
-    assert.equal(tr.journal, 'todo');
-    assert.equal(tr.contract, 'NQH4');
-    assert.deepEqual(tr.drawings, { v: 1, at: 'x', d: [] });
-    assert.equal(yes.session.book.positions.NQ, null);
-    assert.equal(yes.session.days['2024-03-12'].status, 'done');
-    assert.equal(yes.session.trades.length, 1);
-    // bez pozycji: bez pytania
-    asked.length = 0;
-    const none = await endDay(sess(await book0()), opts(true));
-    assert.equal(asked.length, 0, 'bez otwartej pozycji pytania nie ma');
-    assert.equal(none.ended, true);
-    assert.equal(none.closed.length, 0);
-    // przeglądanie wstecz: odmowa silnika przerywa całość
-    const rew = sess(await book0({ position: true })); rew.book.hw = 9999;
-    const rr = await endDay(rew, { ...opts(true), last: () => ({ t: 120, price: 105 }) });
-    assert.equal(rr.ended, false);
-    assert.equal(rr.reason, 'rewound');
-    assert.equal(rr.session, rew);
+  // K (31.10.2026): „backtest-E1: endDay z otwartą pozycją i bez” i „oczekujące zlecenia anulowane” zastąpione: nie ma końca dnia ([U] «nie powinno byc takiego czegos
+  // jak koniec dnia»), pozycje i zlecenia przechodzą przez noc i weekend, a luka otwarcia wypełnia SL/TP po cenie otwarcia (reguła silnika bez zmian).
+  async function overnight() {
+    const { mergeBase } = await imp('public/js/bt-swieca.js');
+    const { nyAt } = await imp('public/js/bt-czas.js');
+    const fri = nyAt('2024-03-08', '16:58'), sun = nyAt('2024-03-10', '18:00');
+    // piątek ~100, weekend bez świec, niedziela otwiera się luką w dół na 80 (pod SL 90), potem rośnie
+    const m1 = [[fri, 100, 101, 99, 100, 1], [fri + 60, 100, 101, 99, 100, 1], [sun, 80, 82, 79, 81, 1], [sun + 60, 81, 130, 80, 129, 1]];
+    return { st: mergeBase(m1, [], []), fri, sun };
+  }
+  test('backtest-K: pozycja przez noc i weekend wypełnia SL na luce otwarcia (bez zamknięcia na koniec dnia)', async () => {
+    const W = await imp('public/js/bt-wypelnienia.js');
+    const { st, fri, sun } = await overnight();
+    let b = W.placeOrder(W.emptyBook(), { instrument: 'NQ', side: 'buy', type: 'market', qty: 1, sl: 90, tp: 120 }, { t: fri + 60, price: 100 }).book;
+    // kursor do końca piątku: nic się nie dzieje, pozycja zostaje otwarta
+    let r = W.advance(b, 'NQ', st, fri + 120);
+    assert.ok(r.book.positions.NQ && !r.events.some((e) => e.type === 'closed'), 'piątek: pozycja otwarta po końcu sesji');
+    // przez weekend do pierwszej świecy niedzieli: SL na luce = cena otwarcia 80 (gorsza niż 90), czas = świeca otwarcia
+    r = W.advance(r.book, 'NQ', st, sun + 60);
+    const c = r.events.find((e) => e.type === 'closed');
+    assert.ok(c, 'pozycja zamknięta w niedzielę');
+    const ex = c.position.exits.at(-1);
+    assert.equal(ex.reason, 'sl'); assert.equal(ex.price, 80, 'SL wypełniony po otwarciu luki (80), nie po 90'); assert.equal(ex.t, sun);
   });
-
-  test('backtest-E1: oczekujące zlecenia anulowane', async () => {
-    const { endDay } = await imp('public/js/bt-replay.js');
-    const s = sess(await book0({ order: true }));
-    assert.equal(s.book.orders.length, 1);
-    let asked = 0;
-    const r = await endDay(s, { last: () => ({ t: 120, price: 100 }), confirm: async () => { asked++; return true; }, day: '2024-03-12' });
-    assert.equal(asked, 0);
-    assert.equal(r.session.book.orders.length, 0, 'book.orders puste');
-    const c = r.events.filter((e) => e.type === 'cancelled');
-    assert.equal(c.length, 1, 'zdarzenie cancelled');
-    assert.equal(c[0].reason, 'eod');
-    assert.equal(r.session.days['2024-03-12'].status, 'done');
+  test('backtest-K: TP i zlecenie oczekujące przez noc (luka w górę wypełnia limit sprzedaży, TP po weekendzie)', async () => {
+    const W = await imp('public/js/bt-wypelnienia.js');
+    const { mergeBase } = await imp('public/js/bt-swieca.js');
+    const { nyAt } = await imp('public/js/bt-czas.js');
+    const fri = nyAt('2024-03-08', '16:59'), sun = nyAt('2024-03-10', '18:00');
+    const st = mergeBase([[fri, 100, 101, 99, 100, 1], [sun, 130, 131, 128, 129, 1]], [], []);
+    let b = W.placeOrder(W.emptyBook(), { instrument: 'NQ', side: 'buy', type: 'market', qty: 1, sl: 90, tp: 120 }, { t: fri, price: 100 }).book;
+    b = W.placeOrder(b, { instrument: 'ES', side: 'sell', type: 'limit', price: 5000, qty: 1, sl: 5050, tp: null }, { t: fri, price: 4990 }).book;
+    const es = mergeBase([[fri, 4990, 4991, 4989, 4990, 1], [sun, 5020, 5021, 5018, 5019, 1]], [], []);
+    let r = W.advance(b, 'NQ', st, sun + 60);
+    const tp = r.events.find((e) => e.type === 'closed').position.exits.at(-1);
+    assert.equal(tp.reason, 'tp'); assert.equal(tp.t, sun);
+    r = W.advance(r.book, 'ES', es, sun + 60);
+    const f = r.events.find((e) => e.type === 'filled' || e.type === 'opened');
+    assert.ok(f || r.book.positions.ES, 'limit sprzedaży wypełniony po weekendzie');
+    assert.equal((r.book.positions.ES || f.position).entryPrice, 5000, 'luka w górę: limit po swojej cenie (reguła silnika bez zmian: limit bez dodatniego poślizgu)');
   });
 
   // ---- przeglądarka ----
@@ -152,9 +139,8 @@ export default ({ test, H, assert, ROOT }) => {
   test('backtest-E1: setup z podpowiedzi i nowy', () => tagged('setup', 3));
   test('backtest-E1: brak oceny wykonania', () => tagged('brak oceny', 2));
   test('backtest-E1: do uzupełnienia', () => tagged('lista', 4));
-  test('backtest-E1: Zakończ dzień z otwartą pozycją', () => tagged('dzien', 8));
-  test('backtest-E1: oczekujące zlecenia anulowane w ekranie', () => tagged('zlecenia', 3));
-  test('backtest-E1: koniec danych', () => tagged('koniec', 4));
-  test('backtest-E1: następny dzień', () => tagged('nastepny', 8));
+  // K (31.10.2026): „Zakończ dzień z otwartą pozycją”, „oczekujące zlecenia anulowane w ekranie”, „koniec danych” i „następny dzień” zastąpione (bez końca dnia):
+  test('backtest-K: koniec danych z otwartą pozycją: stop odtwarzania, pozycja zostaje (ekran)', () => tagged('koniec', 4));
+  test('backtest-K: trade przez noc z panelem journalingu na następnym dniu (ekran)', () => tagged('noc', 5));
   test('backtest-E1: pagehide', () => tagged('pagehide', 3));
 };

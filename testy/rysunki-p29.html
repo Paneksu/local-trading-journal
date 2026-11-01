@@ -187,9 +187,10 @@ try {
   rec('P29-2', sel && sel.value === 'Asia/Kolkata' && vals.length <= 45 && vals.includes('Etc/GMT-14') && vals.includes('Etc/GMT+12') && vals.includes('Asia/Tokyo') && !document.querySelector('#sp-tz-q'),
     `Ustawienia: ${vals.length} pozycji, zapisana Kolkata widoczna i wybrana, pełne godziny −12…+14, bez pola filtra`);
   rec('P29-2', [...sel.options].find((x) => x.value === 'Etc/GMT-14')?.textContent === 'UTC+14' && [...sel.options].find((x) => x.value === 'Etc/GMT+5')?.textContent === 'UTC−5', 'opis pełnej godziny ze znakiem jak UTC (nie odwróconym POSIX)');
-  Sx.handle('sp-tab', 'ogolne'); await sleep(30);
+  // N2 (1.6.0): przełącznik „Ustawienia rysunku” w sekcji Wykresy (dawniej Ogólne), backtest-wyniki/N-pierwsze-kroki-ustawienia.md §4.2
+  Sx.handle('sp-tab', 'wykresy'); await sleep(30);
   const dk = [...document.querySelectorAll('[data-act="sp-dock"]')];
-  rec('P29-2', dk.length === 2, 'Ustawienia → Ogólne: przełącznik „Ustawienia rysunku: okienko / panel przypięty”');
+  rec('P29-2', dk.length === 2, 'Ustawienia → Wykresy: przełącznik „Ustawienia rysunku: okienko / panel przypięty”');
   Sx.handle('sp-dock', 'pin', dk[1]);
   rec('P29-4', localStorage.getItem(DOCK) === 'pin' && dk[1].getAttribute('aria-pressed') === 'true', 'przełącznik ogólny zapisuje tryb panelu');
   Sx.toggle();

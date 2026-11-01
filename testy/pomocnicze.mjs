@@ -13,7 +13,11 @@ export const IDS = {
   DS_TRADES: '11111111-1111-4111-8111-111111111111', DS_KONTA: '22222222-2222-4222-8222-222222222222',
   DS_DZIENNIK: '33333333-3333-4333-8333-333333333333', DS_FINANSE: '44444444-4444-4444-8444-444444444444',
 };
-export const PARENT_URL = 'https://www.notion.so/Trading-aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa';
+// N4 (1.6.0): instalacja bez wpisanego kredytu Databento nie pobiera płatnych świec. Testy pobierania zakładają instalację z kredytem wpisanym
+// przez użytkownika. Liczby neutralne (100 USD, nic nie wydano, ważny 2 lata od dziś), bez stanu żadnego prawdziwego konta.
+// [U] 31.10.2026 «Wpisz tylko u mnie» (zero liczb kredytu właściciela w kodzie i testach)
+export const TEST_CREDIT = Object.freeze({ startUsd: 100, expires: new Date(Date.now() + 730 * 86400000).toISOString().slice(0, 10), spentUsd: 0 });
+export const PARENT_URL ='https://www.notion.so/Trading-aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa';
 const procs = new Set();
 const temps = [];
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

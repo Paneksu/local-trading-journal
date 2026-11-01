@@ -52,7 +52,8 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(Z.chartTz(), 'UTC', 'zmiana w Ustawieniach zdejmuje nadpisanie');
     Z.setChartTzDefault('');
     for (const f of ['public/js/podglad.js', 'public/js/wykres.js']) assert.doesNotMatch(src(f), /cycleTz\(/, `${f}: bez przycisku po kolei`);
-    const u = src('public/js/ustawienia.js');
+    // N2 (1.6.0): Ustawienia w modułach sekcji (ust-*.js), strefa i B-ADJ w ust-wykresy.js
+    const u = src('public/js/ust-wykresy.js');
     assert.match(u, /id="sp-tz"/, 'lista w Ustawieniach');
     assert.match(src('public/js/podglad.js'), /P29 \(28\.10\.2026\), słowa użytkownika: «utc nie mialoby by wszystkich/);
   });

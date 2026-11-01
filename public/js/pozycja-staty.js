@@ -44,7 +44,11 @@ export function positionPL(d, candles = [], step = 60) {
   const stop = Number(st.stopLevel) || 0, profit = Number(st.profitLevel) || 0;
   const sl = entry - dir * stop, tp = entry + dir * profit;
   let open = false, lastC = null;
-  for (const k of candles) {
+  // K (31.10.2026): wykres replayu ma teraz pełną historię (dziesiątki tysięcy świec), więc początek zakresu szukany binarnie zamiast przeglądania od pierwszej świecy
+  let lo = 0, hi = candles.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (candles[m][0] + step <= t0) lo = m + 1; else hi = m; }
+  for (let i = lo; i < candles.length; i++) {
+    const k = candles[i];
     if (k[0] + step <= t0) continue;
     if (k[0] >= t1) break;
     const [, , h, l, c] = k;

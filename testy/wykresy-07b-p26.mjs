@@ -212,7 +212,8 @@ export default ({ test, H, assert, ROOT }) => {
     const app = src('public/js/app.js');
     assert.match(app, /chartTz: settings\.chartTz/, 'strefa w synchronizowanych ustawieniach');
     assert.match(app, /setChartTzDefault\(settings\.chartTz\)/);
-    assert.match(src('public/js/ustawienia.js'), /id="sp-tz"/, 'wybór strefy w Ustawieniach');
+    // N2 (1.6.0): Ustawienia w modułach sekcji (ust-*.js), strefa i B-ADJ w ust-wykresy.js
+    assert.match(src('public/js/ust-wykresy.js'), /id="sp-tz"/, 'wybór strefy w Ustawieniach');
     for (const f of ['public/js/podglad.js', 'public/js/wykres.js']) assert.match(src(f), /data-swc="tz"/, `${f}: przełącznik strefy na wykresie`);
     assert.doesNotMatch(src('public/js/podglad.js'), /getTimezoneOffset/, 'podgląd nie liczy w strefie przeglądarki na sztywno');
     const en = json(path.join(ROOT, 'public/i18n/en.json'));

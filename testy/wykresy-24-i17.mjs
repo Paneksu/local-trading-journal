@@ -130,7 +130,8 @@ export default ({ test, H, assert, ROOT }) => {
   });
 
   test('wykresy-17: Ustawienia → Wykresy, grupa „Karty udostępniania” (v2): wykres ceny, wygląd (świece / linia), rysunek pozycji, krzywa kapitału, „Przywróć domyślne (Karty)”; bez SL/TP w kartach (P45); styl miniatur (P46)', () => {
-    const s = src('public/js/ustawienia.js');
+    // N2 (1.6.0): Ustawienia w modułach sekcji (ust-*.js), strefa i B-ADJ w ust-wykresy.js
+    const s = src('public/js/ust-wykresy.js');
     for (const k of ['shareChart', 'equity']) assert.match(s, new RegExp(`chk\\('${k}'`), k);
     for (const k of ['slCard', 'tpCard']) assert.doesNotMatch(s, new RegExp(`chk\\('${k}'`), k);
     assert.match(s, /'ch-share-style'/); assert.match(s, /'ch-share-draw'/); assert.match(s, /'ch-mini-style'/);

@@ -59,22 +59,22 @@ export default ({ test, H, assert, ROOT }) => {
     } finally { R.A.stop(); }
   });
 
-  test('backtest-E2: timer ponawia tylko próbowane trade\'y z dni zakończonych', async () => {
+  // K (31.10.2026): zastępuje „timer ponawia tylko próbowane trade'y z dni zakończonych” (bez dni zakończonych, [U] «od razu»)
+  test('backtest-K: timer ponawia tylko trade\'y już próbowane z błędem przejściowym', async () => {
     const R = await rig(H, assert, ROOT, 5622);
     try {
-      R.store.save(SID, session([trade(1), trade(2, { day: DAY2 }), trade(3, { day: DAY2 })], { days: { [DAY1]: { status: 'active' }, [DAY2]: { status: 'done' } } }), 0);
-      // nic nie było próbowane: automat nie wysyła niczego (bieżący dzień nigdy, zakończony dopiero po pierwszej próbie)
+      R.store.save(SID, session([trade(1), trade(2, { day: DAY2 }), trade(3, { day: DAY2 })]), 0);
+      // nic nie było próbowane: automat nie wysyła niczego (pierwsza próba idzie od razu po zamknięciu, nie z timera)
       const r0 = await R.sync.push({ sessionId: SID, auto: true });
       assert.deepEqual([r0.sent, posts(R)], [0, 0]);
       await R.A.post('/__test/fail', { match: 'POST /v1/pages', after: 0, status: 503 });
-      const r1 = await R.sync.push({ sessionId: SID, day: DAY2 });
+      const r1 = await R.sync.push({ sessionId: SID });
       assert.equal(r1.sent, 0);
-      assert.ok(R.tr('t2').notion.error && R.tr('t3').notion.error, 'cała kolejka dnia oznaczona jako próbowana');
+      assert.ok(R.tr('t1').notion.error && R.tr('t2').notion.error && R.tr('t3').notion.error, 'cała kolejka oznaczona jako próbowana');
       R.clock += 31_000;
       const r2 = await R.sync.push({ sessionId: SID, auto: true });
-      assert.equal(r2.sent, 2, JSON.stringify(r2.failed));
-      assert.equal(R.tr('t1').notion.state, 'pending', 'bieżący dzień nie wychodzi automatycznie');
-      assert.equal((await R.pages()).length, 2);
+      assert.equal(r2.sent, 3, JSON.stringify(r2.failed));
+      assert.equal((await R.pages()).length, 3);
     } finally { R.A.stop(); }
   });
 

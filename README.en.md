@@ -106,11 +106,16 @@ The installer creates views through the Notion API. If Notion rejects one, the i
 
 ## Getting started
 
-On the first run the dashboard opens "Getting started". It is always available from Settings (the gear) and from "?" in the status bar.
+On the first run the dashboard opens "Getting started". It is always available from Settings (the gear → Account and Notion) and from "?" in the status bar.
 
-- **Readiness:** a checklist: Node, Notion key, page access, the four databases with entry counts, property mapping, views, write permissions, server protection, updates and DEMO entries. Every problem comes with short fix instructions. "Fix everything" applies all safe repairs with one button (missing properties, options and views, re-mapping properties, the Notion shortcut) after showing what will be added. A bad token or missing access takes you to the right wizard step. A quick check runs in the background on every start; if something is wrong, "Needs attention" appears in the status bar. Checks only read; the write check sends a request that Notion rejects at validation, so nothing is created.
-- **How the journal works:** a short guided tour of the real interface on sample data kept in browser memory. Nothing reaches Notion in this mode, and your data and filters come back when you leave.
+The wizard goes through: **Welcome** (the language, which also sets the database names in Notion) → **Notion** (integration token) → **Page** (the shared page where the journal goes) → **Journal** (four databases, optional DEMO entries) → **Market data** → **Readiness** → **Done**.
 
+- **Market data (optional):** the same cards as in Settings → Data sources. The Databento key (candles for charts and Backtest) with "Save and check" and "Test", a short cost explanation, the credit balance to enter from the Databento portal and the daily 1s NQ window (off; you confirm the cost to turn it on). Plus free FRED (macro news) and Finnhub (earnings) keys. Every key stays in the `.env` file on this computer. You can skip the step.
+- **Readiness:** four groups with one status each: This computer, Notion, Market data, Updates. Green groups are collapsed, and "Details" lists every item: Node, Notion key, page access, the four databases with entry counts, property mapping, views, write permissions, server protection, DEMO entries, the Databento key and credit (including credit expiring within 30 days), a blocked download queue, free space on the data disk (warning below 2 GB), the FRED and Finnhub keys and updates. Every problem comes with short fix instructions. "Fix everything" applies all safe repairs with one button (missing properties, options and views, re-mapping properties, the Notion shortcut) after showing what will be added. A bad token or missing access takes you to the right wizard step. A quick check runs in the background on every start; if something is wrong, "Needs attention" appears in the status bar. Checks only read; the write check sends a request that Notion rejects at validation, so nothing is created.
+- **Done:** the screen does not close by itself. Choose "Start the tour", "Add your first trade", "Remove DEMO data" (when there is any) or "Go to the dashboard".
+- **How the journal works:** a short guided tour of the real interface (including the trade chart and Backtest) on sample data kept in browser memory. Nothing reaches Notion in this mode, and your data and filters come back when you leave.
+
+![Getting started: market data](docs/img/pierwsze-kroki-dane.png)
 ![Getting started: readiness](docs/img/pierwsze-kroki-gotowosc.png)
 ![Getting started: tour](docs/img/pierwsze-kroki-przewodnik.png)
 
@@ -348,6 +353,7 @@ The wizard shows the same frames under "Show step by step". They are illustratio
 
 ## Running
 
+- `dashboard.log` stays under 5 MB: on start a larger file becomes `dashboard.1.log`, and at most three files are kept (`dashboard.log`, `.1`, `.2`).
 - **Windows:** `Dashboard.vbs` (no console window; logs in `dashboard.log`) or `Dashboard.cmd` (with a console window, for troubleshooting). Desktop shortcut with an icon: `powershell -ExecutionPolicy Bypass -File narzedzia\utworz-skrot.ps1`.
 - **macOS / Linux:** `./start.sh` (in the background, logs in `dashboard.log`) or `./start.sh --foreground`.
 - Address: http://127.0.0.1:4321. If the dashboard is already running, the scripts just open the browser.
@@ -367,7 +373,7 @@ Where the new version comes from:
 
 Migrations only add new properties, options and views. They never delete, change types, rename properties that hold data or touch entry values. Rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Turn update checks off in Settings → General.
+Turn update checks off in Settings → Backups and diagnostics.
 
 ## Multiple devices
 
@@ -393,7 +399,8 @@ Your data lives in Notion, so every device sees the same trades, accounts and en
 ## Backup and restore
 
 - A backup is made on every update in `backups/<date>/` (JSON: schema and all entries with their values). The folder is in `.gitignore`.
-- Restore: `node restore.mjs` shows a **preview only** (what would be restored from the latest backup). `node restore.mjs --apply` writes after you type "YES". Pick another backup by path: `node restore.mjs backups/2026-10-26T10-00-00Z`.
+- Without a terminal: **Settings → Backups and diagnostics → Notion database backups**. The list shows the date, the reason (on update, manual, before restore), the number of entries in each database and the size. "Back up now" makes a backup right away. "Restore preview" compares the backup with what is in Notion now (read only) and tells you how many entries and properties will change. The restore starts after you type "YES", and before writing the dashboard backs up the current state, so you can undo that too. Backups cannot be deleted from the dashboard: remove old folders in `backups/` yourself.
+- In a terminal: `node restore.mjs` shows a **preview only** (what would be restored from the latest backup). `node restore.mjs --apply` writes after you type "YES". Pick another backup by path: `node restore.mjs backups/2026-10-26T10-00-00Z`.
 - Restore puts field values back, takes entries out of the trash and recreates missing ones. It deletes nothing: entries added after the backup stay. Files uploaded to Notion (screenshots) are not in the backup because their URLs expire after an hour.
 - Chart drawings live in the "Drawings" property in Notion, so backup and restore cover them unchanged. Downloaded candles (`chart-data/`) are not in the backup.
 
@@ -407,38 +414,37 @@ Since version 1.3.0 every ES, NQ, MES or MNQ trade has a candlestick chart with 
 
 **Contracts and rolls.** Candles come from Databento's continuous symbol `ES.v.0` / `NQ.v.0` (the contract with the highest volume), with the contracts' real prices, not adjusted at rolls. A vertical line marks a contract change. In the "Contract" property (e.g. `ESZ6`) you can set the trade's contract; an empty property means the contract by date. The B-ADJ switch (like in TradingView, on by default) shifts the other contracts' prices by the roll gaps relative to the trade's contract, so entry, SL and TP land on the exact tick. Session hours, PDH/PDL and the axis time zone are in Settings → Charts.
 
-**Databento key.** You download candles from [Databento](https://databento.com) (the CME Globex MDP 3.0 dataset, `GLBX.MDP3`) with your own key, without a subscription, paying for usage. Create an account, open "API keys" in the Databento portal, click "Create a new key" and copy the key. In the dashboard: Settings → Charts → "Databento data" → paste the key → "Save and check". The key is checked with a free request and saved only in `.env` on this computer (`DATABENTO_API_KEY`). It never reaches the browser, the logs, Notion or settings sync. Without a key the charts show the candles that are already on disk.
+**Databento key.** You download candles from [Databento](https://databento.com) (the CME Globex MDP 3.0 dataset, `GLBX.MDP3`) with your own key, without a subscription, paying for usage. Create an account, open "API keys" in the Databento portal, click "Create a new key" and copy the key. In the dashboard: Settings → Data sources → "Candles: Databento" → paste the key → "Save and check". The key is checked with a free request and saved only in `.env` on this computer (`DATABENTO_API_KEY`). It never reaches the browser, the logs, Notion or settings sync. Without a key the charts show the candles that are already on disk.
 
 **What downloads by itself and what on a click.**
 - For every trade a background queue adds a 1s candle window from 30 min before entry to 30 min after exit (usually about 0.02 USD per trade).
-- Daily NQ 1s window 9:30–11:00 New York time: the "Download NQ 1s 9:30–11:00 NY every day" switch in Settings → Charts (on by default, this computer only). The queue downloads the window every Monday to Friday once Databento makes it available (about 0.02 USD per day) and catches up at most the last 7 days during which the dashboard was off. Older days only with the import tool (below).
+- Daily NQ 1s window 9:30–11:00 New York time: the "Download NQ 1s 9:30–11:00 NY every day" switch in Settings → Data sources (off in a new installation; turning it on asks you to confirm the cost; installations from before 1.6.0 keep it on; this computer only). The queue downloads the window every Monday to Friday once Databento makes it available (about 0.02 USD per day) and catches up at most the last 7 days during which the dashboard was off. Older days only with the import tool (below).
 - The minute candles of the trade's session and longer history are downloaded with the "Check cost" button next to the chart: you first see the quote from a free Databento request, then you confirm.
 - Windows and days already on disk are never downloaded again.
 
 **Costs and app limits.** Before every download the server asks Databento for the cost (free) and asks again right before downloading. Hard limits in the app:
 - at most **1 USD per download**;
 - at most **3 USD per UTC day** (counter of today's spending);
-- **credit counter:** Databento gives new accounts starting credit (125 USD valid for 6 months according to Databento's pricing page in October 2026). The dashboard cannot see the Databento balance, so it counts spending itself and rejects a download when the quote exceeds the remaining credit or the credit has expired, so your card is not charged. Enter your starting amount and expiry date in `config.local.json` (`chartCredit: { startUsd, spentUsd, expires }`).
+- **credit counter:** Databento gives new accounts starting credit (125 USD valid for 6 months according to Databento's pricing page in October 2026). The dashboard cannot see the Databento balance, so it counts spending itself and rejects a download when the quote exceeds the remaining credit or the credit has expired, so your card is not charged. A new installation has no credit entered: paid downloads wait until you enter the balance from the Databento portal (Billing → Credits: starting amount, spent, expiry date) in Settings → Data sources → "Credit and spending limits". Saving asks for confirmation.
 
-Settings → Charts shows the limits, today's spending, the credit and the size of downloaded candles as view-only. You change them in `config.local.json` (`chartCostLimitUsd`, `chartDailyLimitUsd`, `chartCredit`). Estimate from Databento quotes in October 2026 (prices may change; the real cost is always the quote before a download): the full 1m history of ES and NQ since 2010 about 41 USD, NQ 1s windows 9:30–11:00 since 2020 about 34 USD.
+In Settings → Data sources you see today's spending and change the limits (raising one asks you to confirm the amount, lowering applies at once) and the credit balance; the hard caps (100 USD per limit, 125 USD starting credit, 50 USD per 1m import, 36 USD for 1s windows) cannot be raised. There you also paste, test and remove the Databento, FRED and Finnhub keys (saved only to `.env` on this computer). Estimate from Databento quotes in October 2026 (prices may change; the real cost is always the quote before a download): the full 1m history of ES and NQ since 2010 about 41 USD, NQ 1s windows 9:30–11:00 since 2020 about 34 USD.
 
 **Data embargo.** Without a subscription Databento releases historical data with a delay of about 8 hours. Candles from a session in progress therefore appear later: the chart shows "Candles available until: …", and trades from such a session show "Candles from this session will be available around …". The queue waits by itself for windows that are not there yet.
 
 **Timeframes below one minute.** Real one-second candles exist only where a downloaded 1s window lies (trades and the daily NQ window). Outside the windows, timeframes below a minute (e.g. 30s, 15s, 5s, 1s) still work across the whole chart: each 1m candle is split into parts along the path open → extreme → other extreme → close and drawn slightly dimmed, and the tooltip says "from 1m". A minute even partly covered by a 1s window is real as a whole. Share cards use real seconds only: when the trade frame is not fully covered by a 1s window, the card uses 1m candles.
 
-**History import with a budget.** The tools in `narzedzia/` talk to the running dashboard (the key and counters stay in the server) and by default only quote, costing nothing:
+**History import with a budget.** In Settings → Data sources → "History import" you pick a date range, get a free quote, and the download starts only after you type the amount. The same imports in a terminal: the tools in `narzedzia/` talk to the running dashboard (the key and counters stay in the server) and by default only quote, costing nothing:
 - `node narzedzia/import-okien-1s.mjs`: quote for NQ 1s windows 9:30–11:00 NY since 2020-01-02 (or `--od=`/`--do=`, from/to). Downloading starts only with `--potwierdzam-usd=AMOUNT` (the amount from the quote), with a hard budget `--budzet-usd` (36 USD by default and at most) counted in `chart-data/import-1s-nq.json`. The server downloads in batches of up to 1 USD and checks the budget before each batch; the import counts towards the 3 USD daily limit, so on an import day regular downloads may wait until UTC midnight. Resume an interrupted import with the same command.
 - `node narzedzia/import-historii-1m.mjs`: quote for the 1m history of ES and NQ (`--instrument=ES|NQ|ALL`). Downloading needs `--potwierdzam-usd=AMOUNT` and an explicit raise of the app limits for this import only (`--limity-do-usd=AMOUNT`); the credit guard still applies.
 
-**Candle store.** Candles live in the `chart-data/` folder next to `config.local.json` (binary format, 24 bytes per candle, separate 1m and 1s layers plus contract layers). The folder is in `.gitignore`, updates do not touch it, and the update backup does not include it. Estimate: one 1m session of one symbol is about 35 KB, a 1s window 9:30–11:00 about 130 KB, and the full 1m history of ES and NQ since 2010 with NQ 1s windows since 2020 is about 0.5 GB. The size is shown in Settings → Charts. You delete candles by hand on disk; downloading them again costs money.
+**Candle store.** Candles live in the `chart-data/` folder next to `config.local.json` (binary format, 24 bytes per candle, separate 1m and 1s layers plus contract layers). The folder is in `.gitignore`, updates do not touch it, and the update backup does not include it. Estimate: one 1m session of one symbol is about 35 KB, a 1s window 9:30–11:00 about 130 KB, and the full 1m history of ES and NQ since 2010 with NQ 1s windows since 2020 is about 0.5 GB. The size of every layer and the folder are shown in Settings → Data on disk ("Open folder"). There you delete a candle layer (after typing its name; downloading it again costs money) and move the whole data folder to another drive (copy, check, switch and restart; the old folder stays).
 
-**Settings → Charts.** The tab has these groups:
+**Settings.** The gear opens a full view with sections on the left (the address `#ustawienia/<section>` leads straight to a section): Account and Notion (connection, journal, getting started, DEMO data, devices), Data sources (Databento, FRED and Finnhub keys, limits and credit, NQ 1s window, history import), Data on disk (folders and size), Appearance (language, palette, BE margins, nick), Charts, Backtest, and Backups and diagnostics (connection status with "Check", server with "Restart" and "Stop server", log without keys, updates, database backups, licenses). The Charts section has these groups:
 - "Chart look": candles or close line (separately for thumbnails), palette colours or your own per theme with a contrast check, grid, which trade levels to show;
 - "Overlays": Asia, London and NY session background (hours in New York time) with high/low lines until the sweep, and PDH/PDL;
 - "Share cards": price chart on cards (on / off), style, position drawing, equity curve on period cards, and starting values for videos (format, length, black and white, background dimming);
 - "Time and prices": axis time zone and B-ADJ;
-- "Databento data": the key, limits and credit as view-only, the size of `chart-data/`, the daily NQ 1s window switch;
-- "Licenses": TradingView attribution, the drawing package, the note on CME data and background videos.
+- "Drawing editor": drawing settings in a popup or a pinned panel.
 
 Look, overlays and cards sync through Notion like the other settings. The key, limits, credit and the 1s window switch stay on this computer only.
 
@@ -452,13 +458,13 @@ Since version 1.4.0 the journal shows USD macro news and earnings of S&P 100 com
 - The "Today" and "Earnings" cards in the left panel: today only.
 - The "Calendar" tab: day, week and month views, filters for impact, event type and company class, and search across news and earnings in the whole history since 2010.
 
-You switch impacts, classes and cards in Settings → Charts → "News" and "Earnings". Times follow the chart time zone.
+You switch impacts, classes and cards in Settings → Data sources → "News" and "Earnings". Times follow the chart time zone.
 
 **What history has.** Macro data (CPI, NFP, PPI, Retail Sales, GDP, PCE, ISM, JOLTS, Unemployment Claims, UoM and more), FOMC decisions, press conferences and minutes, speeches and testimonies of the Fed Chair, Fed announcements outside meetings, TIC, market holidays (Bank Holiday) and OPEX days (3rd Friday of the month, quarterly in March, June, September and December). Impacts depend on the date, because ForexFactory changed them over the years. We checked the history against the ForexFactory calendar on a sample of 28 months from 2010–2026: Bank Holiday 21 of 21 days, red events of the types covered by history 98.5% with the time to the minute, all red events (including speeches) 85.7% ([details, in Polish](docs/plany/newsy-zgodnosc.md)).
 
 **What history does not have.** Speeches by the President, the Treasury Secretary and FOMC members other than the Chair (the Chair's speech times are uncertain), and releases without a fixed schedule: Existing and Pending Home Sales, flash S&P Global PMI and the Treasury currency report. These appear only from the current week's feed, so from the day you install. Releases that came out a few minutes early or late keep the scheduled time in history.
 
-**Earnings in 4 classes.** Class 1 (red): NVDA, MSFT, AAPL, AMZN, GOOGL, META, TSLA, AVGO. Class 2 (orange): big banks and sector leaders, e.g. JPM, GS, NFLX, LLY, WMT, V. Class 3 (yellow): the rest of the top fifty. Class 4 (grey): the remaining S&P 100. In Settings → Charts → "Earnings" you can move a company to another class or add your own.
+**Earnings in 4 classes.** Class 1 (red): NVDA, MSFT, AAPL, AMZN, GOOGL, META, TSLA, AVGO. Class 2 (orange): big banks and sector leaders, e.g. JPM, GS, NFLX, LLY, WMT, V. Class 3 (yellow): the rest of the top fifty. Class 4 (grey): the remaining S&P 100. In Settings → Data sources → "Earnings" you can move a company to another class or add your own.
 
 **Sources.**
 - **FRED** (Federal Reserve Bank of St. Louis): release dates for 2010–2026 ship with the release. Your own key is optional and refreshes future dates once a day.
@@ -470,7 +476,7 @@ You switch impacts, classes and cards in Settings → Charts → "News" and "Ear
 **FRED and Finnhub keys (optional).**
 1. FRED: create a free account at [fred.stlouisfed.org](https://fred.stlouisfed.org), open "API Keys" in "My Account" and request a key (32 characters).
 2. Finnhub: create a free account at [finnhub.io](https://finnhub.io) and copy the API key from the dashboard.
-3. In JustJournal: Settings → Charts → "News" → "FRED key" field → paste → "Save"; the same for "Finnhub key" in the "Earnings" group. The refresh starts in the background and its state shows in the same group.
+3. In JustJournal: Settings → Data sources → "News" → "FRED key" field → paste → "Save"; the same for "Finnhub key" in the "Earnings" group. The refresh starts in the background and its state shows in the same group.
 
 Keys are stored only in `.env` on this computer (`FRED_API_KEY`, `FINNHUB_API_KEY`). They never reach the browser, the logs, Notion or settings sync, so you enter them on each computer separately.
 
@@ -491,7 +497,7 @@ The "Share" window has a large preview and groups: File (image or video, format)
 
 ## Licenses and market data
 
-**TradingView Lightweight Charts™.** The chart editor uses the TradingView Lightweight Charts™ 5.2.1 library (Apache-2.0 license). Attribution: "TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.", https://www.tradingview.com/. The licence and the NOTICE file are in `public/vendor/lightweight-charts/`, and the attribution with a link is under the chart and in Settings → Charts → "Licenses". Drawing tools: `lightweight-charts-drawing` 0.6.2 (MIT, `public/vendor/lightweight-charts-drawing/LICENSE`). Both libraries are included unchanged, with checksums in `public/vendor/VENDOR.md`.
+**TradingView Lightweight Charts™.** The chart editor uses the TradingView Lightweight Charts™ 5.2.1 library (Apache-2.0 license). Attribution: "TradingView Lightweight Charts™, Copyright (c) 2025 TradingView, Inc.", https://www.tradingview.com/. The licence and the NOTICE file are in `public/vendor/lightweight-charts/`, and the attribution with a link is under the chart and in Settings → Backups and diagnostics → "Licenses". Drawing tools: `lightweight-charts-drawing` 0.6.2 (MIT, `public/vendor/lightweight-charts-drawing/LICENSE`). Both libraries are included unchanged, with checksums in `public/vendor/VENDOR.md`.
 
 **CME data via Databento.** The candles are CME Group market data downloaded with your key from Databento, under the terms of your Databento account and the CME license that Databento passes on to its users. This is not legal advice, only a summary of the sources we read:
 - Databento says that redistribution rights depend on the dataset and that it passes through the licensing restrictions of the original publisher, here CME ([Databento pricing](https://databento.com/pricing)).
@@ -529,7 +535,7 @@ What this means for you:
 
 **Why is there no "Connect with Notion" button that skips copying a token?** Notion OAuth requires an app secret (client secret). Such a secret cannot be kept safely in a public repository or in an app installed locally: anyone could read it. Doing it safely would need a separate relay server, so for now the internal integration token stays. It is a possible future option.
 
-**How do I change the token?** Settings → General → "Change token". The wizard checks the new token before saving it.
+**How do I change the token?** Settings → Account and Notion → "Change token". The wizard checks the new token before saving it.
 
 **Port 4321 is taken.** Use another one: `PORT=4400 node server.mjs` (Windows: `set PORT=4400` in `Dashboard.cmd`).
 

@@ -2,8 +2,10 @@
 // Godziny NY liczone tą samą regułą co serwer (lib/news.mjs etToUtc: od 2007 czas letni od 2. niedzieli marca do 1. niedzieli listopada, 2:00 lokalnie).
 // Krok = jedna świeca aktywnego TF (wyrównanie do granicy kubełka). TF sekundowy poza oknem prawdziwego 1s krokuje o minutę, bo tam świece bazowe są 1m.
 // English: replay clock helpers: NY wall time, steps aligned to the active timeframe, jump targets, keyboard shortcuts and look-ahead-safe news.
-import { dayNum, fromDayNum, weekdayOf, parseTf, SESSIONS } from './swiece.js';
+import { dayNum, fromDayNum, weekdayOf, parseTf, SESSIONS, sessionBounds } from './swiece.js';
 import { validateFilter } from './bt-filtr.js';
+import { visibleCount } from './bt-swieca.js';
+import { t } from './i18n.js';
 
 // ---- czas Nowego Jorku ----
 const pad = (n) => String(n).padStart(2, '0');
@@ -56,6 +58,39 @@ export function nextCursor(cursor, dir, tf, real1s, bounds = {}) {
   return Math.min(max, Math.max(min, t));
 }
 
+// ---- czas ciągły (K, 31.10.2026) ----
+// [U] 31.10.2026 «nie powinno byc takiego czegos jak koniec dnia, tylko mozesz przesuwac czas tyle ile chcesz»: przerwy bez handlu (weekend, święto, przerwa 17–18 NY,
+// dziura w danych) pomijane przy krokach i odtwarzaniu. Przerwa = brak świecy bazowej przez co najmniej GAP_SKIP sekund (cisza kilku sekund w oknie 1s to nie przerwa).
+export const GAP_SKIP = 1800;
+const prevEnd = (stream, i) => (i > 0 ? stream.bars[i - 1][0] + stream.len[i - 1] : -Infinity);
+// skipGap(stream, from, to) → kursor: `to`, a gdy między `from` i `to` nie zaczyna się żadna świeca, a do następnej jest przerwa ≥ GAP_SKIP, początek tej świecy.
+// Brak dalszych świec (koniec wczytanych danych) → `to` (granicę danych pilnuje wywołujący).
+export function skipGap(stream, from, to) {
+  if (!stream || !stream.bars.length || !(to > from)) return to;
+  const i = visibleCount(stream, from);
+  if (i >= stream.bars.length) return to;
+  const nb = stream.bars[i][0];
+  if (nb < to) return to;
+  const gapFrom = Math.max(prevEnd(stream, i), Math.min(from, nb));
+  return nb - gapFrom >= GAP_SKIP ? nb : to;
+}
+// Krok o jedną świecę aktywnego TF (nextCursor) z pominięciem przerw: w przód na koniec kubełka z pierwszą świecą po przerwie, w tył na koniec ostatniej świecy przed przerwą.
+export function stepCursor(cursor, dir, tf, stream, real1s, bounds = {}) {
+  const lim = (t) => Math.min(Number.isFinite(bounds.max) ? bounds.max : Infinity, Math.max(Number.isFinite(bounds.min) ? bounds.min : -Infinity, t));
+  let t = nextCursor(cursor, dir, tf, real1s);
+  if (dir > 0) {
+    const j = skipGap(stream, cursor, t);
+    if (j !== t) t = nextCursor(j, 1, tf, real1s);
+  } else if (dir < 0 && stream && stream.bars.length) {
+    // w tył: jeśli między t a kursorem nie zaczyna się żadna świeca, a przed nimi jest przerwa, kursor staje na końcu ostatniej świecy przed przerwą
+    const i = visibleCount(stream, t);
+    const pe = prevEnd(stream, i);
+    const startsBetween = i < stream.bars.length && stream.bars[i][0] < cursor;
+    if (!startsBetween && Number.isFinite(pe) && pe < cursor && cursor - pe >= GAP_SKIP) t = pe;
+  }
+  return lim(t);
+}
+
 // ---- newsy bez przyszłości ----
 // §2: plan dnia (nazwa, godzina, waga) wolno pokazać także po kursorze; wyniku (actual/forecast i inne pola) nigdy. Kolejne dni nie są widoczne.
 const NEWS_FIELDS = ['t', 'day', 'name', 'imp', 'kind', 'allDay', 'tentative'];
@@ -77,37 +112,52 @@ export function nextNews(events, cursor, minImp = 'high') {
 }
 
 // ---- skoki ----
-// 8. Gotowe skoki: do 9:30 NY, do następnej sesji NY (następny dzień z puli, godzina startu), do godziny następnego newsa, do następnego dnia z filtra, +N min.
+// 8. Gotowe skoki: do 9:30 NY, następna sesja NY (następny dzień handlowy o godzinie startu), następny news, następny dzień z filtra, +N min.
+// K (31.10.2026): bez granicy dnia; „Następny dzień z filtra” ma własny rodzaj 'filterDay' ([U] 31.10.2026 «Filtr jako skok»).
 // Nazwy to dane ustawień (użytkownik może je zmieniać); UI tłumaczy nazwy domyślne przez t().
 export const DEFAULT_JUMPS = [
   { id: 'open', name: 'Do 9:30 NY', cel: { kind: 'time', at: '09:30' }, skrot: '1' },
   { id: 'nySession', name: 'Następna sesja NY', cel: { kind: 'nextDay' }, skrot: '2' },
   { id: 'news', name: 'Następny news', cel: { kind: 'news', minImp: 'high' }, skrot: '3' },
-  { id: 'nextDay', name: 'Następny dzień z filtra', cel: { kind: 'nextDay' }, skrot: '4' },
+  { id: 'nextDay', name: 'Następny dzień z filtra', cel: { kind: 'filterDay' }, skrot: '4' },
   { id: 'plus15', name: '+15 min', cel: { kind: 'offset', sec: 900 }, skrot: '5' },
 ];
 
-// Cel skoku: { cursor } w tym dniu (zawsze > kursor i ≤ times.end), { nextDay: true, at } albo null (nie ma dokąd skoczyć w tym dniu).
-// ctx = { cursor, day, times, news, startTime }.
+// bez listy dni handlowych (indeks jeszcze się wczytuje): dni robocze najwyżej tyle dni naprzód
+const SCAN_DAYS = 14;
+function candidates(cursor, list) {
+  if (Array.isArray(list) && list.length) return list;
+  const n0 = nyDayNum(cursor), out = [];
+  for (let n = n0; n <= n0 + SCAN_DAYS; n++) { const w = weekdayOf(n); if (w >= 1 && w <= 5) out.push(dateStr(n)); }
+  return out;
+}
+// Cel skoku: { cursor } (zawsze > kursor i ≤ max) albo null (nie ma dokąd skoczyć).
+// ctx = { cursor, startTime, news, tradingDays: Day[] (dni z danymi, rosnąco), filterDays: Day[] (dni z filtra sesji, rosnąco), max (koniec danych) }.
 export function jumpTarget(jump, ctx) {
   const cel = jump && jump.cel;
   if (!cel || !ctx) return null;
-  const { cursor, day, times = {}, news = [], startTime = '09:00' } = ctx;
-  const end = Number.isFinite(times.end) ? times.end : Infinity;
-  const ok = (t) => (Number.isFinite(t) && t > cursor && t <= end ? { cursor: t } : null);
+  const { cursor, news = [], startTime = '09:00' } = ctx;
+  const max = Number.isFinite(ctx.max) ? ctx.max : Infinity;
+  const ok = (t) => (Number.isFinite(t) && t > cursor && t <= max ? { cursor: t } : null);
+  const firstAt = (days, at) => {
+    const from = dateStr(nyDayNum(cursor) - 1);
+    for (const d of days) { if (d < from) continue; const t = nyAt(d, at); if (t > max) return null; if (t > cursor) return { cursor: t }; }
+    return null;
+  };
   switch (cel.kind) {
-    case 'time': return ok(nyAt(day, cel.at));
+    case 'time': return firstAt(candidates(cursor, ctx.tradingDays), cel.at);
+    case 'nextDay': return firstAt(candidates(cursor, ctx.tradingDays), startTime);
+    case 'filterDay': return firstAt(Array.isArray(ctx.filterDays) ? ctx.filterDays : candidates(cursor, ctx.tradingDays), startTime);
     case 'session': {
       const def = SESSIONS.find((s) => s.id === cel.id);
       if (!def) return null;
-      const [h, m] = hhmm(def.from), n = dayN(day);
-      // najbliższy początek sesji po kursorze: kursor bywa w kontekście (do kilku sesji wstecz), więc sprawdzamy tydzień dni wstecz
-      for (let d = n - 7; d <= n; d++) { const r = ok(etToUtc(d, h, m)); if (r) return r; }
+      const [h, m] = hhmm(def.from), n0 = nyDayNum(cursor);
+      // najbliższy początek sesji po kursorze, w którym giełda handluje (sesja CME otwarta); weekend i przerwa odpadają
+      for (let d = n0; d <= n0 + SCAN_DAYS; d++) { const t = etToUtc(d, h, m); if (t > cursor && sessionBounds(t)) return ok(t); }
       return null;
     }
     case 'news': { const e = nextNews(news, cursor, cel.minImp); return e ? ok(e.t) : null; }
-    case 'offset': return Number.isFinite(cel.sec) && cel.sec > 0 && cursor < end ? { cursor: Math.min(cursor + cel.sec, end) } : null;
-    case 'nextDay': return { nextDay: true, at: startTime };
+    case 'offset': return Number.isFinite(cel.sec) && cel.sec > 0 && cursor < max ? { cursor: Math.min(cursor + cel.sec, max) } : null;
     default: return null;
   }
 }
@@ -116,12 +166,24 @@ export function jumpTarget(jump, ctx) {
 // [B] 30.10.2026: mapowania FX Replay niepotwierdzone w dokumentacji, więc własne domyślne. Klucze to `skrot`/`skroty`, nigdy `key` (sanitizeSettings wycina /key/).
 export const DEFAULT_SKROTY = {
   play: 'Space', stepFwd: 'Shift+ArrowRight', stepBack: 'Shift+ArrowLeft', jump: 'J', speedUp: ']', speedDown: '[',
-  buy: 'B', sell: 'S', closeAll: 'Shift+C', endDay: 'Shift+E',
+  buy: 'B', sell: 'S', closeAll: 'Shift+C',
+  // K (31.10.2026): bez „Zakończ dzień” (endDay), czas płynie bez końca dnia
   // J (30.10.2026): wejście według zaznaczonego rysunku pozycji (bt-zlecenia.js); nazwa bez „key” (sanitizeSettings)
   drawEntry: 'D',
+  // M (31.10.2026): SL na BE i zamknięcie połowy pozycji z klawiatury (wcześniej tylko myszą); nazwy bez „key” (sanitizeSettings)
+  be: 'E', half: 'H',
 };
 // Klawisze zajęte przez rysunki (Escape, Ctrl+Z, strzałki: rysunki.js) i podgląd wykresu (strzałki, +, =, −: podglad.js) oraz pola formularzy.
-export const RESERVED_SKROTY = ['Escape', 'Ctrl+Z', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', 'Enter', 'Delete', 'Backspace'];
+// L (31.10.2026): Ctrl+J otwiera Journal (jak w FX Replay), więc nie może być skrótem skoku ani akcji.
+export const RESERVED_SKROTY = ['Escape', 'Ctrl+Z', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', 'Enter', 'Delete', 'Backspace', 'Ctrl+J'];
+
+// M (31.10.2026): skrót w podpowiedzi przycisku: strzałki jako symbole, „Space” po polsku; „akcja (skrót)” albo sama akcja bez skrótu
+const ARROWS = { ArrowRight: '→', ArrowLeft: '←', ArrowUp: '↑', ArrowDown: '↓' };
+export function skrotLabel(s) {
+  if (!s) return '';
+  return String(s).split('+').map((p) => ARROWS[p] || (p === 'Space' ? t('Spacja') : p)).join('+');
+}
+export const hintOf = (label, skrot) => (skrot ? `${label} (${skrotLabel(skrot)})` : label);
 
 const MOD_ONLY = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'OS', 'CapsLock']);
 // Zdarzenie klawiatury → tekst skrótu ('Ctrl+Alt+Shift+Klawisz'). Litery wielkie; Shift przy znaku nieliterowym pomijany (jest już w znaku, np. '+');
@@ -163,7 +225,7 @@ export function collisions(skroty = {}, jumps = []) {
 // Klucze to `skrot`/`skroty`, nigdy `key` (sanitizeSettings wycina /key|pin|…/i). Brak `jumps` w zapisie = skoki domyślne (DEFAULT_JUMPS).
 export const BT_SPEEDS = [1, 10, 60, 100, 300];
 export const SKROT_ACTIONS = Object.keys(DEFAULT_SKROTY);
-export const CEL_KINDS = ['time', 'session', 'news', 'offset', 'nextDay'];
+export const CEL_KINDS = ['time', 'session', 'news', 'offset', 'nextDay', 'filterDay'];
 const cloneJson = (x) => JSON.parse(JSON.stringify(x));
 export function btDefaults() {
   return { jumps: cloneJson(DEFAULT_JUMPS), skroty: { ...DEFAULT_SKROTY }, startTime: '09:00', risk: { mode: 'usd', value: 500 }, speed: 100, templates: [], sessionsCopy: [] };
@@ -176,6 +238,7 @@ function sanitizeCel(c) {
     case 'news': return { kind: 'news', minImp: c.minImp === 'medium' ? 'medium' : 'high' };
     case 'offset': return Number.isFinite(c.sec) && c.sec > 0 && c.sec <= 36000 ? { kind: 'offset', sec: Math.round(c.sec) } : null;
     case 'nextDay': return { kind: 'nextDay' };
+    case 'filterDay': return { kind: 'filterDay' };
     default: return null;
   }
 }
@@ -185,7 +248,10 @@ export function sanitizeBt(v) {
   if (Array.isArray(o.jumps)) {
     const seen = new Set();
     d.jumps = o.jumps.slice(0, 40).map((j) => {
-      const cel = sanitizeCel(j?.cel), id = String(j?.id || '').slice(0, 24);
+      let cel = sanitizeCel(j?.cel);
+      const id = String(j?.id || '').slice(0, 24);
+      // K: domyślny skok „Następny dzień z filtra” z 1.5.0 miał rodzaj nextDay; teraz filterDay ([U] 31.10.2026 «Filtr jako skok»)
+      if (id === 'nextDay' && cel?.kind === 'nextDay') cel = { kind: 'filterDay' };
       if (!cel || !id || seen.has(id)) return null;
       seen.add(id);
       return { id, name: String(j.name || '').trim().slice(0, 60) || id, cel, skrot: String(j.skrot || '').slice(0, 24) };
@@ -267,11 +333,14 @@ export function copyDef(def) {
   const d = def && typeof def === 'object' ? def : {};
   const out = {
     instruments: Array.isArray(d.instruments) ? d.instruments.filter((x) => typeof x === 'string').slice(0, 4) : [],
-    from: String(d.from ?? ''), to: String(d.to ?? ''), balance: Number.isFinite(d.balance) ? d.balance : null,
+    // K: bez daty końca, kolejności i ziarna ([U] 31.10.2026 «Do końca danych», «Filtr jako skok»)
+    from: String(d.from ?? ''), balance: Number.isFinite(d.balance) ? d.balance : null,
     risk: d.risk && typeof d.risk === 'object' ? { mode: d.risk.mode === 'pct' ? 'pct' : 'usd', value: Number.isFinite(d.risk.value) ? d.risk.value : null } : null,
-    startTime: String(d.startTime ?? '09:00'), order: ['chrono', 'newest', 'random'].includes(d.order) ? d.order : 'chrono',
-    seed: Number.isFinite(d.seed) ? d.seed : null, accountId: typeof d.accountId === 'string' ? d.accountId : null,
+    startTime: String(d.startTime ?? '09:00'), accountId: typeof d.accountId === 'string' ? d.accountId : null,
     filterJ: chunkJson(stripSecretKeys(d.filter ?? null)), excludedJ: chunkJson(Array.isArray(d.excluded) ? d.excluded : []),
+    // L: prowizja i podstawa ryzyka % tylko, gdy różne od domyślnych (kopie sprzed L bez zmian)
+    ...(Number.isFinite(d.commission) && d.commission > 0 ? { commission: d.commission } : {}),
+    ...(d.riskBase === 'start' ? { riskBase: 'start' } : {}),
   };
   return out;
 }
