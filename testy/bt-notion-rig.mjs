@@ -48,6 +48,14 @@ export async function rig(H, assert, ROOT, port, { timeoutMs } = {}) {
     if (f === 'before-429') throw new NotionError('Notion API: za dużo żądań (429), spróbuj za chwilę.', 429);
     if (f === 'before-409c') throw Object.assign(new NotionError('Conflict occurred while saving. Please try again.', 409), { notionCode: 'conflict_error' });
     if (f === 'before-net') throw new TypeError('fetch failed');
+    // usuwanie trade'ów (1.6.1): odmowa Notion przed wykonaniem żądania
+    if (f === 'before-404') throw new NotionError('Brak dostępu do bazy (404). Sprawdź, czy integracja ma dostęp do tej bazy.', 404);
+    if (f === 'before-403') throw new NotionError('Brak dostępu do bazy (403). Sprawdź, czy integracja ma dostęp do tej bazy.', 403);
+    if (f === 'before-401') throw new NotionError('Notion odrzucił token (401).', 401);
+    // błędy z tokenem w treści: odpowiedź i log nie mogą go powtórzyć
+    if (f === 'before-400tok') throw new NotionError('Bearer secret_abc123XYZ odrzucony przez Notion', 400);
+    if (f === 'before-400plain') throw new NotionError('Zwykły komunikat bez tokenu', 400);
+    if (f === 'before-plain') throw new Error('boom Authorization: Bearer secret_abc123XYZ token=secret_abc123XYZ');
     if (f === 'hang') return new Promise(() => {});
     const out = await fn(p, b);
     if (f === 'after-lost') throw new TypeError('fetch failed');

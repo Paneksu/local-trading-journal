@@ -9,7 +9,7 @@ import { createProp } from './prop.js';
 import { logoHtml } from './firmy.js';
 import { createSettings } from './ustawienia.js';
 import { applyPalette, PALETTE_IDS, sanitizeCustom, defaultCustom, resolvedAll } from './palety.js';
-import { overlay, confirmDialog, toast } from './modal.js';
+import { overlay, confirmDialog, toast, guide } from './modal.js';
 import { t, getLang, bootMeta, rememberLang, translateStatic } from './i18n.js';
 import { createUpdater } from './aktualizacja.js';
 import { createOnboarding } from './pierwsze-kroki.js';
@@ -21,6 +21,8 @@ import { createPodglad, setChartTzDefault, setBadjDefault, validTz, observeMinis
 import { sanitizeChart, setChartSettings, applyChartVars, migrateLegacyOverlays } from './styl-wykresu.js';
 import { createNewsCards } from './newsy-karty.js';
 import { createCalendar } from './kalendarz.js';
+// wybor-daty (1.6.1): własny wybierak daty i godziny dla wszystkich pól data-wd (podłącza się sam)
+import './wybor-daty.js';
 import { createBacktestView } from './bt-widok.js';
 import { sanitizeBt, sessionsCopyOf } from './bt-czas.js';
 
@@ -150,6 +152,7 @@ const ICON = {
   plus: (s) => svg('<path d="M12 5v14M5 12h14"/>', s, 2),
   share: (s) => svg('<path d="M12 15V4M8 8l4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>', s),
   edit: (s) => svg('<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>', s),
+  trash: (s) => svg('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>', s),
   sortUp: (s) => svg('<path d="m6 15 6-6 6 6"/>', s, 2),
   sortDown: (s) => svg('<path d="m6 9 6 6 6-6"/>', s, 2),
 };
@@ -1228,7 +1231,7 @@ function lbEl() {
         <div class="lb-empty" hidden><span class="ico-box">${ICON.image(22)}</span><h3>${L('Ten trade nie ma zrzutu')}</h3><p>${L('Dodaj zrzut przyciskiem poniżej albo wklej go (Ctrl+V). Możesz też wkleić link do TradingView w polu „Wykres” (przycisk „Edytuj”).')}</p></div>
         <div class="lb-chart" hidden></div></div></div>
     <div class="lb-info"><div class="lb-cap"></div><dl class="lb-facts"></dl><div class="lb-notes"></div>
-      <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><button type="button" class="btn lb-share" data-act="share-trade">${ICON.share(14)}${L('Udostępnij')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a>
+      <div class="lb-actions"><button type="button" class="btn primary lb-edit" data-act="trade-edit">${ICON.edit(14)}${L('Edytuj')}</button><button type="button" class="btn lb-share" data-act="share-trade">${ICON.share(14)}${L('Udostępnij')}</button><button type="button" class="btn ghost lb-del" data-act="trade-delete">${ICON.trash(14)}${L('Usuń')}</button><a class="btn lb-link" target="_blank" rel="noopener">${L('Otwórz w Notion')}</a>
         <span class="lb-shot">${shotButtonHtml(t('Dodaj zrzut'))}</span></div>${shotStatusHtml()}</div>`;
   document.body.appendChild(d);
   // dodawanie zrzutu: przycisk, przeciągnięcie na cały podgląd i wklejenie (tylko gdy żadne inne okno nie jest na wierzchu)
@@ -1299,6 +1302,8 @@ function showLightbox() {
   d.querySelector('.lb-link').href = tt.url;
   d.querySelector('.lb-edit').dataset.id = tt.id;
   d.querySelector('.lb-share').dataset.id = tt.id;
+  d.querySelector('.lb-del').dataset.id = tt.id;
+  d.querySelector('.lb-del').hidden = !!guide.on;
   d.querySelector('.prev').disabled = lbStepTo(-1) == null;
   d.querySelector('.next').disabled = lbStepTo(1) == null;
   paintLbDetails(d);
@@ -1352,6 +1357,44 @@ async function saveContract(x, code) {
   x.contract = code;
   lb.saved = true;
   load(false, { silent: true });
+}
+// [U] 2026-11-01 «Archiwum Notion + Cofnij» (użytkownik: «DODAJ takze mozliwosc usuwania ogolnie tradow bo nie ma takiej opcji»): usuwanie trade'a z dziennika (okno szczegółów
+// i formularz edycji, czyli wszędzie, gdzie trade da się otworzyć z listy, kalendarza, panelu i galerii). Potwierdzenie mówi wprost, że strona trade'a w Notion trafi do archiwum
+// Notion (kosz) i da się ją tam przywrócić. Serwer przenosi stronę do archiwum (POST /api/trades/<id>/trash, nie kasuje na stałe), dopiero po sukcesie trade znika z aplikacji;
+// błąd Notion (sieć, 404, uprawnienia) = nic się nie zmienia i pokazuje się jasny komunikat. Przez 9 s przycisk „Cofnij” przywraca stronę (POST .../untrash) i trade w aplikacji.
+// Trade z sesji backtestu usuwa się w sesji (serwer odmawia z wyjaśnieniem), bo tam liczą się saldo i statystyki.
+let tradeDeleting = false;
+async function tradeTrashPost(id, op) {
+  let r;
+  try { r = await fetch(`/api/trades/${id}/${op}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: '{}' }); } catch {
+    throw new Error(t('Nie mogę połączyć się z lokalnym serwerem. Uruchom dashboard ponownie (Dashboard.vbs albo start.sh).'));
+  }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || t('Nie udało się usunąć trade\'a (błąd {status}).', { status: r.status }));
+  return j;
+}
+async function deleteTrade(tr) {
+  if (!tr || tradeDeleting || guide.on) return false;
+  tradeDeleting = true;
+  try {
+    const ok = await confirmDialog({
+      title: t('Usunąć ten trade?'),
+      // to samo podsumowanie co w replayu: instrument, kierunek, data, R i P&L (widać, co znika ze statystyk)
+      text: `${[[tr.instrument, tr.dir].filter(Boolean).join(' ') || tLabel(tr), tr.date ? F.shortDate(tr.date) : '', Number.isFinite(tr.r) ? F.fmtR(tr.r) : '', Number.isFinite(tr.pnl) ? F.fmtMoney(tr.pnl) : ''].filter(Boolean).join(' · ')}. ${t('Zniknie z dashboardu i statystyk.')} ${t('Jego strona trafi do kosza w Notion. Przywrócisz ją stamtąd w ciągu 30 dni, potem zniknie na stałe.')}`,
+      ok: t('Usuń trade'), danger: true,
+    });
+    if (!ok) return false;
+    try { await tradeTrashPost(tr.id, 'trash'); } catch (e) { toast(e.message, { error: true }); return false; }
+    if (lb.open) closeLightbox({ restore: false });
+    if (model) { model.trades = model.trades.filter((x) => x.id !== tr.id); model.sig = ''; renderAll(); }
+    load(true);
+    toast(t('Trade usunięty'), { ms: 9000, action: { label: t('Cofnij'), undo: true, run: async () => {
+      try { await tradeTrashPost(tr.id, 'untrash'); } catch (e) { toast(e.message || t('Nie udało się przywrócić trade\'a.'), { error: true }); return; }
+      await load(true);
+      toast(t('Trade przywrócony'));
+    } } });
+    return true;
+  } finally { tradeDeleting = false; }
 }
 // Rysunki trade'a z serwera (Notion albo cache): trafiają do podglądu; błąd odczytu nie psuje wykresu.
 // W6 (przegląd 28.10.2026): nieudany odczyt zostawia ślad (failed), a edytor nie startuje bez odczytu: pierwszy zapis nadpisałby w Notion rysunki, których nie widzimy.
@@ -1580,6 +1623,7 @@ const form = createForm({
   types: TYPES,
   getDefaults: () => ({ typ: state.typ }),
   reload: (force) => load(force),
+  onDelete: (tr) => deleteTrade(tr),
   onClose: () => { flushPending(); tour?.resume(); },
   onSaved: (payload, created) => {
     // nowy trade od razu widać: jeśli jest innego typu niż aktualny filtr, przełączamy filtr
@@ -1642,8 +1686,17 @@ function updateBtCopy(sessions) {
   settings.bt = { ...settings.bt, sessionsCopy: btCopy.copy };
   saveSettings();
 }
-const btView = createBacktestView({ onList: updateBtCopy, getTrades: () => (model ? model.trades : []), // G: trade'y z Notion do statystyk backtestu
-     getSettings: () => settings.bt, onTemplates: (list) => { settings.bt = { ...settings.bt, templates: list }; saveSettings(); }, // F2: szablony filtra dni z kreatora
+// usunięta sesja znika też z kopii definicji w ustawieniach; po „Cofnij” lista ją dopisze z powrotem (updateBtCopy)
+function dropBtCopy(id) {
+  const list = (settings.bt.sessionsCopy || []).filter((e) => e.id !== id);
+  if (list.length === (settings.bt.sessionsCopy || []).length) return;
+  settings.bt = { ...settings.bt, sessionsCopy: list };
+  saveSettings();
+}
+// G: getTrades daje trade'y z Notion do statystyk backtestu; F2: onTemplates to szablony filtra dni z kreatora; 1.6.1: onFavTfs to ulubione interwały replayu
+const btView = createBacktestView({ onList: updateBtCopy, onRemoved: dropBtCopy, getTrades: () => (model ? model.trades : []),
+     getSettings: () => settings.bt,
+     onTemplates: (list) => { settings.bt = { ...settings.bt, templates: list }; saveSettings(); }, onFavTfs: (list) => { settings.bt = { ...settings.bt, favTfs: list }; saveSettings(); },
      getSetups: () => (model ? [...new Set(model.trades.map((x) => x.setup).filter(Boolean))].sort((a, b) => a.localeCompare(b, getLang())) : []), getAccounts: () => (model ? model.konta.map((k) => ({ id: k.id, name: k.name })) : []) });
 function openCalendar(mode, earnCls) { cal.goTo(null, mode); if (earnCls) cal.applyEarn(earnCls); state.view = 'calendar'; state.ui.sheet = ''; save(); renderTabs(); applySheetAttr(); const h = $('#view .ncal'); if (h && cal.isMounted(h)) { cal.unmount(); h.remove(); } renderMain(); $('#main').scrollTo({ top: 0 }); }
 // „+N więcej” z karty „Dzisiaj”: dzisiejszy dzień (dzień liczony w strefie z Ustawień); z karty „Wyniki spółek”: tydzień z klasami z karty
@@ -1777,6 +1830,7 @@ document.addEventListener('click', (ev) => {
     }
     case 'add-trade': form.open(null, t); break;
     case 'demo-remove': removeDemo(t); break;
+    case 'trade-delete': deleteTrade(model?.trades.find((x) => x.id === t.dataset.id)); break;
     case 'share-trade': share.open({ tradeId: t.dataset.id, opener: t }); break;
     case 'share-open': share.open({ kind: t.dataset.kind, anchor: t.dataset.v || shareAnchor(), clip: t.dataset.from && t.dataset.to ? { from: t.dataset.from, to: t.dataset.to } : null, opener: t }); break;
     case 'sort': {

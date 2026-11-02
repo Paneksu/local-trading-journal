@@ -4,7 +4,7 @@
 // English: replay clock helpers: NY wall time, steps aligned to the active timeframe, jump targets, keyboard shortcuts and look-ahead-safe news.
 import { dayNum, fromDayNum, weekdayOf, parseTf, SESSIONS, sessionBounds } from './swiece.js';
 import { validateFilter } from './bt-filtr.js';
-import { visibleCount } from './bt-swieca.js';
+import { visibleCount, isReplayTf } from './bt-swieca.js';
 import { t } from './i18n.js';
 
 // ---- czas Nowego Jorku ----
@@ -47,13 +47,15 @@ export function stepSec(tf, cursor, real1s) {
 }
 
 // Następny kursor o jedną świecę aktywnego TF w przód (dir > 0) albo w tył (dir < 0), wyrównany do granicy kubełka, w granicach bounds = { min, max }.
-// Kubełki REPLAY_TFS dzielą godzinę, a sesja CME otwiera się o pełnej godzinie UTC, więc granica kubełka = wielokrotność kroku od epoki.
+// Kubełki interwałów replayu liczone są od otwarcia sesji CME (aggregate), więc granica kubełka = otwarcie sesji + wielokrotność kroku; dla interwałów dzielących godzinę to to samo co od epoki.
 // W tył krok liczony dla sekundy przed kursorem: z 9:30:00 (początek okna 1s) cofamy się o minutę do 9:29:00, z 11:00:00 o 15 s do 10:59:45.
 export function nextCursor(cursor, dir, tf, real1s, bounds = {}) {
   const min = Number.isFinite(bounds.min) ? bounds.min : -Infinity, max = Number.isFinite(bounds.max) ? bounds.max : Infinity;
   let t;
-  if (dir > 0) { const s = stepSec(tf, cursor, real1s); t = Math.floor(cursor / s) * s + s; }
-  else if (dir < 0) { const s = stepSec(tf, cursor - 1, real1s); t = Math.ceil(cursor / s) * s - s; }
+  // kubełki liczone od otwarcia sesji (jak aggregate): dla interwałów dzielących godzinę to samo co od epoki, dla własnych (7m) granica świecy aktywnego interwału
+  const anchor = (c) => sessionBounds(c)?.open ?? 0;
+  if (dir > 0) { const s = stepSec(tf, cursor, real1s), a = anchor(cursor); t = Math.floor((cursor - a) / s) * s + a + s; }
+  else if (dir < 0) { const s = stepSec(tf, cursor - 1, real1s), a = anchor(cursor - 1); t = Math.ceil((cursor - a) / s) * s + a - s; }
   else t = cursor;
   return Math.min(max, Math.max(min, t));
 }
@@ -225,10 +227,16 @@ export function collisions(skroty = {}, jumps = []) {
 // Klucze to `skrot`/`skroty`, nigdy `key` (sanitizeSettings wycina /key|pin|…/i). Brak `jumps` w zapisie = skoki domyślne (DEFAULT_JUMPS).
 export const BT_SPEEDS = [1, 10, 60, 100, 300];
 export const SKROT_ACTIONS = Object.keys(DEFAULT_SKROTY);
+// wybor-daty (1.6.1), [U] 1.11.2026 «stworz w naszym stylu design okna ustawiania czasu i daty, ma byc proste w uzytku najlepiej»:
+// szybki wybór godziny NY w polach backtestu (godzina startu w kreatorze i Ustawieniach, skok „do godziny”)
+export const BT_PRESETS = '09:00,09:30,10:00,11:00';
 export const CEL_KINDS = ['time', 'session', 'news', 'offset', 'nextDay', 'filterDay'];
 const cloneJson = (x) => JSON.parse(JSON.stringify(x));
+// [U] 1.11.2026 «powinny byc od razu poakzane ulubione»: ulubione interwały replayu (osobna lista od Live, w bloku `bt`), przyciski w nagłówku wykresu
+export const DEFAULT_FAV_TFS = ['15s', '1m', '5m', '15m', '1h'];
+export const FAV_TFS_MAX = 12;
 export function btDefaults() {
-  return { jumps: cloneJson(DEFAULT_JUMPS), skroty: { ...DEFAULT_SKROTY }, startTime: '09:00', risk: { mode: 'usd', value: 500 }, speed: 100, templates: [], sessionsCopy: [] };
+  return { jumps: cloneJson(DEFAULT_JUMPS), skroty: { ...DEFAULT_SKROTY }, startTime: '09:00', risk: { mode: 'usd', value: 500 }, speed: 100, templates: [], sessionsCopy: [], favTfs: [...DEFAULT_FAV_TFS] };
 }
 function sanitizeCel(c) {
   if (!c || typeof c !== 'object') return null;
@@ -269,6 +277,12 @@ export function sanitizeBt(v) {
   for (const c of collisions(d.skroty, d.jumps)) {
     const clear = (id) => { if (id.startsWith('jump:')) { const j = d.jumps.find((x) => `jump:${x.id}` === id); if (j) j.skrot = ''; } else d.skroty[id] = ''; };
     clear(c.b === 'reserved' ? c.a : c.b);
+  }
+  if (Array.isArray(o.favTfs)) {
+    const f = [];
+    for (const x of o.favTfs) { const s = typeof x === 'string' ? x : ''; if (isReplayTf(s) && !f.includes(s)) f.push(s); }
+    f.sort((a, b) => parseTf(a).sec - parseTf(b).sec);
+    if (f.length) d.favTfs = f.slice(0, FAV_TFS_MAX);
   }
   if (Array.isArray(o.templates)) {
     d.templates = [];

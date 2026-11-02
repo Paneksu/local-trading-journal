@@ -3,7 +3,7 @@
 // klawisza w polu (Backspace czyści). Kolizja skrótów (z zarezerwowanym, między skokami i akcjami) blokuje zapis: pola się podświetlają,
 // w ustawieniach zostaje ostatni poprawny stan.
 import { t } from './i18n.js';
-import { btDefaults, sanitizeBt, collisions, skrotOf, skrotLabel, SKROT_ACTIONS, CEL_KINDS, BT_SPEEDS } from './bt-czas.js';
+import { btDefaults, sanitizeBt, collisions, skrotOf, skrotLabel, SKROT_ACTIONS, CEL_KINDS, BT_SPEEDS, BT_PRESETS } from './bt-czas.js';
 import { SESSIONS } from './swiece.js';
 import { esc, L, X_ICON, gHead, grp } from './ust-wspolne.js';
 
@@ -25,7 +25,7 @@ export function createBacktestSec(ctx) {
   const btSessionName = (id) => ({ asia: t('Azja'), london: t('Londyn'), ny: 'NY' }[id] || id);
   function btCelParam(j, i) {
     const c = j.cel;
-    if (c.kind === 'time') return `<input class="sp-in" type="time" data-btf="cel.at" data-i="${i}" data-fk="btj-${i}-at" value="${esc(c.at)}" aria-label="${L('Godzina NY')}">`;
+    if (c.kind === 'time') return `<input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-wd-presety="${BT_PRESETS}" data-btf="cel.at" data-i="${i}" data-fk="btj-${i}-at" value="${esc(c.at)}" aria-label="${L('Godzina NY')}">`;
     if (c.kind === 'session') return `<select class="sp-in sp-sel" data-btf="cel.id" data-i="${i}" data-fk="btj-${i}-id" aria-label="${L('Początek sesji')}">${SESSIONS.map((x) => `<option value="${x.id}"${x.id === c.id ? ' selected' : ''}>${esc(btSessionName(x.id))}</option>`).join('')}</select>`;
     if (c.kind === 'news') return `<select class="sp-in sp-sel" data-btf="cel.minImp" data-i="${i}" data-fk="btj-${i}-imp" aria-label="${L('Waga newsa')}"><option value="high"${c.minImp === 'high' ? ' selected' : ''}>${L('wysoka')}</option><option value="medium"${c.minImp === 'medium' ? ' selected' : ''}>${L('średnia i wysoka')}</option></select>`;
     if (c.kind === 'offset') return `<input class="sp-in" type="number" min="1" max="600" step="1" data-btf="cel.min" data-i="${i}" data-fk="btj-${i}-min" value="${Math.round(c.sec / 60)}" aria-label="${L('Przesunięcie (min)')}">`;
@@ -64,7 +64,7 @@ export function createBacktestSec(ctx) {
       + grp(`${gHead('sv-bt-keys', 'Skróty akcji')}<div class="sp-f"><div class="bt-sal">${actRows}</div></div>
       <p class="note bt-serr" role="alert"${cols.length ? '' : ' hidden'}>${L('Skróty kolidują ze sobą albo z klawiszami wykresu (Escape, strzałki, Ctrl+Z, +, −, Enter). Zmiana nie została zapisana.')}</p>`, 'skroty')
       + grp(`${gHead('sv-bt-def', 'Domyślne wartości nowej sesji')}<div class="sp-f">
-        <div class="bt-sdef"><label class="bt-sa"><span>${L('Godzina startu (NY)')}</span><input class="sp-in" type="time" data-btd="startTime" data-fk="btd-start" value="${esc(d.startTime)}"></label>
+        <div class="bt-sdef"><label class="bt-sa"><span>${L('Godzina startu (NY)')}</span><input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-wd-presety="${BT_PRESETS}" data-btd="startTime" data-fk="btd-start" value="${esc(d.startTime)}"></label>
         <div class="bt-sa"><span>${L('Ryzyko na trade')}</span><div class="bt-row"><div class="seg sm" role="group" aria-label="${L('Rodzaj ryzyka')}">${mode('usd', 'USD')}${mode('pct', t('% salda'))}</div><input class="sp-in" type="number" min="0" step="any" data-btd="risk" data-fk="btd-risk" value="${d.risk.value}" aria-label="${L('Wartość ryzyka')}"></div></div>
         <label class="bt-sa"><span>${L('Szybkość odtwarzania')}</span><select class="sp-in sp-sel" data-btd="speed" data-fk="btd-speed">${BT_SPEEDS.map((v) => `<option value="${v}"${v === d.speed ? ' selected' : ''}>${v}×</option>`).join('')}</select></label></div>
         <p class="note bt-smsg" role="status">${esc(btMsg)}</p></div>`, 'domyslne')

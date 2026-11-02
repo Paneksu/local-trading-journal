@@ -78,9 +78,11 @@ export default ({ test, H, assert, ROOT }) => {
   test('backtest-K: walidacja i limity zakresu', async () => {
     const { rr, d12 } = await setup();
     const o = d12.open;
-    for (const q of [{ instruments: ['XX'], from: o, to: o + 60 }, { instruments: [], from: o, to: o + 60 }, { instruments: ['NQ'], from: o, to: o }, { instruments: ['NQ'], from: 'a', to: o }, { instruments: ['NQ'], from: o, to: o + 60, tf: '7m' }]) {
+    for (const q of [{ instruments: ['XX'], from: o, to: o + 60 }, { instruments: [], from: o, to: o + 60 }, { instruments: ['NQ'], from: o, to: o }, { instruments: ['NQ'], from: 'a', to: o }, { instruments: ['NQ'], from: o, to: o + 60, tf: '90s' }, { instruments: ['NQ'], from: o, to: o + 60, tf: '1D' }]) {
       assert.throws(() => rr.read(q), (e) => e.status === 400, JSON.stringify(q));
     }
+    // [U] 1.11.2026 «nie da sie dowolnie zmieniac timeframe»: interwał własny (7m) jest przyjmowany, 90s (nie wielokrotność minuty) i 1D nie
+    assert.doesNotThrow(() => rr.read({ instruments: ['NQ'], from: o, to: o + 3600, tf: '7m' }));
     assert.throws(() => rr.read({ instruments: ['NQ'], from: o, to: o + 9 * 86400, tf: 'base' }), (e) => e.status === 422 && e.code === 'too-long');
     assert.throws(() => rr.read({ instruments: ['NQ'], from: o, to: o + 9 * 86400, tf: '5s' }), (e) => e.status === 422);
     assert.throws(() => rr.bounds({ instruments: ['NQ', 'ES', 'MNQ', 'MES', 'NQ2'] }), (e) => e.status === 400);

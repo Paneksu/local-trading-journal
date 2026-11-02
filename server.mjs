@@ -18,7 +18,7 @@ import { DatabentoError } from './lib/databento.mjs';
 import { createNews } from './lib/news-service.mjs';
 import { createReplayRange } from './lib/backtest-range.mjs';
 import { createBacktestStore, BacktestError, SESSION_BODY_LIMIT, SESSION_ID_RE } from './lib/backtest-store.mjs';
-import { createBacktestSync } from './lib/backtest-sync.mjs';
+import { createBacktestSync, MARKER_RE } from './lib/backtest-sync.mjs';
 import { createDayIndex } from './lib/backtest-index.mjs';
 import { NewsError } from './lib/news.mjs';
 import { normSymbol } from './lib/earnings.mjs';
@@ -33,7 +33,7 @@ import { fetchLatest, isNewer } from './lib/updater.mjs';
 import { fullCheck, fixSchema, demoRemoval } from './lib/health.mjs';
 import { createWorkspace } from './lib/workspace.mjs';
 import { verifyToken, listPages, writeShortcut, hasShortcut } from './lib/wizard.mjs';
-import { createSync } from './lib/sync.mjs';
+import { createSync, discoverSettings, pickSettings } from './lib/sync.mjs';
 import { sealPackage, openPackage, peekPackage, MAX_ATTEMPTS } from './lib/transfer.mjs';
 import { createDiag } from './lib/diag.mjs';
 import { resolveDataDir, scanData, createMover, layersOfRow, CANDLE_ROWS, CANDLE_SYMBOLS, DiskError, freeSpace } from './lib/dysk.mjs';
@@ -418,7 +418,7 @@ const ACTIONS = {
 // Tworzenie dziennika zapisuje postęp w config.local.json po każdym kroku, więc przerwane da się wznowić bez duplikatów.
 const SETUP_STEPS = ['page', 'databases', 'relations', 'formulas', 'views', 'demo', 'save'];
 const STEP_OF = { page: 'page', database: 'databases', relations: 'relations', formula: 'formulas', view: 'views', demo: 'demo' };
-let setupJob = { running: false, done: false, error: null, steps: SETUP_STEPS.map((id) => ({ id, status: 'pending' })), rootUrl: '', skippedViews: [] };
+let setupJob = { running: false, done: false, error: null, steps: SETUP_STEPS.map((id) => ({ id, status: 'pending' })), rootUrl: '', skippedViews: [], settings: null };
 async function tokenWorks() {
   if (!notion.hasToken) return false;
   try { await notion.get('/v1/users/me'); return true; } catch { return false; }
@@ -432,8 +432,30 @@ function finishInstall({ dsIds, dbIds, rootUrl, rootPageId, fields = {}, views =
   writeShortcut(CONFIG_DIR, lang, rootUrl);
   reconfigure();
 }
+// 1.6.1: kreator najpierw szuka istniejącego bloku „Ustawienia dashboardu” w całym zakresie integracji (nie tylko na stronie z bazami) i go podpina,
+// zamiast zakładać nowy pusty. Wynik: { state: 'own' | 'adopted' | 'none' | 'off' | 'error', pageTitle, pageUrl, updatedAt, others, truncated }.
+// Decyzja gustu 1.11.2026: przy kilku blokach bez pytania wybieramy najnowszy (ostatni zapis ustawień) i mówimy użytkownikowi, co wybrano.
+async function adoptSettingsBlock(rootPageId, pages) {
+  if (config.syncEnabled === false) return { state: 'off' };
+  try {
+    // najpierw sama strona z bazami (zwykle blok leży tu i nie trzeba przeglądać reszty), dopiero potem wszystkie strony integracji
+    let found = rootPageId ? await discoverSettings(notion, pages.filter((p) => p.id === rootPageId)) : null;
+    if (!found?.candidates.length) found = await discoverSettings(notion, pages);
+    const pick = pickSettings(found.candidates, rootPageId);
+    const base = { scanned: found.scanned, failed: found.failed, truncated: found.truncated };
+    if (!pick) return { state: 'none', ...base };
+    const c = pick.chosen;
+    config.settingsBlock = { toggleId: c.toggleId, codeId: c.codeId };
+    saveConfig(config);
+    sync.invalidate();
+    return { state: pick.own ? 'own' : 'adopted', pageTitle: c.pageTitle, pageUrl: c.pageUrl, updatedAt: c.updatedAt, others: pick.others, ...base };
+  } catch (e) {
+    console.error(`[setup] szukanie bloku ustawień nie powiodło się (${e.message}); zostaje zachowanie domyślne: blok powstanie na stronie dziennika, jeśli go tam nie ma`);
+    return { state: 'error' };
+  }
+}
 function runSetupJob({ pageId, lang, demo }) {
-  setupJob = { running: true, done: false, error: null, steps: SETUP_STEPS.map((id) => ({ id, status: 'pending' })), rootUrl: '', skippedViews: [] };
+  setupJob = { running: true, done: false, error: null, steps: SETUP_STEPS.map((id) => ({ id, status: 'pending' })), rootUrl: '', skippedViews: [], settings: null };
   if (!config.setupProgress || config.setupProgress.parentPageId !== pageId || config.setupProgress.lang !== lang) config.setupProgress = {};
   const state = config.setupProgress;
   let current = null;
@@ -444,7 +466,16 @@ function runSetupJob({ pageId, lang, demo }) {
     for (const s of setupJob.steps) { if (s.id === id) break; if (s.status !== 'done') s.status = s.id === 'demo' && !demo ? 'skipped' : 'done'; }
     current = id; mark(id, 'running');
   };
-  createWorkspace(notion, { schema: SCHEMA, parentPageId: pageId, lang, demo, log, state, save: () => saveConfig(config) })
+  const prepare = async () => {
+    // wznowienie (blok już założony w tym przebiegu) nie szuka ponownie
+    if (state.settingsBlock) return;
+    const adopted = await adoptSettingsBlock(null, await listPages(notion, SCHEMA).catch(() => []));
+    setupJob.settings = adopted;
+    // istniejący blok z innej strony: nowy dziennik go używa, więc nie zakładamy drugiego
+    if (adopted.state === 'adopted') { state.settingsBlock = true; saveConfig(config); }
+  };
+  prepare()
+    .then(() => createWorkspace(notion, { schema: SCHEMA, parentPageId: pageId, lang, demo, log, state, save: () => saveConfig(config) }))
     .then((r) => {
       log('demo'); mark('demo', demo ? 'done' : 'skipped');
       for (const s of setupJob.steps) if (s.id !== 'save' && s.status !== 'skipped') s.status = 'done';
@@ -599,15 +630,17 @@ Object.assign(ACTIONS, {
     if (!PAGE_ID_RE.test(String(body.pageId || ''))) throw new ValidationError({ pageId: t('Wybierz stronę z listy.') });
     // final (review kodu P2-1): zmiana baz (SOURCES) w trakcie kopii albo przywracania mieszałaby dwa dzienniki
     if (backups.busy()) throw Object.assign(new NotionError(backups.busy(), 409), { code: 'running' });
-    const page = (await listPages(notion, SCHEMA)).find((p) => p.id === body.pageId);
+    const allPages = await listPages(notion, SCHEMA);
+    const page = allPages.find((p) => p.id === body.pageId);
     if (!page?.journal) throw new ValidationError({ pageId: t('Na tej stronie nie ma kompletnego dziennika (4 baz).') });
     finishInstall({ dsIds: page.journal.dsIds, dbIds: page.journal.dbIds, rootUrl: page.url, rootPageId: page.id, lang: page.journal.lang, schemaVersion: 0 });
+    const settings = await adoptSettingsBlock(page.id, allPages);
     // Bieżąca wersja schematu tylko wtedy, gdy w dzienniku niczego nie brakuje (podgląd naprawy jest pusty).
     // Inaczej zostaje 0, żeby „Napraw wszystko” i aktualizacja uzupełniły braki migracjami.
     const probe = await fixSchema({ ...healthCtx(), migrationsDir: path.join(ROOT, 'migrations'), dryRun: true });
     const complete = !probe.changes.length && !probe.manual.length;
     if (complete) { config.schemaVersion = SCHEMA_VERSION; saveConfig(config); }
-    return { ok: true, rootUrl: page.url, lang: page.journal.lang, complete, schemaVersion: config.schemaVersion };
+    return { ok: true, rootUrl: page.url, lang: page.journal.lang, complete, schemaVersion: config.schemaVersion, settings };
   },
   '/api/health/fix-all': async (body) => {
     const apply = body.apply === true;
@@ -830,7 +863,13 @@ const server = http.createServer(async (req, res) => {
       const bts = req.method === 'POST' && url.pathname === '/api/backtest/session/save';
       // Backtest (E2): wysyłka trade'ów sesji do Notion, JSON { sessionId, day?, all?, auto? } do 4 KB
       const btn = req.method === 'POST' && url.pathname === '/api/backtest/notion';
-      if (!isShutdown && !action && !isPage && !sh && !dr && !bts && !btn) { res.writeHead(405, SEC_HEADERS); return res.end(); }
+      // [U] 1.11.2026 «oraz dodaj mozliwosc usuniecia sesji…»: usunięcie sesji (plik do sessions/usuniete) i cofnięcie, JSON { id } do 1 KB
+      const btdel = req.method === 'POST' && (url.pathname === '/api/backtest/session/delete' || url.pathname === '/api/backtest/session/restore');
+      // [U] 2026-11-01 «Archiwum Notion + Cofnij»: usunięcie trade'a (strona do archiwum Notion) i cofnięcie. Dziennik: POST /api/trades/<id>/trash|untrash,
+      // backtest: POST /api/backtest/trade/trash|restore { sessionId, tradeId, skipNotion? }. Ciało JSON do 1 KB, identyfikatory walidowane po stronie serwera.
+      const trTrash = req.method === 'POST' ? url.pathname.match(/^\/api\/trades\/([0-9a-f-]{36})\/(trash|untrash)$/i) : null;
+      const btTrade = req.method === 'POST' && (url.pathname === '/api/backtest/trade/trash' || url.pathname === '/api/backtest/trade/restore');
+      if (!isShutdown && !action && !isPage && !sh && !dr && !bts && !btn && !btdel && !trTrash && !btTrade) { res.writeHead(405, SEC_HEADERS); return res.end(); }
       const bad = guardWrite(req, { json: !isShutdown });
       if (bad) {
         console.error('[write] rejected:', bad);
@@ -854,6 +893,36 @@ const server = http.createServer(async (req, res) => {
           const body = await readJson(req, SESSION_BODY_LIMIT, 'Sesja jest zbyt duża.');
           const bb = body && typeof body === 'object' && !Array.isArray(body) ? body : {}; // null/tablica: 400 z magazynu zamiast 500
           return sendJson(res, 200, btStore.save(bb.id, bb.doc, bb.rev));
+        }
+        if (btdel) {
+          const body = await readJson(req, 1024);
+          const bb = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+          if (typeof bb.id !== 'string' || !SESSION_ID_RE.test(bb.id)) throw new BacktestError(t('Nieprawidłowy identyfikator sesji backtestu.'), 400, 'bad-id');
+          if (url.pathname.endsWith('/delete')) {
+            if (btSync.busy(bb.id)) throw new BacktestError(t('Trwa wysyłka tej sesji do Notion. Spróbuj za chwilę.'), 409, 'busy');
+            return sendJson(res, 200, btStore.remove(bb.id));
+          }
+          return sendJson(res, 200, btStore.restore(bb.id));
+        }
+        if (trTrash) {
+          if (!PAGE_ID_RE.test(trTrash[1])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');
+          await readJson(req, 1024);
+          const trashing = trTrash[2].toLowerCase() === 'trash';
+          // trade z sesji backtestu usuwa się w sesji (tam liczą się saldo i statystyki); po usunięciu samej sesji strony zostają i da się je usunąć stąd
+          const guard = (btText) => {
+            const m = MARKER_RE.exec(btText || '');
+            if (!trashing || !m || !btStore.sessionTrade(m[1], m[2])) return;
+            const nm = String(btStore.read(m[1])?.name || m[1]);
+            throw new BacktestError(t('Ten trade należy do sesji backtestu „{name}”. Usuń go w sesji (Backtest, zakładka Historia).', { name: nm }), 409, 'backtest-owned');
+          };
+          return sendJson(res, 200, await writer.trashTradePage(trTrash[1].toLowerCase(), trashing, { guard }));
+        }
+        if (btTrade) {
+          const body = await readJson(req, 1024);
+          const bb = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+          if (typeof bb.sessionId !== 'string' || !SESSION_ID_RE.test(bb.sessionId)) throw new BacktestError(t('Nieprawidłowy identyfikator sesji backtestu.'), 400, 'bad-id');
+          if (url.pathname.endsWith('/trash')) return sendJson(res, 200, await btSync.trashTrade({ sessionId: bb.sessionId, tradeId: bb.tradeId, skipNotion: bb.skipNotion === true }));
+          return sendJson(res, 200, await btSync.untrashTrade({ sessionId: bb.sessionId, tradeId: bb.tradeId }));
         }
         if (btn) {
           const body = await readJson(req, 4096);

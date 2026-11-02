@@ -135,7 +135,7 @@ const ov = await page.evaluate(() => {
 check('P32-2 podgląd: boxy sesji i linie high/low z opisami', ov.boxes >= 2 && ov.lines >= 4 && ov.labels.some((x) => /^(Azja|Londyn|NY) [HL]$/.test(x)), JSON.stringify(ov));
 if (SHOTS) await page.locator('.lb-chart .swc-plot').screenshot({ path: path.join(SHOTS, 'P32-1920-sesje-sweep.jpg'), type: 'jpeg', quality: 85 });
 await lb('.swc-ovbtn').click(); await sleep(200);
-check('P32-2 ustawienia nakładek na wykresie: godziny, kolory, linie, PDH/PDL', await lb('.swc-ovpop').isVisible() && (await lb('.swc-ovpop input[type="time"]').count()) === 6);
+check('P32-2 ustawienia nakładek na wykresie: godziny, kolory, linie, PDH/PDL', await lb('.swc-ovpop').isVisible() && (await lb('.swc-ovpop input[data-wd="time"]').count()) === 6);
 if (SHOTS) await page.locator('.lb-chart .swc-ovpop').screenshot({ path: path.join(SHOTS, 'P32-1920-ustawienia-sesji.jpg'), type: 'jpeg', quality: 90 });
 await lb('.swc-ovpop label:has([data-ovk="sess.asia.on"])').click(); await sleep(300);
 const ov2 = await page.evaluate(() => document.querySelectorAll('.lb-chart svg rect.sess.asia').length);

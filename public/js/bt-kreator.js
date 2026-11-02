@@ -8,9 +8,12 @@ import { t } from './i18n.js';
 import { esc, shortDate } from './format.js';
 import { newSessionId } from './bt-klient.js';
 import { emptyBook } from './bt-wypelnienia.js';
-import { sanitizeBt, nyAt } from './bt-czas.js';
+import { sanitizeBt, nyAt, BT_PRESETS } from './bt-czas.js';
 import { SESSION_V, nyDayOf } from './bt-sesja.js';
 import { mountFilterEditor } from './bt-filtr-widok.js';
+import { setDayRule, refreshDayRule } from './wybor-daty.js';
+import { addDays, weekdayMon } from './wybor-daty-logika.js';
+import { FAMILY } from './kontrakty.js';
 
 export const INSTRUMENTS = ['NQ', 'ES', 'MNQ', 'MES'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -73,12 +76,12 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
       <div class="bt-fgrid">
         <label class="bt-f"><span class="lbl">${esc(t('Nazwa'))}</span><input class="sp-in" name="name" maxlength="80" autocomplete="off" placeholder="${esc(t('np. NQ otwarcie 2024'))}"></label>
         <fieldset class="bt-f" data-k="instruments"><legend class="lbl">${esc(t('Instrumenty'))}</legend><div class="bt-chk">${INSTRUMENTS.map((i) => `<label class="check"><input type="checkbox" name="inst" value="${i}" ${i === 'NQ' ? 'checked' : ''}> ${i}</label>`).join('')}</div></fieldset>
-        <label class="bt-f" data-k="dates"><span class="lbl">${esc(t('Data startu'))}</span><input class="sp-in" type="date" name="from" value="${from}" aria-describedby="bt-fdata"><span class="note bt-fsub" id="bt-fdata" role="status"></span></label>
+        <label class="bt-f" data-k="dates"><span class="lbl">${esc(t('Data startu'))}</span><input class="sp-in" type="text" data-wd="date" name="from" value="${from}" aria-describedby="bt-fdata" data-wd-poza="${esc(t('Poza zakresem danych'))}"><span class="note bt-fsub" id="bt-fdata" role="status"></span></label>
         <label class="bt-f"><span class="lbl">${esc(t('Saldo startowe (USD)'))}</span><input class="sp-in" type="number" name="balance" min="1" step="1" value="50000"></label>
         <div class="bt-f" data-k="risk"><span class="lbl">${esc(t('Ryzyko na trade'))}</span><div class="bt-row">${seg('riskMode', [['usd', 'USD'], ['pct', t('% salda')]], dflt.risk.mode)}<input class="sp-in" type="number" name="risk" min="0" step="any" value="${dflt.risk.value}" aria-label="${esc(t('Wartość ryzyka'))}"></div></div>
         <div class="bt-f" data-k="riskBase" ${dflt.risk.mode === 'pct' ? '' : 'hidden'}><span class="lbl">${esc(t('Ryzyko % liczone od'))}</span>${seg('riskBase', [['current', t('bieżącego salda')], ['start', t('salda startowego')]], 'current')}</div>
         <label class="bt-f"><span class="lbl">${esc(t('Prowizja za kontrakt (USD)'))}</span><input class="sp-in" type="number" name="commission" min="0" step="0.01" value="0" aria-describedby="bt-fcom"><span class="note bt-fsub" id="bt-fcom">${esc(t('W obie strony, odejmowana od wyniku. 0 = bez prowizji.'))}</span></label>
-        <label class="bt-f"><span class="lbl">${esc(t('Godzina startu (NY)'))}</span><input class="sp-in" type="time" name="startTime" value="${dflt.startTime}"></label>
+        <label class="bt-f"><span class="lbl">${esc(t('Godzina startu (NY)'))}</span><input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-wd-presety="${BT_PRESETS}" name="startTime" value="${dflt.startTime}"></label>
         <label class="bt-f"><span class="lbl">${esc(t('Konto z Notion (opcjonalnie)'))}</span><select class="sp-in sp-sel" name="account"><option value="">${esc(t('Bez konta'))}</option>${accounts.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select></label>
       </div>
       <p class="note bt-fhint">${esc(t('Replay płynie od daty startu do końca danych, bez końca dnia. Filtr dni wyznacza skok „Następny dzień z filtra”.'))}</p>
@@ -167,7 +170,18 @@ export function openKreator(host, { client, defaults = null, getDefaults = null,
     dataNote.textContent = t('Dane: {a} – {z}', { a: fmtDay(a), z: fmtDay(z) });
     if (!fromTouched) fromIn.value = defaultStart(b, now());
   }
-  form.addEventListener('change', (ev) => { if (ev.target.name === 'inst') showData(); });
+  // wybor-daty (1.6.1): w kalendarzu daty startu przekreślone dni bez świec wybranych instrumentów (z powodem w podpowiedzi), poza zakresem danych też
+  setDayRule(fromIn, async (a, z) => {
+    const ins = INSTRUMENTS.filter((i) => new FormData(form).getAll('inst').includes(i));
+    if (!ins.length) return new Map();
+    const idx = await client.days({ instruments: ins, from: a, to: z, mkt: false });
+    const fams = [...new Set(ins.map((i) => FAMILY[i]))];
+    const ok = new Set((idx.days || []).filter((f) => fams.some((x) => f.has1m?.[x] === true)).map((f) => f.day));
+    const out = new Map();
+    for (let d = a; d <= z; d = addDays(d, 1)) if (!ok.has(d)) out.set(d, weekdayMon(d) >= 5 ? t('Weekend: giełda zamknięta') : t('Brak świec w tym dniu'));
+    return out;
+  });
+  form.addEventListener('change', (ev) => { if (ev.target.name === 'inst') { refreshDayRule(fromIn); showData(); } });
   showData();
   let busy = false;
   form.addEventListener('submit', async (ev) => {

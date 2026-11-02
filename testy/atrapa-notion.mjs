@@ -619,6 +619,20 @@ http.createServer(async (req, res) => {
     const more = from + size < parent.children.length;
     return send(res, 200, { object: 'list', results: parent.children.slice(from, from + size).map(strip), has_more: more, next_cursor: more ? String(from + size) : null });
   }
+  // odczyt i usunięcie (archiwizacja) pojedynczego bloku, jak w Notion: GET /v1/blocks/{id}, DELETE /v1/blocks/{id}
+  if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})$/)) && req.method === 'GET') {
+    const blk = shared ? blocks.get(m[1]) : null;
+    if (!blk) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
+    return send(res, 200, strip(blk));
+  }
+  if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})$/)) && req.method === 'DELETE') {
+    const blk = shared ? blocks.get(m[1]) : null;
+    if (!blk) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });
+    const holder = blockParent(blk.parent?.block_id || blk.parent?.page_id);
+    if (holder) holder.children = holder.children.filter((c) => c.id !== blk.id);
+    blocks.delete(blk.id);
+    return send(res, 200, { ...strip(blk), archived: true, in_trash: true });
+  }
   if ((m = p.match(/^\/v1\/blocks\/([0-9a-f-]{36})$/)) && req.method === 'PATCH') {
     const blk = shared ? blocks.get(m[1]) : null;
     if (!blk) return send(res, 404, { object: 'error', code: 'object_not_found', message: 'Could not find block' });

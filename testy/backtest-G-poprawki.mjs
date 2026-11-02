@@ -224,6 +224,7 @@ export default ({ test, H, assert, ROOT }) => {
   }
   const K = (tag, min) => tagged('backtest-kreator.html', 'poprawki', 4926, tag, min);
   test('backtest-G2: edytor filtra nie wstrzykuje HTML z szablonu ani z sesji', () => K('xss', 5));
+  test('backtest-poprawki: pola Od i Do w filtrze dni mają zakres danych, dni bez danych i otwierają się na miesiącu daty startu', () => K('zakres', 4));
   test('backtest-G2: Utwórz po zwinięciu filtra i zmianie dat', () => K('utworz', 3));
   test('backtest-G2: lista szablonów świeża przy zapisie', () => K('szablony', 3));
   test('backtest-G2: wydarzenie całodniowe bez 0:00, notka przy gap', () => K('drobne', 4));

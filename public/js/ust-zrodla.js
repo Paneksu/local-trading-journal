@@ -9,6 +9,7 @@
 // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 3: nowa instalacja bez kredytu, dopóki użytkownik go nie wpisze)
 // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 4: codzienne okno 1s NQ domyślnie wyłączone w nowych instalacjach)
 import { t, getLang, locale } from './i18n.js';
+import { formatDate } from './wybor-daty-logika.js';
 import { newsSourceHtml, earnSourceHtml } from './newsy-karty.js';
 import { esc, L, gHead, grp, dot, docLink, kv, getJson, postJson, centsUp, amountMatches } from './ust-wspolne.js';
 
@@ -37,6 +38,8 @@ const money = (x) => new Intl.NumberFormat(locale(), { minimumFractionDigits: 2,
 const pct = (a, b) => (b > 0 ? Math.max(0, Math.min(100, Math.round((a / b) * 100))) : 0);
 const fmtT = (sec) => new Intl.DateTimeFormat(locale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }).format(new Date(sec * 1000));
 
+// 1.6.1 (przegląd wizualny P3-A3): data ważności kredytu w tym samym formacie co pole „Ważny do” (dd.mm.rrrr), nie ISO
+const fmtExp = (iso) => formatDate(iso, getLang()) || String(iso ?? '');
 export function createZrodla(ctx) {
   const root = () => ctx.root();
   // stan z GET /api/sources (klucze tak/nie + 4 znaki, limity, kredyt, kolejka, import), statusy newsów i earningsów
@@ -75,15 +78,15 @@ export function createZrodla(ctx) {
         <div class="sp-keyrow"><input id="${K.input}" class="sp-in sp-key" type="password" autocomplete="off" spellcheck="false" maxlength="100" data-fk="${K.input}" placeholder="${esc(k?.configured ? t('Zapisany. Wklej nowy, aby zmienić') : t(K.paste))}" aria-describedby="${K.input}-d">
           <button type="button" class="btn sm" data-act="${K.save}" data-fk="${K.input}-save">${L('Zapisz i sprawdź')}</button></div>
         <p class="note" id="${K.input}-d" aria-live="polite">${m ? `<span class="${msgCls(m)}">${esc(m.text)}</span> ` : ''}${esc(desc)}</p>
-        ${k?.configured ? `<div class="upd-actions"><button type="button" class="btn sm" data-act="diag-test" data-v="${s}" data-fk="zr-test-${s}"${ctx.testing().has(s) ? ' disabled' : ''}>${ctx.testing().has(s) ? L('Sprawdzam…') : L('Testuj')}</button>
+        ${k?.configured ? `<div class="upd-actions"><button type="button" class="btn sm${ctx.testing().has(s) ? ' busy' : ''}" data-act="diag-test" data-v="${s}" data-fk="zr-test-${s}"${ctx.testing().has(s) ? ' disabled aria-busy="true"' : ''}>${ctx.testing().has(s) ? `<span class="spin" aria-hidden="true"></span>${L('Sprawdzam…')}` : L('Testuj')}</button>
           <button type="button" class="btn ghost sm" data-act="zr-key-del" data-v="${s}" data-fk="zr-key-del-${s}">${L('Usuń klucz')}</button></div>` : ''}${confirm}</div>`;
   }
 
   // ---------- Databento ----------
   function creditLine(c) {
     if (!c?.configured) return `<span class="sv-low">${L('nie wpisany')}</span>`;
-    if (c.expired) return `<span class="sv-low">${esc(t('wygasł {expires}', { expires: c.expires }))}</span>`;
-    return esc(t('{left} z {start} USD, ważny do {expires}', { left: money(c.leftUsd), start: money(c.startUsd), expires: c.expires }));
+    if (c.expired) return `<span class="sv-low">${esc(t('wygasł {expires}', { expires: fmtExp(c.expires) }))}</span>`;
+    return esc(t('{left} z {start} USD, ważny do {expires}', { left: money(c.leftUsd), start: money(c.startUsd), expires: fmtExp(c.expires) }));
   }
   function databentoHtml() {
     const d = D();
@@ -113,12 +116,12 @@ export function createZrodla(ctx) {
       body += `<div class="sv-confirm" role="group" aria-labelledby="sv-cr-h"><p id="sv-cr-h"><b>${L('Stan kredytu z portalu Databento')}</b></p>
         <div class="sv-fields"><label><span class="lbl">${L('Kwota startowa (USD)')}</span><input id="sv-cr-start" class="sp-in" type="number" min="0.01" max="${caps.creditMaxUsd ?? 125}" step="0.01" data-fk="sv-cr-start" value="${esc(cv.start)}"></label>
           <label><span class="lbl">${L('Wydano do dziś (USD)')}</span><input id="sv-cr-spent" class="sp-in" type="number" min="0" step="0.01" data-fk="sv-cr-spent" value="${esc(cv.spent)}"></label>
-          <label><span class="lbl">${L('Ważny do')}</span><input id="sv-cr-exp" class="sp-in" type="date" data-fk="sv-cr-exp" value="${esc(cv.expires)}"></label></div>
+          <label><span class="lbl">${L('Ważny do')}</span><input id="sv-cr-exp" class="sp-in" type="text" data-wd="date" data-fk="sv-cr-exp" value="${esc(cv.expires)}"></label></div>
         <p class="note">${esc(t('Kwota startowa najwyżej {max} USD. Datę weź z portalu (dzień przed wygaśnięciem to bezpieczny zapas).', { max: caps.creditMaxUsd ?? 125 }))}</p>
         <div class="upd-actions"><button type="button" class="btn sm" data-act="zr-cr-next" data-fk="zr-cr-next">${L('Dalej')}</button><button type="button" class="btn ghost sm" data-act="zr-cr-no" data-fk="zr-cr-no">${L('Anuluj')}</button></div>${msgHtml(credit.msg)}</div>`;
     } else if (credit?.step === 'confirm') {
       const cv = credit.values;
-      body += `<div class="sv-confirm" role="group" aria-labelledby="sv-cr-c"><p id="sv-cr-c"><b>${esc(t('Zapisać stan kredytu: zostaje {left} z {start} USD, ważny do {expires}?', { left: money(cv.startN - cv.spentN), start: money(cv.startN), expires: cv.expires }))}</b></p>
+      body += `<div class="sv-confirm" role="group" aria-labelledby="sv-cr-c"><p id="sv-cr-c"><b>${esc(t('Zapisać stan kredytu: zostaje {left} z {start} USD, ważny do {expires}?', { left: money(cv.startN - cv.spentN), start: money(cv.startN), expires: fmtExp(cv.expires) }))}</b></p>
         <p class="note">${L('Strażnik pobierania zatrzyma płatne pobranie, gdy wycena przekroczy pozostały kredyt albo minie data wygaśnięcia.')}</p>
         <div class="upd-actions"><button type="button" class="btn sm" data-act="zr-cr-save" data-fk="zr-cr-save">${esc(t('Zapisz stan kredytu ({left} USD)', { left: money(cv.startN - cv.spentN) }))}</button><button type="button" class="btn ghost sm" data-act="zr-cr-back" data-fk="zr-cr-back">${L('Wróć')}</button></div>${msgHtml(credit.msg)}</div>`;
     }
@@ -176,8 +179,8 @@ export function createZrodla(ctx) {
     const part = (kind) => {
       const s = imp[kind], is1m = kind === '1m';
       const fields = `<div class="sv-fields">${is1m ? `<label><span class="lbl">${L('Instrument')}</span><select id="sv-imp-sym" class="sp-in sp-sel" data-fk="sv-imp-sym">${['NQ', 'ES'].map((x) => `<option value="${x}"${(s?.sym || 'NQ') === x ? ' selected' : ''}>${x}</option>`).join('')}</select></label>` : ''}
-          <label><span class="lbl">${L('Od')}</span><input id="sv-imp${kind}-from" class="sp-in" type="date" data-fk="sv-imp${kind}-from" min="${is1m ? IMPORT_FROM_1M : IMPORT_FROM_1S}" value="${esc(s?.from || (is1m ? IMPORT_FROM_1M : IMPORT_FROM_1S))}"></label>
-          <label><span class="lbl">${L('Do')}</span><input id="sv-imp${kind}-to" class="sp-in" type="date" data-fk="sv-imp${kind}-to" value="${esc(s?.to || todayIso())}"></label>
+          <label><span class="lbl">${L('Od')}</span><input id="sv-imp${kind}-from" class="sp-in" type="text" data-wd="date" data-fk="sv-imp${kind}-from" min="${is1m ? IMPORT_FROM_1M : IMPORT_FROM_1S}" value="${esc(s?.from || (is1m ? IMPORT_FROM_1M : IMPORT_FROM_1S))}"></label>
+          <label><span class="lbl">${L('Do')}</span><input id="sv-imp${kind}-to" class="sp-in" type="text" data-wd="date" data-fk="sv-imp${kind}-to" value="${esc(s?.to || todayIso())}"></label>
           <button type="button" class="btn sm" data-act="zr-imp-quote" data-v="${kind}" data-fk="zr-imp-quote-${kind}"${s?.busy || running || blocked ? ' disabled' : ''}>${s?.busy === 'quote' ? L('Wyceniam…') : L('Wyceń')}</button></div>`;
       let res = '';
       const q = s?.quote;

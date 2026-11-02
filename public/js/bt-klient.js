@@ -39,6 +39,29 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
   const statsSource = async ({ ids = null } = {}) => getJson(`/api/backtest/stats-source${ids && ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : ''}`);
   // K (31.10.2026): ciągła oś czasu: zakres (tf=base strumień bazowy, tf=<interwał> historia wykresu), granice danych i newsy z wyprzedzeniem dla skoku „Następny news”
   const range = async ({ instruments, from, to, tf = 'base' }) => getJson(`/api/backtest/range?instruments=${encodeURIComponent(instruments.join(','))}&from=${from}&to=${to}&tf=${encodeURIComponent(tf)}`);
+  // [U] 1.11.2026 «oraz dodaj mozliwosc usuniecia sesji…»: usunięcie przenosi plik sesji do sessions/usuniete, restore przywraca
+  async function post(url, body) {
+    let r;
+    // brak sieci: błąd bez statusu i z kodem 'network' (wywołujący pokazuje własny, zrozumiały komunikat)
+    try { r = await fetchImpl(url, { method: 'POST', headers: HEADERS, body: JSON.stringify(body) }); } catch (err) { const e = new Error(String(err?.message || 'network')); e.code = 'network'; throw e; }
+    let j = null;
+    try { j = await r.json(); } catch { /* bez treści */ }
+    if (!r.ok) { const e = new Error(j?.error || String(r.status)); e.status = r.status; e.code = j?.code; throw e; }
+    return j;
+  }
+  // Jeden sposób dla usuwania sesji i trade'ów oraz ich cofania: zaległy zapis musi się udać przed żądaniem (stale znaczy, że plik zmieniła inna karta, więc nic nie czeka);
+  // inaczej serwer czytałby plik bez zmian z przeglądarki (sesja wróciłaby jako nowa, trade dostałby 404 albo 409). Błąd zapisu przerywa z kodem 'flush', żądanie nie idzie.
+  const settle = async () => {
+    try { await flush(); } catch (e) {
+      if (e.code !== 'stale') { const err = new Error(e.message); err.code = 'flush'; err.status = e.status; throw err; }
+    }
+  };
+  const remove = async (id) => { await settle(); revs.delete(id); return post('/api/backtest/session/delete', { id }); };
+  const restore = (id) => post('/api/backtest/session/restore', { id });
+  // Decyzja 2026-11-02 (poprawki po przeglądach): usunięcie trade'a sesji i Cofnij. Najpierw zapis zaległych zmian (settle), potem strona trade'a w Notion do kosza albo z powrotem;
+  // trade ze swojej kopii sesji usuwa (i dopisuje) wywołujący, z awaitowanym zapisem. skipNotion = usuń tylko lokalnie (za zgodą, gdy Notion nie zna strony).
+  const trashTrade = async (sessionId, tradeId, { skipNotion = false } = {}) => { await settle(); return post('/api/backtest/trade/trash', { sessionId, tradeId, ...(skipNotion ? { skipNotion: true } : {}) }); };
+  const restoreTrade = async (sessionId, tradeId) => { await settle(); return post('/api/backtest/trade/restore', { sessionId, tradeId }); };
   const bounds = async (instruments) => getJson(`/api/backtest/bounds?instruments=${encodeURIComponent(instruments.join(','))}`);
   const news = async ({ from, to }) => getJson(`/api/news?from=${Math.floor(from)}&to=${Math.floor(to)}`);
 
@@ -97,5 +120,5 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
     return j;
   }
 
-  return { setOnError: (fn) => { onError = fn || onError0; }, load, list, days, statsSource, range, bounds, news, save, create, flush, notion, pending: () => (queued ? 1 : 0) + (inflight ? 1 : 0), lastError: () => lastError };
+  return { setOnError: (fn) => { onError = fn || onError0; }, remove, restore, trashTrade, restoreTrade, load, list, days, statsSource, range, bounds, news, save, create, flush, notion, pending: () => (queued ? 1 : 0) + (inflight ? 1 : 0), lastError: () => lastError };
 }

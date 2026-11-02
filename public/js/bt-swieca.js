@@ -7,6 +7,32 @@
 import { aggregate, parseTf, sessionBounds } from './swiece.js';
 
 export const REPLAY_TFS = ['1s', '5s', '10s', '15s', '30s', '1m', '2m', '3m', '5m', '15m', '30m', '1h'];
+// [U] 1.11.2026 «nie da sie dowolnie zmieniac timeframe»: interwał własny to liczba + s/m/h (np. 7m, 45s, 2h) do doby; poniżej minuty tylko jako wielokrotność świecy 1s,
+// od minuty wyłącznie wielokrotność 60 s (świeca bazowa poza oknem 1s to 1m, więc 90s dałoby fałszywy agregat). Agregacja kotwiczona w otwarciu sesji (aggregate), bez przyszłości.
+export const TF_MAX_SEC = 86400;
+export function isReplayTf(tf) {
+  const p = parseTf(tf);
+  return !!p && (p.unit === 's' || p.unit === 'm' || p.unit === 'h') && p.sec <= TF_MAX_SEC && (p.sec < 60 || p.sec % 60 === 0);
+}
+// Zapis użytkownika → { tf } albo { problem } (kod powodu: format, unit, max, multiple, no1s). sec1s = czy kursor stoi w prawdziwym oknie 1s tego instrumentu.
+// Interwał sekundowy, który nie dzieli minuty (np. 45s, 7s): bez okna 1s kubełki dzieliłyby świece 1m na nierówne części, więc wymaga okna 1s.
+// Dzielniki 60 (1, 5, 10, 15, 30 s) mają fallback na świece 1m z notatką pod wykresem.
+export function tfNeeds1s(tf) {
+  const p = parseTf(tf);
+  return !!p && p.sec < 60 && 60 % p.sec !== 0;
+}
+export function checkCustomTf(raw, { sec1s = false } = {}) {
+  const s = String(raw ?? '').trim().replace(/\s+/g, '');
+  const m = /^(\d{1,4})([a-zA-Z])$/.exec(s);
+  if (!m || Number(m[1]) < 1) return { problem: 'format' };
+  const unit = m[2] === 'S' ? 's' : m[2] === 'H' ? 'h' : m[2];
+  if (!['s', 'm', 'h'].includes(unit)) return { problem: 'unit' };
+  const tf = `${Number(m[1])}${unit}`, p = parseTf(tf);
+  if (!p) return { problem: 'format' };
+  if (p.sec > TF_MAX_SEC) return { problem: 'max' };
+  if (p.sec < 60) return sec1s ? { tf } : { problem: 'no1s' };
+  return p.sec % 60 === 0 ? { tf } : { problem: 'multiple' };
+}
 // Skok o więcej świec bazowych niż ten próg przebudowuje agregat od zera (reset) zamiast dokładać świecę po świecy.
 const RESET_OVER = 600;
 

@@ -100,7 +100,7 @@ export function createProp({ state, getModel, reload, resolveRange, inRange }) {
       ${fld('size', L('Rozmiar'), sizeRow, { cls: 'span4', labelFor: false })}
       ${fld('name', L('Nazwa konta'), `<input id="f-name" name="name" type="text" maxlength="120" value="${esc(v.name)}" aria-describedby="e-name">`, { cls: 'span2', hint: editing ? '' : L('Podpowiadana z firmy i rozmiaru; możesz ją zmienić.') })}
       ${fld('status', L('Status'), selectHtml('status', statuses.map((s) => ({ value: s, label: tr(s) })), v.status, tr('Bez statusu')), { cls: 'span1' })}
-      ${fld('bought', L('Data zakupu'), `<input id="f-bought" name="bought" type="date" value="${esc(v.bought)}" aria-describedby="e-bought">`, { cls: 'span1' })}
+      ${fld('bought', L('Data zakupu'), `<input id="f-bought" name="bought" type="text" data-wd="date" data-wd-pusty value="${esc(v.bought)}" aria-describedby="e-bought">`, { cls: 'span1' })}
       ${edSaldo
         ? fld('saldo', L('Saldo $'), `<input id="f-saldo" name="saldo" type="text" inputmode="decimal" value="${v.saldo ?? ''}" aria-describedby="e-saldo">`, { cls: 'span1', hint: editing ? '' : L('Domyślnie równe rozmiarowi.') })
         : `<div class="fld span1"><span class="lbl">${L('Saldo')}</span><p class="ro">${editing && konto.saldo != null ? moneyFmt(konto.saldo) : DASH}</p><p class="fhint">${L('Liczy Notion (formuła), tylko do odczytu.')}</p></div>`}
@@ -181,7 +181,7 @@ export function createProp({ state, getModel, reload, resolveRange, inRange }) {
     const body = `<div class="fgrid">
       ${fld('kind', L('Rodzaj'), kindPills, { cls: 'span4', labelFor: false })}
       ${fld('amount', L('Kwota $'), `<input id="f-amount" name="amount" type="text" inputmode="decimal" value="${v.amount ?? ''}" placeholder="${L('np. 147')}" aria-describedby="e-amount">`, { cls: 'span1' })}
-      ${fld('date', L('Data'), `<input id="f-date" name="date" type="date" value="${esc(v.date)}" aria-describedby="e-date">`, { cls: 'span1' })}
+      ${fld('date', L('Data'), `<input id="f-date" name="date" type="text" data-wd="date" value="${esc(v.date)}" aria-describedby="e-date">`, { cls: 'span1' })}
       ${fld('konto', L('Konto'), selectHtml('konto', kontoOpts, v.konto, tr('Bez konta')), { cls: 'span2' })}
       ${fld('firma', L('Firma'), firmRow(v.firma), { cls: 'span4', labelFor: false })}
       ${fld('name', L('Opis'), `<input id="f-name" name="name" type="text" maxlength="200" value="${esc(v.name)}" aria-describedby="e-name">`, { cls: 'span4', hint: editing ? '' : L('Podpowiadany z rodzaju, firmy i konta; możesz go zmienić.') })}

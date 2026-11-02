@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: usuwanie trade'ów backtestu (strona robocza)</title>
+<!-- Strona robocza testu testy/backtest-usun-trade.mjs (usuwanie trade'ów z cofnięciem, 1.6.1). [U] 2026-11-01 «Archiwum Notion + Cofnij».
+     Podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) na atrapie Notion po migracjach i ze świecami syntetycznymi; prawdziwe Notion nie dostaje żądań.
+     Prawdziwe moduły: bt-replay.js, bt-szuflada.js, bt-journal-okno.js, modal.js, bt-klient.js, prawdziwy styles.css i features.css.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. ?part=shot0..shot9 zostawiają stan do zrzutu (lista w kodzie), ?theme=platinum zmienia motyw. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'test';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (cond, msg) => checks.push({ tag: 'usun-trade', ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 8000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(25); } return null; };
+window.addEventListener('error', (e) => checks.push({ tag: 'błąd strony', ok: false, msg: e.error?.stack || e.message }));
+window.addEventListener('unhandledrejection', (e) => checks.push({ tag: 'błąd strony', ok: false, msg: String(e.reason?.stack || e.reason) }));
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+const finish = (fatal = null) => { out.textContent = JSON.stringify({ checks, fatal }); };
+// bezpiecznik: gdy któryś krok utknie, wynik z dotychczasowymi sprawdzeniami wraca przed limitem czasu przeglądarki
+setTimeout(() => { if (out.textContent === '…') finish('strona utknęła po sprawdzeniu: ' + (checks.at(-1)?.msg || 'brak')); }, 110000);
+
+const DAY = '2024-03-12';
+try {
+  for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1', 'thq.bt.dock.v1']) localStorage.removeItem(k);
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const c0 = nyAt(DAY, '09:31');
+  const mkTrade = (n, pnl, r) => {
+    const entryT = nyAt(DAY, '09:05') + n * 60;
+    return { id: `t${n}`, day: DAY, instrument: 'NQ', contract: null, dir: 'Long', qty: 1, entryT, entryPrice: 18000 + n, sl0: 17990 + n, sl: 17990 + n, tp: 18020 + n, be: false,
+      exits: [{ t: entryT + 120, price: 18010 + n, qty: 1, reason: 'tp' }], exitT: entryT + 120, exitPrice: 18010 + n, r, pnl, fee: 0, maeR: -0.4, mfeR: 1.5,
+      setup: 'Breakout', notes: `notatka ${n}`, journal: 'done', drawings: null, notion: { id: null, state: 'pending', error: null } };
+  };
+  const mkSession = async (name, trades) => {
+    const doc = newSessionDoc({
+      id: newSessionId(), name,
+      def: { instruments: ['NQ'], from: DAY, balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
+    });
+    doc.cursor = c0; doc.trades = trades; doc.tradeSeq = trades.length;
+    await client.create(doc);
+    return doc;
+  };
+  const dlg = () => document.querySelector('.scrim .modal');
+  const toastEl = () => document.getElementById('toast');
+  const toastShown = () => { const t = toastEl(); return t && !t.hidden ? t : null; };
+  const sessionPages = async (id) => (await getJson('/api/data?refresh=1')).data.trades.filter((x) => (x.btSession || '').includes(`[${id}/`));
+  const fileOf = (id) => getJson(`/api/backtest/session/${id}`);
+  // tekst okna z twardymi spacjami zamienionymi na zwykłe (asercje czytają zdania); surowy tekst ostatniego okna w lastRaw
+  let lastRaw = '';
+  const answer = async (yes) => { await until(() => dlg()); lastRaw = dlg().textContent; const txt = lastRaw.replace(/ /g, ' '); dlg().querySelector(`[data-cd="${yes ? 'yes' : 'no'}"]`).click(); await until(() => !dlg()); return txt; };
+  // zaufane klawisze przez CDP (Input.dispatchKeyEvent): zdarzenia syntetyczne nie klikają przycisków i nie dają :focus-visible
+  let pid = 0;
+  const press = (spec) => new Promise((r) => { const id = ++pid; window.__press(JSON.stringify({ id, ...spec })); const t = setInterval(() => { if (window.__done && window.__done[id]) { clearInterval(t); r(); } }, 15); });
+  const SPACE = { key: ' ', code: 'Space', vk: 32, text: ' ' }, ENTER = { key: 'Enter', code: 'Enter', vk: 13, text: String.fromCharCode(13) };
+  const rowState = (id) => document.querySelector(`.bt-dk-hist tr[data-row="${id}"] .bt-st-j`)?.dataset.st;
+  const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  const toastClear = () => { const t = toastShown(); if (!t) return true; const rows = [...document.querySelectorAll('.bt-dk-hist tbody tr')].map((r) => r.getBoundingClientRect()); const r = t.getBoundingClientRect(); return !rows.some((x) => overlaps(r, x)); };
+  const delBtn = (id) => document.querySelector(`.bt-dock [data-dka="delete"][data-id="${id}"]`);
+  const ids = (R) => (R.doc().trades || []).map((x) => x.id).join();
+  const histIds = () => [...document.querySelectorAll('.bt-dock .bt-dk-hist tbody tr')].map((r) => r.dataset.row).join();
+  const open = async (doc, opts = {}) => {
+    const R = openReplay(document.body, { sessionId: doc.id, client, ...opts });
+    await R.ready;
+    R.dock().setTab('hist');
+    await until(() => document.querySelector('.bt-dock .bt-dk-hist'));
+    return R;
+  };
+
+  // ---------- sesja A: trade'y wysłane do Notion (t1, t2) i jeden niewysłany (t3) ----------
+  const A = await mkSession('Sesja A', [mkTrade(1, 200, 1), mkTrade(2, -100, -0.5)]);
+  const sent = await client.notion({ sessionId: A.id });
+  rec(sent.sent === 2, `t1 i t2 wysłane do Notion: ${JSON.stringify([sent.sent, sent.failed])}`);
+  A.trades.push(mkTrade(3, 300, 1.5)); A.tradeSeq = 3;
+  await client.save(A, { now: true });
+  rec((await sessionPages(A.id)).length === 2, 'w Notion są strony t1 i t2');
+
+  let R = await open(A);
+  if (part.startsWith('shot')) {
+    // stany do zrzutów (testy/backtest-usun-trade.mjs ich nie uruchamia): ?part=shot0 Historia, shot potwierdzenie ze stroną w Notion, shot2 Cofnij, shot3 bez strony w Notion,
+    // shot4 okno 404, shot5 błąd Notion, shot6 „Trade przywrócony”, shot7 w trakcie usuwania, shot8 Usuń w oknie Journala, shot9 fokus klawiatury na Cofnij
+    const wrap = (o) => ({ ...client, ...o });
+    const reopen = async (c) => { R.close(); await sleep(150); R = openReplay(document.body, { sessionId: A.id, client: c }); await R.ready; R.dock().setTab('hist'); await until(() => delBtn('t2')); };
+    if (part === 'shot0') {
+      // STAN musi dać się przewinąć do widoku obok przyklejonej kolumny akcji (375 px)
+      const box = document.querySelector('.bt-dk-b');
+      box.scrollLeft = box.scrollWidth;
+      await sleep(200);
+      const stan = [...document.querySelectorAll('.bt-dk-hist tbody tr:first-child td')].find((td) => td.querySelector('.bt-st-j'));
+      const acts = document.querySelector('.bt-dk-hist tbody tr:first-child td.bt-dk-a');
+      const a = stan.getBoundingClientRect(), b = acts.getBoundingClientRect();
+      rec(a.right <= b.left + 1 && a.width > 20, `kolumna STAN po przewinięciu jest widoczna obok akcji (STAN do ${Math.round(a.right)}, akcje od ${Math.round(b.left)})`);
+      box.scrollLeft = 0;
+      await sleep(150);
+      const st2 = document.querySelector('.bt-dk-hist tbody tr:first-child .bt-dk-st2'), stc = document.querySelector('.bt-dk-hist tbody tr:first-child td.bt-dk-stc');
+      const narrow = window.innerWidth <= 480;
+      rec(narrow ? getComputedStyle(stc).display === 'none' && getComputedStyle(st2).display !== 'none' && st2.getBoundingClientRect().left < 120 : getComputedStyle(st2).display === 'none' && getComputedStyle(stc).display !== 'none', `STAN: przy ≤ 480 px jako druga linia w komórce instrumentu, szerzej jako kolumna (szerokość ${window.innerWidth}, druga linia: ${getComputedStyle(st2).display}, kolumna: ${getComputedStyle(stc).display})`);
+    } else if (part === 'shot') { delBtn('t2').click(); await until(() => dlg()); }
+    else if (part === 'shot2') { delBtn('t2').click(); await answer(true); await until(() => toastShown()); }
+    else if (part === 'shot3') { delBtn('t3').click(); await until(() => dlg()); }
+    else if (part === 'shot4') {
+      await reopen(wrap({ trashTrade: async () => { throw Object.assign(new Error('Notion nie znalazł strony'), { status: 404, code: 'notion-missing' }); } }));
+      delBtn('t2').click(); await answer(true); await until(() => dlg());
+    } else if (part === 'shot5') {
+      await reopen(wrap({ trashTrade: async () => { throw Object.assign(new Error('Nie udało się połączyć z Notion, więc trade nie został usunięty. Sprawdź połączenie i spróbuj ponownie.'), { status: 503, code: 'notion-offline' }); } }));
+      delBtn('t2').click(); await answer(true); await until(() => toastShown()?.classList.contains('err'));
+    } else if (part === 'shot6') {
+      delBtn('t2').click(); await answer(true);
+      await until(() => toastShown()?.querySelector('.toast-act'));
+      toastShown().querySelector('.toast-act').click();
+      await until(() => /Trade przywrócony/.test(toastShown()?.textContent || ''));
+    } else if (part === 'shot7') {
+      await reopen(wrap({ trashTrade: () => new Promise(() => {}) }));
+      delBtn('t2').click(); await answer(true);
+    } else if (part === 'shot8') {
+      await R.openJournalWindow('t3');
+      await until(() => document.querySelector('.bt-jw [data-jw="delete"]'));
+    } else if (part === 'shot9') {
+      delBtn('t2').click(); await answer(true);
+      await until(() => toastShown()?.querySelector('.toast-act'));
+      toastShown().querySelector('.toast-act').focus();
+    }
+    await sleep(500);
+    if (toastShown()) rec(toastClear(), `powiadomienie nie leży na wierszach tabeli (szerokość ${window.innerWidth})`);
+    finish();
+  } else if (part.startsWith('fokus')) {
+    // prawdziwy fokus z klawiatury (zaufane klawisze CDP): zrzut przed i po, w checks rect fokusowanego elementu i :focus-visible; piksele porównuje skrypt zrzutów
+    const tag = qs.get('tag') || 'x';
+    const shot = (name) => new Promise((r) => { const id = ++pid; window.__shot(JSON.stringify({ id, name: `${tag}-${name}` })); const t = setInterval(() => { if (window.__done && window.__done[id]) { clearInterval(t); r(); } }, 15); });
+    const report = () => { const e = document.activeElement; const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); rec(true, JSON.stringify({ rect: [r.left, r.top, r.width, r.height], fv: e.matches(':focus-visible'), tag: e.tagName, text: e.textContent.trim().slice(0, 30), outline: cs.outlineStyle + ' ' + cs.outlineWidth, shadow: cs.boxShadow.slice(0, 60) })); };
+    if (part === 'fokus1') {
+      delBtn('t2').click(); await answer(true);
+      await until(() => toastShown()?.querySelector('.toast-act'));
+      await sleep(300); await shot('before');
+      await press({ key: 'Shift', code: 'ShiftLeft', vk: 16 });
+      toastShown().querySelector('.toast-act').focus();
+    } else if (part === 'fokus2') {
+      await sleep(300); await shot('before');
+      const row = document.querySelector('.bt-dk-hist tr[data-row="t3"]');
+      row.querySelector('[data-dka="journal"]').focus();
+      await press({ key: 'Tab', code: 'Tab', vk: 9 });
+    } else if (part === 'fokus3') {
+      delBtn('t2').click(); await until(() => dlg());
+      await sleep(300); await shot('before');
+      await press({ key: 'Tab', code: 'Tab', vk: 9 });
+    }
+    await sleep(250);
+    report();
+    await shot('after');
+    finish();
+  } else {
+  rec(R.doc().trades.length === 3 && histIds() === 't3,t2,t1', `Historia ma trzy trade'y: ${histIds()}`);
+  rec(['t1', 't2', 't3'].every((id) => delBtn(id) && /t\d/.test(delBtn(id).getAttribute('aria-label') || '') && !delBtn(id).disabled), 'przy każdym trade\'cie jest przycisk „Usuń” z nazwą dla czytnika ekranu');
+  R.dock().setTab('pos'); await sleep(60);
+  rec(!document.querySelector('.bt-dock [data-dka="delete"]'), 'Pozycje (otwarte): bez przycisku usuwania, usunąć można tylko zamknięty trade');
+  R.dock().setTab('hist'); await until(() => delBtn('t2'));
+  const bal0 = R.accountState().balance;
+  const st0 = rowState('t2');
+  rec(st0 === 'sent', `t2 przed usunięciem ma stan wysyłki „sent”: ${st0}`);
+  rec(bal0 === 50400, `saldo startowe 50 000 + 200 − 100 + 300 = ${bal0}`);
+
+  // Anuluj nic nie zmienia
+  delBtn('t2').click();
+  const ask1 = await answer(false);
+  rec(/Usunąć trade t2\?/.test(ask1) && /trafi do kosza w Notion i po 30 dniach zniknie na stałe/.test(ask1) && /Trade przywrócisz przyciskiem „Cofnij” zaraz po usunięciu/.test(ask1), `replay: tekst nie sugeruje, że przywrócenie strony w Notion przywraca trade w sesji: ${ask1.replace(/\s+/g, ' ').slice(0, 300)}`);
+  const nb = String.fromCharCode(160);
+  rec(lastRaw.includes('w' + nb + 'Notion') && lastRaw.includes('i' + nb + 'po') && lastRaw.includes('na' + nb + 'stałe') && !new RegExp(' [iwzaoIWZAO] ').test(lastRaw), 'pojedyncze litery i „na stałe” mają twarde spacje: ' + JSON.stringify(lastRaw.slice(40, 200)));
+  rec((ask1.match(/Notion/g) || []).length === 1, `słowo „Notion” pada w potwierdzeniu raz: ${(ask1.match(/Notion/g) || []).length}`);
+  rec(/−0,5R/.test(ask1) && /NQ Long × 1/.test(ask1) && /−100/.test(ask1), 'potwierdzenie opisuje trade: instrument, kierunek, ilość, R i P&L');
+  await sleep(150);
+  rec(ids(R) === 't1,t2,t3' && R.accountState().balance === bal0 && (await sessionPages(A.id)).length === 2, 'Anuluj: trade, saldo i strona w Notion bez zmian');
+
+  // usunięcie niewysłanego trade'a (jeszcze żadna wysyłka w tej sesji replayu): tylko lokalnie, Notion bez żądania
+  delBtn('t3').click();
+  const ask3 = await answer(true);
+  rec(/Nie ma jeszcze strony w Notion/.test(ask3) && !/trafi do archiwum/.test(ask3), `niewysłany: potwierdzenie bez archiwum Notion: ${ask3.replace(/\s+/g, ' ').slice(0, 200)}`);
+  await until(() => ids(R) === 't1,t2');
+  rec(ids(R) === 't1,t2' && R.accountState().balance === 50100, `t3 usunięty lokalnie, saldo ${R.accountState().balance}`);
+  rec(R.doc().tradeSeq === 3, 'numeracja nie wraca: tradeSeq = 3');
+  rec((await sessionPages(A.id)).length === 2, 'Notion bez zmian po usunięciu niewysłanego');
+
+  // usunięcie trade'a ze stroną w Notion
+  delBtn('t2').click();
+  await answer(true);
+  await until(() => ids(R) === 't1');
+  rec(ids(R) === 't1' && histIds() === 't1', `po potwierdzeniu trade znika z sesji i z Historii: ${ids(R)} / ${histIds()}`);
+  rec(R.accountState().balance === 50200 && R.accountState().session.n === 1, `saldo, equity i wynik sesji liczone od nowa (50 200, 1 trade): ${R.accountState().balance}, ${R.accountState().session.n}`);
+  rec(/50\s?200/.test(document.querySelector('.bt-acct [data-ac="bal"]').textContent), 'pasek konta pokazuje nowe saldo: ' + document.querySelector('.bt-acct [data-ac="bal"]').textContent.trim());
+  const pagesAfter = await sessionPages(A.id);
+  rec(pagesAfter.length === 1 && !/\/t2\]/.test(pagesAfter[0].btSession), 'strona t2 jest w archiwum Notion (dashboard jej nie widzi), strona t1 zostaje');
+  const tt = toastShown();
+  rec(tt && /Trade usunięty/.test(tt.textContent) && !!tt.querySelector('.toast-act') && /Cofnij/.test(tt.querySelector('.toast-act').textContent), 'powiadomienie „Trade usunięty · Cofnij”');
+  rec(!tt.contains(document.activeElement), 'powiadomienie nie przejmuje fokusu (Spacja nie może wcisnąć Cofnij)');
+  rec(/Cofnij \((Ctrl\+Z|⌘Z)\)/.test(tt.querySelector('.toast-act').textContent) && /Control\+Z|Meta\+Z/.test(tt.querySelector('.toast-act').getAttribute('aria-keyshortcuts') || ''), 'Cofnij podaje skrót: ' + tt.querySelector('.toast-act').textContent);
+  await until(async () => (await fileOf(A.id)).trades.length === 1);
+  const f1 = await fileOf(A.id);
+  rec(f1.trades.map((x) => x.id).join() === 't1' && f1.tradeSeq === 3, `plik sesji zapisany bez t2 i t3, numeracja pamięta t3: ${f1.trades.map((x) => x.id)} / ${f1.tradeSeq}`);
+
+  // Spacja po usunięciu: replay rusza, trade zostaje usunięty (Cofnij nie dostaje klawisza)
+  const key = (target, type, init) => target.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }));
+  const playBtn = () => document.querySelector('.bt-screen [data-bt="play"]');
+  rec(playBtn().getAttribute('aria-pressed') === 'false', 'replay stoi po usunięciu');
+  key(document.activeElement || document.body, 'keydown', { key: ' ', code: 'Space' }); key(document.activeElement || document.body, 'keyup', { key: ' ', code: 'Space' });
+  await until(() => playBtn().getAttribute('aria-pressed') === 'true');
+  rec(playBtn().getAttribute('aria-pressed') === 'true' && ids(R) === 't1', `Spacja: replay ruszył, trade nadal usunięty (${ids(R)})`);
+  playBtn().click(); await until(() => playBtn().getAttribute('aria-pressed') === 'false');
+  // Decyzja sesji głównej 2026-11-02 (wariant a): Cofnij po przejściu Tabem ignoruje Spację (zaufany klawisz), a replay rusza jak bez fokusu; Enter działa
+  const cofBtn = toastShown().querySelector('.toast-act');
+  cofBtn.focus();
+  rec(document.activeElement === cofBtn, 'fokus na Cofnij (jak po Tab)');
+  await press(SPACE); await sleep(350);
+  rec(ids(R) === 't1' && !!toastShown()?.querySelector('.toast-act'), `zaufana Spacja na Cofnij: trade zostaje usunięty (${ids(R)}), powiadomienie wisi`);
+  rec(playBtn().getAttribute('aria-pressed') === 'true', 'zaufana Spacja na Cofnij uruchamia odtwarzanie');
+  playBtn().click(); await until(() => playBtn().getAttribute('aria-pressed') === 'false');
+  // Ctrl+Z w polu tekstowym nie cofa, poza polem cofa
+  const ta = document.createElement('textarea'); document.body.appendChild(ta); ta.focus();
+  key(ta, 'keydown', { key: 'z', code: 'KeyZ', ctrlKey: true }); await sleep(250);
+  rec(ids(R) === 't1' && !!toastShown(), 'Ctrl+Z w polu tekstowym nie cofa usunięcia');
+  ta.remove();
+  key(document.body, 'keydown', { key: 'z', code: 'KeyZ', ctrlKey: true });
+  await until(() => ids(R) === 't1,t2');
+  rec(ids(R) === 't1,t2', 'Ctrl+Z poza polem cofa usunięcie');
+  rec(!toastShown() || !toastShown().querySelector('.toast-act'), 'po Cofnij powiadomienie z akcją znika (Ctrl+Z nie cofa drugi raz)');
+  key(document.body, 'keydown', { key: 'z', code: 'KeyZ', ctrlKey: true }); await sleep(200);
+  rec(ids(R) === 't1,t2', 'drugi Ctrl+Z bez powiadomienia nic nie robi');
+  // powiadomienie: licznik stoi tylko przy najechaniu myszą albo fokusie nadanym przez użytkownika
+  const { toast: toastFn } = await import('/js/modal.js');
+  toastFn('x', { ms: 300, action: { label: 'Cofnij', run() {} } }); await sleep(450);
+  rec(!toastShown(), 'powiadomienie znika po swoim czasie (bez fokusu i myszy)');
+  toastFn('x', { ms: 300, action: { label: 'Cofnij', run() {} } });
+  toastEl().dispatchEvent(new MouseEvent('mouseenter')); await sleep(450);
+  rec(!!toastShown(), 'mysz nad powiadomieniem zatrzymuje licznik');
+  toastEl().dispatchEvent(new MouseEvent('mouseleave')); await sleep(450);
+  rec(!toastShown(), 'po zjechaniu myszą licznik rusza dalej');
+  toastFn('x', { ms: 300, action: { label: 'Cofnij', run() {} } });
+  toastEl().dispatchEvent(new FocusEvent('focusin', { bubbles: true })); await sleep(450);
+  rec(!!toastShown(), 'fokus nadany przez użytkownika (Tab) zatrzymuje licznik');
+  toastEl().dispatchEvent(new FocusEvent('focusout', { bubbles: true })); await sleep(450);
+  rec(!toastShown(), 'po utracie fokusu licznik rusza dalej');
+  // ponowne usunięcie t2 i Cofnij kliknięciem
+  delBtn('t2').click();
+  await answer(true);
+  await until(() => ids(R) === 't1');
+  await until(() => toastShown()?.querySelector('.toast-act'));
+  rec(toastClear(), 'powiadomienie „Trade usunięty” nie leży na wierszach tabeli');
+  const enterBtn = toastShown().querySelector('.toast-act');
+  enterBtn.focus();
+  await press(ENTER);
+  await until(() => ids(R) === 't1,t2');
+  rec(ids(R) === 't1,t2', 'zaufany Enter na Cofnij cofa usunięcie');
+  rec(ids(R) === 't1,t2' && histIds() === 't2,t1', `Cofnij przywraca trade na to samo miejsce: ${ids(R)}`);
+  rec(R.accountState().balance === 50100, `saldo wróciło: ${R.accountState().balance}`);
+  await until(async () => (await sessionPages(A.id)).length === 2);
+  const back = await sessionPages(A.id);
+  rec(back.length === 2 && back.filter((x) => /\/t2\]/.test(x.btSession)).length === 1, `strona t2 wróciła z archiwum Notion, jedna, bez dubla: ${back.map((x) => x.btSession)}`);
+  await until(() => /Trade przywrócony/.test(toastShown()?.textContent || ''));
+  rec(/Trade przywrócony/.test(toastShown()?.textContent || ''), 'powiadomienie „Trade przywrócony”');
+  rec(toastClear(), 'powiadomienie „Trade przywrócony” nie leży na wierszach tabeli');
+  await until(async () => { const f = await fileOf(A.id); return f.trades.length === 2 && f.trades.find((x) => x.id === 't2')?.notion?.state === 'sent'; });
+  const f2 = await fileOf(A.id);
+  rec(f2.trades.map((x) => x.id).join() === 't1,t2' && f2.trades.find((x) => x.id === 't2').notion.state === 'sent', 'plik sesji ma t2 z powrotem, po wysyłce znów „sent” (ta sama strona)');
+  await until(() => rowState('t2') === st0);
+  rec(rowState('t2') === st0 && /zapisane/.test(document.querySelector('.bt-notion').textContent), `po Cofnij wiersz t2 ma ten sam stan wysyłki co przed usunięciem („${st0}”) i zgadza się z nagłówkiem: ${rowState('t2')} / ${document.querySelector('.bt-notion').textContent}`);
+
+  // t2 usuwamy na stałe (bez Cofnij): strona zostaje w archiwum Notion
+  delBtn('t2').click();
+  await answer(true);
+  await until(() => ids(R) === 't1');
+  rec(ids(R) === 't1', 'drugie usunięcie t2 bez Cofnij');
+  await until(async () => (await sessionPages(A.id)).length === 1);
+  rec((await sessionPages(A.id)).length === 1, 'strona t2 zostaje w archiwum Notion');
+  R.close();
+  await sleep(100);
+
+  // ---------- sesja B: błędy Notion, 404 z osobną zgodą, okno Journala ----------
+  const B = await mkSession('Sesja B', [mkTrade(1, 100, 1), mkTrade(2, 100, 1), mkTrade(3, 100, 1)]);
+  const calls = [];
+  const failing = { ...client, trashTrade: async (sid, tid, o = {}) => { calls.push(['trash', tid, !!o.skipNotion]); throw Object.assign(new Error('Nie udało się połączyć z Notion, więc trade nie został usunięty. Sprawdź połączenie i spróbuj ponownie.'), { status: 503, code: 'notion-offline' }); } };
+  R = openReplay(document.body, { sessionId: B.id, client: failing }); await R.ready; R.dock().setTab('hist'); await until(() => delBtn('t3'));
+  delBtn('t3').click();
+  await answer(true);
+  await until(() => toastShown() && toastShown().classList.contains('err'));
+  rec(toastShown()?.classList.contains('err') && /nie został usunięty/.test(toastShown().textContent), `błąd Notion: jasny komunikat w powiadomieniu: ${toastShown()?.textContent}`);
+  rec(toastClear(), 'powiadomienie o błędzie nie leży na wierszach tabeli');
+  rec(ids(R) === 't1,t2,t3' && R.accountState().balance === 50300 && calls.length === 1, 'błąd Notion: trade, saldo i plik bez zmian, bez półstanu');
+  rec((await fileOf(B.id)).trades.length === 3, 'plik sesji nadal ma trzy trade\'y');
+  R.close(); await sleep(100);
+
+  calls.length = 0;
+  const missing = { ...client, trashTrade: async (sid, tid, o = {}) => {
+    calls.push(['trash', tid, !!o.skipNotion]);
+    if (!o.skipNotion) throw Object.assign(new Error('Notion nie znalazł strony tego trade\'a.'), { status: 404, code: 'notion-missing' });
+    return client.trashTrade(sid, tid, o);
+  } };
+  R = openReplay(document.body, { sessionId: B.id, client: missing }); await R.ready; R.dock().setTab('hist'); await until(() => delBtn('t3'));
+  delBtn('t3').click();
+  await answer(true);
+  const ask404 = await answer(false);
+  rec(/Nie znaleziono strony w Notion/.test(ask404) && /tylko z aplikacji/.test(ask404) && /W Notion nie ma strony tego trade'a albo integracja nie ma do niej dostępu/.test(ask404), `404: osobne pytanie o usunięcie tylko lokalne: ${ask404.replace(/\s+/g, ' ').slice(0, 200)}`);
+  await sleep(150);
+  rec(ids(R) === 't1,t2,t3' && calls.length === 1, 'odmowa drugiego pytania: nic nie usunięte, jedno żądanie');
+  delBtn('t3').click();
+  await answer(true);
+  await until(() => dlg());
+  dlg().querySelector('[data-cd="yes"]').click();
+  await until(() => ids(R) === 't1,t2');
+  rec(ids(R) === 't1,t2' && calls.length === 3 && calls[2][2] === true, `zgoda: powtórka z skipNotion: ${JSON.stringify(calls)}`);
+  R.close(); await sleep(100);
+
+  // okno Journala: Usuń, następny trade, ostatni zamyka okno
+  R = await open(B);
+  await R.openJournalWindow('t1');
+  await until(() => R.journalWindow() && document.querySelector('.bt-jw [data-jw="delete"]'));
+  rec(!!document.querySelector('.bt-jw [data-jw="delete"]'), 'okno Journala ma przycisk „Usuń trade”');
+  document.querySelector('.bt-jw [data-jw="delete"]').click();
+  await answer(true);
+  await until(() => ids(R) === 't2');
+  rec(ids(R) === 't2', `t1 usunięty z okna Journala: ${ids(R)}`);
+  await until(() => R.journalWindow() && R.journalWindow().tradeId() === 't2');
+  rec(R.journalWindow()?.tradeId() === 't2', 'okno przeszło na następny trade');
+  await until(() => !document.documentElement.hasAttribute('data-deleting'));
+  document.querySelector('.bt-jw [data-jw="delete"]').click();
+  await answer(true);
+  await until(() => !R.journalWindow());
+  rec(!R.journalWindow() && !document.querySelector('.bt-jw') && R.doc().trades.length === 0, 'usunięcie ostatniego trade\'a zamyka okno Journala');
+  rec(R.accountState().balance === 50000 && R.accountState().session.n === 0, `pusta sesja: saldo startowe ${R.accountState().balance}`);
+  // Cofnij po zamknięciu replayu: trade wraca do pliku sesji
+  const t0 = toastShown();
+  R.close(); await sleep(150);
+  rec(t0 && /Cofnij/.test(t0.textContent), 'powiadomienie z Cofnij żyje po zamknięciu replayu');
+  t0.querySelector('.toast-act').click();
+  await until(async () => (await fileOf(B.id)).trades.length === 1);
+  const fb = await fileOf(B.id);
+  rec(fb.trades.length === 1 && fb.trades[0].id === 't2', `Cofnij po zamknięciu replayu przywraca trade w pliku sesji: ${fb.trades.map((x) => x.id)}`);
+
+  // ---------- sesja C: zamknięcie replayu w trakcie usuwania, nieudany zapis sesji po usunięciu i po Cofnij ----------
+  const C = await mkSession('Sesja C', [mkTrade(1, 100, 1), mkTrade(2, 100, 1)]);
+  rec((await client.notion({ sessionId: C.id })).sent === 2, 't1 i t2 sesji C wysłane do Notion');
+  let release = null;
+  const gate = new Promise((r) => { release = r; });
+  // kolejność wywołań klienta: po zakończeniu usuwania na serwerze i zamknięciu replayu zapis zaległych zmian (flush) musi poprzedzić odczyt pliku sesji (load)
+  const order = [];
+  const slow = { ...client, trashTrade: async (s, tid, o) => { await gate; const r = await client.trashTrade(s, tid, o); order.push('trash-done'); return r; }, flush: (...a) => { order.push('flush'); return client.flush(...a); }, load: (...a) => { order.push('load'); return client.load(...a); } };
+  R = openReplay(document.body, { sessionId: C.id, client: slow }); await R.ready; R.dock().setTab('hist'); await until(() => delBtn('t2'));
+  delBtn('t2').click();
+  await answer(true);
+  await sleep(120);
+  rec(delBtn('t2')?.textContent.trim() === 'Usuwanie…' && delBtn('t1')?.textContent.trim() === 'Usuń' && document.documentElement.hasAttribute('data-deleting'), `stan „w trakcie”: kliknięty wiersz pokazuje „Usuwanie…”, pozostałe zostają „Usuń”: ${delBtn('t2')?.textContent} / ${delBtn('t1')?.textContent}`);
+  R.close(); await sleep(150);
+  release();
+  await until(async () => (await fileOf(C.id)).trades.length === 1);
+  const posT = order.indexOf('trash-done');
+  rec(posT >= 0 && order.indexOf('flush', posT) > posT && order.indexOf('load', posT) > order.indexOf('flush', posT), `zamknięcie w trakcie usuwania: po usunięciu na serwerze najpierw flush, potem load: ${order.join(' > ')}`);
+  await until(async () => (await fileOf(C.id)).trades.length === 1);
+  const fc = await fileOf(C.id);
+  rec(fc.trades.map((x) => x.id).join() === 't1', `replay zamknięty w trakcie usuwania: plik sesji też traci trade (spójnie z Notion): ${fc.trades.map((x) => x.id)}`);
+  rec((await sessionPages(C.id)).length === 1, 'strona t2 w koszu Notion');
+  await until(() => toastShown()?.querySelector('.toast-act'));
+  rec(/Trade usunięty/.test(toastShown()?.textContent || '') && !!toastShown()?.querySelector('.toast-act'), 'po zamknięciu replayu nadal jest powiadomienie z Cofnij');
+  toastShown().querySelector('.toast-act').click();
+  await until(async () => (await fileOf(C.id)).trades.length === 2);
+  rec((await fileOf(C.id)).trades.map((x) => x.id).join() === 't1,t2', 'Cofnij po zamknięciu replayu przywraca trade w pliku');
+  await until(async () => (await sessionPages(C.id)).length === 2);
+  rec((await sessionPages(C.id)).length === 2, 'strona wróciła z kosza, bez dubla');
+
+  // zapis sesji po usunięciu się nie udał: rozjazd da się naprawić Cofnij (strona wraca, trade zostaje w pliku)
+  let failSave = 0;
+  const flaky = { ...client,
+    save: async (d, o) => { if (failSave > 0) { failSave--; throw Object.assign(new Error('zapis nie powiódł się'), { status: 500, code: 'io' }); } return client.save(d, o); },
+    trashTrade: async (...a) => { const r = await client.trashTrade(...a); failSave = 1; return r; } };
+  R = openReplay(document.body, { sessionId: C.id, client: flaky }); await R.ready; R.dock().setTab('hist'); await until(() => delBtn('t2'));
+  delBtn('t2').click();
+  await answer(true);
+  await until(() => ids(R) === 't1');
+  await sleep(400);
+  rec((await sessionPages(C.id)).length === 1, 'strona t2 w koszu mimo nieudanego zapisu sesji (stan do naprawy przez Cofnij albo ponowny zapis)');
+  await until(() => toastShown()?.querySelector('.toast-act'));
+  toastShown().querySelector('.toast-act').click();
+  await until(() => ids(R) === 't1,t2');
+  await until(() => /Trade przywrócony/.test(toastShown()?.textContent || ''));
+  rec(/Trade przywrócony/.test(toastShown()?.textContent || '') && (await fileOf(C.id)).trades.length === 2, 'Cofnij naprawia rozjazd: „Trade przywrócony” po potwierdzonym zapisie');
+  await until(async () => (await sessionPages(C.id)).length === 2);
+  rec((await sessionPages(C.id)).length === 2, 'strona wróciła z kosza (serwer nie odpowiedział 409 „trade już jest w sesji”)');
+  // zapis po Cofnij się nie udał: komunikat, bez „Trade przywrócony”, możliwość ponowienia
+  failSave = 0;
+  const flaky2 = { ...client,
+    save: async (d, o) => { if (failSave > 0) { failSave--; throw Object.assign(new Error('zapis nie powiódł się'), { status: 500, code: 'io' }); } return client.save(d, o); },
+    restoreTrade: async (...a) => { const r = await client.restoreTrade(...a); if (!flaky2.done) { flaky2.done = true; failSave = 1; } return r; } };
+  R.close(); await sleep(100);
+  R = openReplay(document.body, { sessionId: C.id, client: flaky2 }); await R.ready; R.dock().setTab('hist'); await until(() => delBtn('t2'));
+  delBtn('t2').click();
+  await answer(true);
+  await until(() => ids(R) === 't1');
+  await until(async () => (await fileOf(C.id)).trades.length === 1);
+  await until(() => toastShown()?.querySelector('.toast-act'));
+  toastShown().querySelector('.toast-act').click();
+  await until(() => toastShown()?.classList.contains('err'));
+  rec(toastShown()?.classList.contains('err') && !/Trade przywrócony/.test(toastShown().textContent) && !!toastShown().querySelector('.toast-act'), `nieudany zapis po Cofnij: komunikat błędu z ponowieniem, bez „Trade przywrócony”: ${toastShown()?.textContent}`);
+  rec((await fileOf(C.id)).trades.length === 1, 'plik sesji jeszcze bez trade\'a');
+  toastShown().querySelector('.toast-act').click();
+  await until(async () => (await fileOf(C.id)).trades.length === 2);
+  await until(() => /Trade przywrócony/.test(toastShown()?.textContent || ''));
+  rec(/Trade przywrócony/.test(toastShown()?.textContent || '') && (await fileOf(C.id)).trades.length === 2 && (await sessionPages(C.id)).length === 2, 'ponowienie przywraca trade i potwierdza dopiero po zapisie');
+  R.close(); await sleep(100);
+  finish();
+  }
+} catch (e) {
+  finish(String(e && e.stack || e));
+}
+</script>
+</body>
+</html>

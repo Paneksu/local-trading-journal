@@ -62,7 +62,7 @@ export function dumpDom(url, { timeoutMs = 60_000, width = 1200, height = 800 } 
 // pod --virtual-time-budget nagrywanie nie kończy się (sprawdzone 28.10.2026 na Edge: --dump-dom zwraca stronę przed wynikiem).
 // Port DevTools losowy (--remote-debugging-port=0, odczyt z DevToolsActivePort), więc nie zajmuje stałych portów (9222, 9223).
 // until: wyrażenie JS, na które czekamy; extract: wyrażenie, którego wartość zwracamy (returnByValue).
-export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent", shot = null, mobile = false } = {}) {
+export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent", shot = null, mobile = false, bridge = null } = {}) {
   const exe = findBrowser();
   if (!exe) throw new Error('Brak Chrome/Edge');
   const prof = newProfile();
@@ -84,10 +84,31 @@ export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 
     await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('DevTools: WebSocket')); });
     let id = 0;
     const pend = new Map();
-    ws.onmessage = (m) => { const j = JSON.parse(m.data); if (j.id && pend.has(j.id)) { pend.get(j.id)(j); pend.delete(j.id); } };
+    // bridge (1.6.1, usuwanie trade'ów): strona prosi o ZAUFANE zdarzenia klawiszy (Input.dispatchKeyEvent; zdarzenia syntetyczne nie aktywują przycisków ani :focus-visible)
+    // i o zrzuty w trakcie scenariusza. Strona woła window.__press(JSON {id, key, code, vk, text?, mods?}) i czeka na window.__done[id]; window.__shot(JSON {id, name}) zapisuje
+    // PNG do bridge.shotDir/<name>.png. Wymaga bridge = { shotDir } (zrzuty) albo {} (same klawisze).
+    ws.onmessage = (m) => {
+      const j = JSON.parse(m.data);
+      if (j.id && pend.has(j.id)) { pend.get(j.id)(j); pend.delete(j.id); return; }
+      if (bridge && j.method === 'Runtime.bindingCalled') {
+        (async () => {
+          const spec = JSON.parse(j.params.payload);
+          if (j.params.name === '__press') {
+            const base = { key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, nativeVirtualKeyCode: spec.vk, modifiers: spec.mods || 0 };
+            await send('Input.dispatchKeyEvent', { type: spec.text ? 'keyDown' : 'rawKeyDown', ...(spec.text ? { text: spec.text } : {}), ...base });
+            await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+          } else if (j.params.name === '__shot' && bridge.shotDir) {
+            const r = await send('Page.captureScreenshot', { format: 'png' });
+            if (r?.result?.data) writeFileSync(path.join(bridge.shotDir, spec.name + '.png'), Buffer.from(r.result.data, 'base64'));
+          }
+          await send('Runtime.evaluate', { expression: `(window.__done ||= {})[${spec.id}] = true` });
+        })().catch(() => {});
+      }
+    };
     const send = (method, params = {}) => new Promise((res) => { const i = ++id; pend.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
     const ev = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }))?.result?.result?.value;
     // H2: mobile = prawdziwa szerokość telefonu (headless nie zmniejsza okna poniżej ~500 px, więc emulacja zamiast --window-size)
+    if (bridge) { await send('Runtime.enable'); await send('Runtime.addBinding', { name: '__press' }); await send('Runtime.addBinding', { name: '__shot' }); await send('Emulation.setFocusEmulationEnabled', { enabled: true }); }
     if (mobile) await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await send('Page.navigate', { url });
     while (Date.now() < deadline) {

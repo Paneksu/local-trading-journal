@@ -6,6 +6,9 @@
 import { t } from './i18n.js';
 import { esc } from './format.js';
 import { COND_KINDS, matchDays, dayTags, validateFilter } from './bt-filtr.js';
+import { setDayRule, refreshDayRule } from './wybor-daty.js';
+import { addDays, weekdayMon } from './wybor-daty-logika.js';
+import { FAMILY } from './kontrakty.js';
 import { templateEntry, templateFilter, templateOf, templatesSize, TEMPLATES_MAX, TEMPLATES_BUDGET } from './bt-czas.js';
 
 // ---- opis rodzajów warunków ----
@@ -139,7 +142,7 @@ export function mountFilterEditor(host, { filter = null, days = [], instruments 
     switch (spec.type) {
       case 'multi': return `<span class="bt-fmulti" data-p="${spec.p}">${spec.opts().map(([val, lab]) => `<label class="check"><input type="checkbox" value="${val}"${(v || []).includes(val) ? ' checked' : ''}> ${esc(lab)}</label>`).join('')}</span>`;
       case 'text': return `<input class="sp-in bt-fev" type="text" data-p="${spec.p}" value="${esc(v ?? '')}" placeholder="${esc(spec.ph())}" list="bt-fev-${path.replace(/\./g, '-') || 'r'}" autocomplete="off" aria-label="${esc(L[c.k]())}">${spec.list ? `<datalist id="bt-fev-${path.replace(/\./g, '-') || 'r'}">${eventNames().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>` : ''}`;
-      case 'date': return `<label class="bt-fnl"><span class="note">${esc(spec.label())}</span><input class="sp-in" type="date" data-p="${spec.p}" value="${esc(v ?? '')}"></label>`;
+      case 'date': return `<label class="bt-fnl"><span class="note">${esc(spec.label())}</span><input class="sp-in" type="text" data-wd="date" data-wd-pusty data-p="${spec.p}" value="${esc(v ?? '')}"></label>`;
       case 'num': return `<label class="bt-fnl"><span class="note">${esc(spec.label())}</span><input class="sp-in bt-fnum" type="number" step="any" data-p="${spec.p}" value="${esc(v ?? '')}"></label>`; // review G #1: każda wartość warunku przez esc
       case 'select': return `<select class="sp-in sp-sel" data-p="${spec.p}"${spec.num ? ' data-num="1"' : ''}>${spec.any ? `<option value=""${v == null ? ' selected' : ''}>${esc(spec.any())}</option>` : ''}${spec.opts().map(([val, lab]) => `<option value="${val}"${String(v) === String(val) ? ' selected' : ''}>${esc(lab)}</option>`).join('')}</select>`;
       default: return '';
@@ -180,6 +183,36 @@ export function mountFilterEditor(host, { filter = null, days = [], instruments 
   }
   function paintTree() {
     root.querySelector('.bt-ftree').innerHTML = nodeHtml(tree, '');
+    bindDates();
+  }
+  // 1.6.1 (przegląd wizualny P2-A1): pola dat warunku „Zakres dat” dostają te same ograniczenia co „Data startu” w kreatorze:
+  // min = data startu, max = ostatni dzień danych, dni bez danych przekreślone z powodem; pusty kalendarz otwiera się na miesiącu daty startu
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const dayRule = async (a, z) => {
+    const out = new Map();
+    if (!all.length) return out;
+    const fams = [...new Set((ctx.instruments || []).map((i) => FAMILY[i]).filter(Boolean))];
+    const ok = new Set(all.filter((d) => fams.some((x) => d.has1m?.[x] === true)).map((d) => d.day));
+    for (let d = a; d <= z; d = addDays(d, 1)) if (!ok.has(d)) out.set(d, weekdayMon(d) >= 5 ? t('Weekend: giełda zamknięta') : t('Brak świec w tym dniu'));
+    return out;
+  };
+  // key: pola już podpięte pod ten sam zakres i listę dni nie są podpinane drugi raz (nowe pola dodane warunkiem dostają zakres przy najbliższej zmianie)
+  function bindDates(force = false) {
+    const key = `${ctx.from}|${ctx.to}|${(ctx.instruments || []).join()}|${all.length}`;
+    for (const el of root.querySelectorAll('input[data-wd="date"][data-p]')) {
+      if (!force && el.dataset.wdBound === key) continue;
+      el.dataset.wdBound = key;
+      el.min = DAY.test(ctx.from) ? ctx.from : '';
+      el.max = DAY.test(ctx.to) ? ctx.to : '';
+      if (DAY.test(ctx.from)) el.dataset.wdStart = ctx.from; else delete el.dataset.wdStart;
+      setDayRule(el, dayRule);
+      const lab = el.closest('label')?.querySelector('.note')?.textContent;
+      if (lab) el.setAttribute('aria-label', `${t('Zakres dat')}: ${lab.toLowerCase()}`);
+    }
+  }
+  function refreshDates() {
+    bindDates(true);
+    for (const el of root.querySelectorAll('input[data-wd="date"][data-p]')) refreshDayRule(el);
   }
   function paintTpl() {
     const w = root.querySelector('.bt-fts');
@@ -218,7 +251,7 @@ export function mountFilterEditor(host, { filter = null, days = [], instruments 
     return m;
   }
   const info = () => ({ count: last.m.days.length, active: !!last.filter || manual.size > 0, excluded: [...manual], result: last.m, ready: !loading && !err });
-  const changed = () => { recalc(); onChange(last.filter, info()); };
+  const changed = () => { recalc(); bindDates(); onChange(last.filter, info()); };
 
   // ---- zdarzenia ----
   function readParam(el, c) {
@@ -321,8 +354,8 @@ export function mountFilterEditor(host, { filter = null, days = [], instruments 
     excludedDays: () => [...manual].sort(),
     count: () => last.m.days.length,
     info,
-    setDays(d) { all = d || []; err = ''; loading = false; changed(); },
-    setContext(c) { ctx = { ...ctx, ...c }; changed(); },
+    setDays(d) { all = d || []; err = ''; loading = false; changed(); refreshDates(); },
+    setContext(c) { ctx = { ...ctx, ...c }; changed(); refreshDates(); },
     setLoading(b) { loading = !!b; if (b) err = ''; changed(); },
     setError(msg) { err = msg || ''; loading = false; changed(); },
     destroy() { root.remove(); },

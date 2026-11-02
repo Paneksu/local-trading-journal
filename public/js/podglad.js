@@ -395,8 +395,8 @@ export function mountOverlayPop(root, ov, { refSec = () => Date.now() / 1000 } =
     const rows = SESSION_IDS.map((id) => {
       const s = p.sess[id], name = t(SESSION_NAMES[id]);
       return `<div class="swc-ovs">${chk(`sess.${id}.on`, s.on, name)}` +
-        `<span class="swc-ovt"><input class="sp-in" type="time" data-ovk="sess.${id}.from" value="${s.from}" aria-label="${esc(t('{s}: początek', { s: name }))}"><span aria-hidden="true">–</span>` +
-        `<input class="sp-in" type="time" data-ovk="sess.${id}.to" value="${s.to}" aria-label="${esc(t('{s}: koniec', { s: name }))}"></span>` +
+        `<span class="swc-ovt"><input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-ovk="sess.${id}.from" value="${s.from}" aria-label="${esc(t('{s}: początek', { s: name }))}"><span aria-hidden="true">–</span>` +
+        `<input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-ovk="sess.${id}.to" value="${s.to}" aria-label="${esc(t('{s}: koniec', { s: name }))}"></span>` +
         `<span class="swc-ovc">${colorIn(`sess.${id}.color`, s.color, SESSION_TOKENS[id], t('{s}: kolor boxa', { s: name }))}${sel(`sess.${id}.opacity`, s.opacity, OV_OPACITIES, t('{s}: krycie boxa', { s: name }), (v) => `${v}%`)}</span></div>`;
     }).join('');
     // telefon: przełączniki Newsy i Earningsy są tu, a nie w pasku (pasek wraca do jednego rzędu); na szerokim ekranie ukryte (.swc-ovnw)
@@ -431,7 +431,7 @@ export function mountOverlayPop(root, ov, { refSec = () => Date.now() / 1000 } =
   pop.addEventListener('change', (ev) => {
     const el = ev.target.closest('[data-ovk]');
     if (!el) return;
-    if (el.type === 'time' && !HHMM.test(el.value)) { el.setAttribute('aria-invalid', 'true'); return; }
+    if (el.dataset.wd === 'time' && !HHMM.test(el.value)) { el.setAttribute('aria-invalid', 'true'); return; }
     el.removeAttribute('aria-invalid');
     setPath(el.dataset.ovk, valueOf(el));
     const h = pop.querySelector('.swc-ovhint'); if (h) h.textContent = sessionHint(refSec(), ov.prefs());

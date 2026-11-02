@@ -1,7 +1,7 @@
 // Szuflada pod wykresami replayu Backtest (pakiet L, 31.10.2026), jak dolny panel FX Replay: zakładki Pozycje / Zlecenia / Historia.
 // [U] 31.10.2026 «Przyjmuję wszystkie» (szuflada pozycji, zleceń i historii z wynikiem na żywo i akcjami, jak „Position Drawer” FX Replay)
 // Pozycje: wynik na żywo ($, R, pkt), MAE/MFE do chwili bieżącej, czas w pozycji, akcje BE, 50%, Zamknij. Zlecenia: cena, SL, TP, ryzyko $, Anuluj.
-// Historia: zamknięte trade'y sesji (najnowsze u góry) ze stanem opisu i wysyłki i przyciskiem „Journal”.
+// Historia: zamknięte trade'y sesji (najnowsze u góry) ze stanem opisu i wysyłki oraz przyciskami „Journal” i „Usuń” ([U] 2026-11-01 «Archiwum Notion + Cofnij»: usuwanie trade'a z cofnięciem).
 // Wiersze nie są przebudowywane przy każdej klatce odtwarzania: przy tym samym zestawie wierszy zmienia się tylko tekst komórek (kliknięcie w trakcie odtwarzania trafia).
 // English: replay bottom drawer (positions / orders / history) with live P&L, MAE/MFE and actions; cells update in place while the row set is unchanged.
 import { t } from './i18n.js';
@@ -55,7 +55,7 @@ export function mountDock(host, { storage = globalThis.localStorage, onAction = 
   }
   markTabs();
 
-  const th = (cols) => `<thead><tr>${cols.map(([l, n]) => `<th scope="col"${n ? ' class="num"' : ''}>${esc(l)}</th>`).join('')}</tr></thead>`;
+  const th = (cols) => `<thead><tr>${cols.map(([l, n, c]) => { const cl = [n ? 'num' : '', c || ''].filter(Boolean).join(' '); return `<th scope="col"${cl ? ` class="${cl}"` : ''}>${esc(l)}</th>`; }).join('')}</tr></thead>`;
   const cell = (k, cl = 'num') => `<td class="${cl}" data-c="${k}"></td>`;
   function posRows(m) {
     if (!m.positions.length) return `<p class="note bt-dk-empty">${esc(t('Brak otwartych pozycji.'))}</p>`;
@@ -76,15 +76,15 @@ export function mountDock(host, { storage = globalThis.localStorage, onAction = 
   function histRows(m) {
     if (!m.trades.length) return `<p class="note bt-dk-empty">${esc(t('Zamknięte trade\'y pojawią się tutaj.'))}</p>`;
     const L = STATE_LABEL();
-    const head = th([['#'], [t('Instrument')], [t('Kierunek')], [t('Ilość'), 1], [t('Wejście'), 1], [t('Wyjście'), 1], ['P&L', 1], ['R', 1], ['MAE / MFE', 1], [t('Setup')], [t('Stan')], ['']]);
+    const head = th([['#'], [t('Instrument')], [t('Kierunek')], [t('Ilość'), 1], [t('Wejście'), 1], [t('Wyjście'), 1], ['P&L', 1], ['R', 1], ['MAE / MFE', 1], [t('Setup')], [t('Stan'), 0, 'bt-dk-stc'], ['']]);
     const rows = [...m.trades].reverse().map((x) => {
       const st = journalState(x);
-      return `<tr data-row="${esc(x.id)}"><td>${esc(x.id)}</td><td>${esc(x.instrument)}</td><td class="${x.dir === 'Long' ? 'pos' : 'neg'}">${esc(x.dir === 'Short' ? t('Short') : t('Long'))}</td>
+      return `<tr data-row="${esc(x.id)}"><td>${esc(x.id)}</td><td>${esc(x.instrument)}<span class="bt-dk-st2"><span class="bt-st-j" data-st="${st}">${esc(L[st])}</span></span></td><td class="${x.dir === 'Long' ? 'pos' : 'neg'}">${esc(x.dir === 'Short' ? t('Short') : t('Long'))}</td>
         <td class="num">${esc(x.qty)}</td><td class="num">${esc(pxText(x.entryPrice))}<span class="note"> ${esc(m.fmtTime(x.entryT))}</span></td><td class="num">${esc(pxText(x.exitPrice))}<span class="note"> ${esc(m.fmtTime(x.exitT))}</span></td>
         <td class="num ${cls(x.pnl)}">${esc(Number.isFinite(x.pnl) ? fmtMoney(x.pnl) : '–')}</td><td class="num ${cls(x.r)}">${esc(Number.isFinite(x.r) ? fmtR(x.r) : '–')}</td>
         <td class="num">${esc(Number.isFinite(x.maeR) ? fmtR(x.maeR) : '–')} / ${esc(Number.isFinite(x.mfeR) ? fmtR(x.mfeR) : '–')}</td>
-        <td>${esc(x.setup || '–')}</td><td><span class="bt-st-j" data-st="${st}" title="${esc(x.notion?.error || '')}">${esc(L[st])}</span></td>
-        <td class="bt-dk-a"><button type="button" class="btn sm" data-dka="journal" data-id="${esc(x.id)}">Journal</button></td></tr>`;
+        <td>${esc(x.setup || '–')}</td><td class="bt-dk-stc"><span class="bt-st-j" data-st="${st}" title="${esc(x.notion?.error || '')}">${esc(L[st])}</span></td>
+        <td class="bt-dk-a"><button type="button" class="btn sm" data-dka="journal" data-id="${esc(x.id)}">Journal</button><button type="button" class="btn sm ghost bt-dk-del" data-dka="delete" data-id="${esc(x.id)}" aria-label="${esc(t('Usuń trade {id}', { id: x.id }))}">${esc(t('Usuń'))}</button></td></tr>`;
     }).join('');
     return `<table class="tbl bt-dk-t bt-dk-hist">${head}<tbody>${rows}</tbody></table>`;
   }

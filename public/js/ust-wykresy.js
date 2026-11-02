@@ -86,9 +86,9 @@ export function createWykresy(ctx) {
   function nakladki() {
     const o = chart().overlays;
     const rows = SESSION_IDS.map((id) => `<div class="sp-sess"><label class="check"><input type="checkbox" data-chk="sess-${id}" data-fk="chk-sess-${id}" ${o.sess[id].on ? 'checked' : ''}> ${esc(t(SESS_NAME[id]))}</label>
-        <input type="time" class="sp-in" data-ovt="${id}.from" data-fk="ovf-${id}" value="${o.sess[id].from}" aria-label="${esc(t('Początek sesji {name}', { name: t(SESS_NAME[id]) }))}">
+        <input type="text" data-wd="time" data-wd-tz="NY" class="sp-in" data-ovt="${id}.from" data-fk="ovf-${id}" value="${o.sess[id].from}" aria-label="${esc(t('Początek sesji {name}', { name: t(SESS_NAME[id]) }))}">
         <span aria-hidden="true">-</span>
-        <input type="time" class="sp-in" data-ovt="${id}.to" data-fk="ovt-${id}" value="${o.sess[id].to}" aria-label="${esc(t('Koniec sesji {name}', { name: t(SESS_NAME[id]) }))}"></div>`).join('');
+        <input type="text" data-wd="time" data-wd-tz="NY" class="sp-in" data-ovt="${id}.to" data-fk="ovt-${id}" value="${o.sess[id].to}" aria-label="${esc(t('Koniec sesji {name}', { name: t(SESS_NAME[id]) }))}"></div>`).join('');
     return `${gHead('ch-g-ov', 'Nakładki')}
       <div class="sp-f">${chk('sessions', o.sessions, 'Tło sesji')}
         <div class="sp-sessions" role="group" aria-label="${L('Godziny sesji (czas Nowego Jorku)')}">${rows}</div>

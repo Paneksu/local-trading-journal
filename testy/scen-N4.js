@@ -62,9 +62,9 @@
     $('.sp #sv-cr-start').value = '100'; $('.sp #sv-cr-spent').value = '0.5'; $('.sp #sv-cr-exp').value = '2031-05-01';
     $('.sp [data-act="zr-cr-next"]').click();
     await until(() => $('.sp [data-act="zr-cr-save"]'));
-    rec('kredyt', /zostaje 99,50 z 100,00 USD, ważny do 2031-05-01/.test(txt('.sp #sv-g-kredyt .sv-confirm')) && !posts.some((p) => /candles\/limit/.test(p.url)), `potwierdzenie przed zapisem: ${txt('.sp #sv-g-kredyt .sv-confirm').slice(0, 90)}`);
+    rec('kredyt', /zostaje 99,50 z 100,00 USD, ważny do 01.05.2031/.test(txt('.sp #sv-g-kredyt .sv-confirm')) && !posts.some((p) => /candles\/limit/.test(p.url)), `potwierdzenie przed zapisem: ${txt('.sp #sv-g-kredyt .sv-confirm').slice(0, 90)}`);
     $('.sp [data-act="zr-cr-save"]').click();
-    await until(() => /99,50 z 100,00 USD, ważny do 2031-05-01/.test(txt('.sp #sv-g-kredyt .sp-kvs')), 8000);
+    await until(() => /99,50 z 100,00 USD, ważny do 01.05.2031/.test(txt('.sp #sv-g-kredyt .sp-kvs')), 8000);
     const crPost = posts.find((p) => /candles\/limit/.test(p.url));
     rec('kredyt', crPost?.body?.confirm === true && crPost.body.creditStartUsd === 100 && crPost.body.creditSpentUsd === 0.5, `kredyt zapisany z confirm: ${JSON.stringify(crPost?.body)}`);
     rec('kredyt', $('.sp #sv-g-kredyt .sv-bar[role="progressbar"]'), 'pasek pozostałego kredytu');

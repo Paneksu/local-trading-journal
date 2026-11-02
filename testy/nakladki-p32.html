@@ -156,7 +156,7 @@ try {
     // popover ustawień: godziny, ramka 0, bez opisów; zapis w localStorage, wykres przerysowany
     root.querySelector('.swc-ovbtn').click(); await sleep(30);
     const pop = root.querySelector('.swc-ovpop');
-    rec('P32-2', !pop.hidden && pop.querySelectorAll('input[type="time"]').length === 6 && pop.querySelectorAll('input[type="color"]').length === 4, 'popover: godziny 3 sesji, kolory 3 boxów i PDH/PDL');
+    rec('P32-2', !pop.hidden && pop.querySelectorAll('input[data-wd="time"]').length === 6 && pop.querySelectorAll('input[type="color"]').length === 4, 'popover: godziny 3 sesji, kolory 3 boxów i PDH/PDL');
     const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
     const bw = pop.querySelector('[data-ovk="boxWidth"]'); bw.value = '0'; fire(bw, 'change');
     const lb = pop.querySelector('[data-ovk="labels"]'); lb.checked = false; fire(lb, 'change');

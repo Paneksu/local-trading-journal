@@ -8,6 +8,7 @@ import { createSessionClient } from './bt-klient.js';
 import { openKreator } from './bt-kreator.js';
 import { openReplay, OPEN_KEY } from './bt-replay.js';
 import { mountStats } from './bt-staty-widok.js';
+import { confirmDialog, toast } from './modal.js';
 
 const rClass = (x) => (x > 1e-9 ? 'pos' : x < -1e-9 ? 'neg' : '');
 function ago(isoStr) {
@@ -17,7 +18,7 @@ function ago(isoStr) {
   return dateTimeShort(d); // H2 #7: język aplikacji (getLang), nie przeglądarki
 }
 
-export function createBacktestView({ client = createSessionClient(), getAccounts = () => [], replayRoot = () => document.body, storage = globalThis.localStorage, open = openReplay, getSettings = () => null, onTemplates = () => {}, getSetups = () => [], onStats = null, onList = () => {}, getTrades = () => [], loadFeatures = null } = {}) {
+export function createBacktestView({ client = createSessionClient(), getAccounts = () => [], replayRoot = () => document.body, storage = globalThis.localStorage, open = openReplay, getSettings = () => null, onTemplates = () => {}, onFavTfs = () => {}, onRemoved = () => {}, confirm = (o) => confirmDialog(o), notify = (m, o) => toast(m, o), getSetups = () => [], onStats = null, onList = () => {}, getTrades = () => [], loadFeatures = null } = {}) {
   let root = null, mode = 'list', kreator = null, replay = null, seq = 0, stats = null;
 
   // N1 (1.6.0): bez świec na dysku lista mówi, skąd je wziąć (głęboki link do Ustawień → Źródła danych), zamiast „Utwórz pierwszą”
@@ -39,7 +40,7 @@ export function createBacktestView({ client = createSessionClient(), getAccounts
       <td class="num">${esc(s.from ? `${shortDate(s.from)} ${s.from.slice(0, 4)}` : '–')} → ${esc(Number.isFinite(s.cursor) ? (() => { const d = nyDayOf(s.cursor); return `${shortDate(d)} ${d.slice(0, 4)}`; })() : '–')}</td>
       <td class="num bt-l-res"><b class="${rClass(s.sumR)}">${esc(fmtR(s.sumR))}</b><span class="bt-l-sub">${Number.isFinite(s.sumUsd) && s.trades ? `${esc(fmtMoney(s.sumUsd))} · ` : ''}${esc(t.p("{n} trade'ów", s.trades || 0))}</span></td>
       <td class="bt-l-ago">${esc(ago(s.lastOpened))}</td>
-      <td class="bt-l-act"><button type="button" class="btn sm" data-bt="open">${esc(t('Otwórz'))}</button> <button type="button" class="btn sm" data-bt="stats">${esc(t('Statystyki'))}</button></td>
+      <td class="bt-l-act"><button type="button" class="btn sm" data-bt="open">${esc(t('Otwórz'))}</button> <button type="button" class="btn sm" data-bt="stats">${esc(t('Statystyki'))}</button> <button type="button" class="btn sm ghost" data-bt="delete">${esc(t('Usuń'))}</button></td>
     </tr>`).join('');
     return `${head}<div class="card bt-list"><table class="bt-tab"><thead><tr><th>${esc(t('Nazwa'))}</th><th>${esc(t('Instrument'))}</th><th class="num">${esc(t('Start → teraz'))}</th><th class="num">${esc(t('Wynik'))}</th><th class="bt-l-ago">${esc(t('Ostatnio otwarta'))}</th><th aria-label="${esc(t('Akcje'))}"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
@@ -82,7 +83,39 @@ export function createBacktestView({ client = createSessionClient(), getAccounts
   }
   function openSession(id) {
     if (replay) return;
-    replay = open(replayRoot(), { sessionId: id, client, storage, getSettings, getSetups, onStats: onStats || statsFromReplay, onReopen: (sid) => openSession(sid), onClose: () => { replay = null; refresh(); } });
+    replay = open(replayRoot(), { sessionId: id, client, storage, getSettings, onFavTfs, getSetups, onStats: onStats || statsFromReplay, onReopen: (sid) => openSession(sid), onClose: () => { replay = null; refresh(); } });
+  }
+
+  // [U] 1.11.2026 «oraz dodaj mozliwosc usuniecia sesji bo aktualnie sie nie da»: okno potwierdzenia z liczbami i ostrzeżeniem o niewysłanych trade'ach, usunięcie odwracalne („Cofnij”)
+  async function deleteSession(id) {
+    // otwartej w replayu sesji nie usuwamy
+    if (replay || !id) return;
+    let s = null;
+    try { s = (await client.list()).find((x) => x.id === id) || null; } catch { s = null; }
+    if (!s) { notify(t('Nie ma takiej sesji backtestu.'), { error: true }); refresh(); return; }
+    const total = s.trades || 0;
+    let unsent = s.unsent || 0;
+    const name = s.name || s.id;
+    const noteOf = () => (unsent ? t("Uwaga: niewysłanych do Notion trade'ów: {n}. Po usunięciu sesji wrócisz do nich tylko przez „Cofnij” albo z folderu usuniętych sesji.", { n: unsent }) : '');
+    const ok = await confirm({
+      title: t('Usunąć sesję „{name}”?', { name }),
+      text: `${t("Trade'ów w sesji: {n}", { n: total })}, ${t('w Notion: {n}', { n: total - unsent })}. ${t("Trade'y wysłane do Notion zostają w bazie Trade'y; usuwasz tylko sesję z tego komputera (kursor, zlecenia, rysunki, niewysłane trade'y).")}`,
+      note: noteOf(), ok: t('Usuń sesję'), danger: true,
+      extra: unsent ? { label: t('Najpierw wyślij do Notion'), run: async (btn, noteEl) => {
+        btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+        try {
+          const r = await client.notion({ sessionId: id, all: true });
+          unsent = r.pending || 0;
+          if (noteEl) { noteEl.textContent = unsent ? noteOf() : t("Wszystkie trade'y są już w Notion."); noteEl.classList.toggle('ok', !unsent); }
+          if (!unsent) btn.hidden = true;
+        } catch (e) { if (noteEl) noteEl.textContent = e.message || t('Wysyłka do Notion nie powiodła się.'); } finally { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+      } } : null,
+    });
+    if (!ok) return;
+    try { await client.remove(id); } catch (e) { notify(e.code === 'flush' ? t('Nie udało się zapisać sesji przed usunięciem, więc jej nie usunięto. Spróbuj ponownie za chwilę.') : e.message || t('Nie udało się usunąć sesji backtestu.'), { error: true }); refresh(); return; }
+    onRemoved(id);
+    refresh();
+    notify(t('Sesja usunięta'), { ms: 9000, action: { label: t('Cofnij'), undo: true, run: async () => { try { await client.restore(id); } catch (e) { notify(e.message || t('Nie udało się przywrócić sesji backtestu.'), { error: true }); return; } refresh(); notify(t('Sesja przywrócona')); } } });
   }
 
   function onClick(ev) {
@@ -92,6 +125,7 @@ export function createBacktestView({ client = createSessionClient(), getAccounts
     else if (b.dataset.bt === 'open') openSession(b.closest('tr').dataset.id);
     else if (b.dataset.bt === 'stats') showStats(b.closest('tr').dataset.id);
     else if (b.dataset.bt === 'stats-all') showStats(null);
+    else if (b.dataset.bt === 'delete') deleteSession(b.closest('tr').dataset.id);
     else if (b.dataset.bt === 'retry') refresh();
   }
 

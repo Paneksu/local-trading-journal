@@ -251,7 +251,7 @@ export function createCalendar({ getTz = () => '', getTradeCount = () => 0, onTr
     return `<div class="ncal-nav"><div class="cal-step" role="group" aria-label="${L('Zakres')}"><button type="button" class="icon-btn" data-cal-step="-1" aria-label="${L('Poprzedni zakres')}">‹</button>
         <button type="button" class="btn sm" data-cal-today="1">${L('Dziś')}</button><button type="button" class="icon-btn" data-cal-step="1" aria-label="${L('Następny zakres')}">›</button></div>
       <h2 class="cal-range" aria-live="polite">${esc(rangeText())}</h2>
-      <input type="date" class="sp-in cal-date" data-cal-date="1" value="${anchor}" min="${MIN_DAY}" max="${F.addDays(today, 400)}" aria-label="${L('Wybierz dzień')}">
+      <input type="text" data-wd="date" class="sp-in cal-date" data-cal-date="1" value="${anchor}" min="${MIN_DAY}" max="${F.addDays(today, 400)}" aria-label="${L('Wybierz dzień')}">
       <div class="seg" role="group" aria-label="${L('Widok')}">${seg}</div></div>
       <div class="cal-find"><input type="search" class="sp-in cal-q" data-cal-q="1" maxlength="60" value="${esc(S.q)}" placeholder="${L('Szukaj w całej historii: CPI, NFP, NVDA…')}" autocomplete="off" spellcheck="false" aria-label="${L('Szukaj newsów i wyników spółek')}">
         <select class="sp-in sp-sel cal-year" data-cal-year="1" aria-label="${L('Rok wyników wyszukiwania')}">${yearOpts()}</select></div>

@@ -391,10 +391,48 @@ try {
     for (const i of [2, 3, 4]) { const cb = wd.querySelector(`[data-p="days"] input[value="${i}"]`); cb.checked = true; ev(cb, 'change'); }
     rec('zrzut', true, 'kreator z rozwiniętym filtrem');
   }
+  // zrzut 1.6.1: filtr dni, otwarty kalendarz pola „Do”
+  if (part === 'shot161') {
+    const { f, set } = mount(stub());
+    set('name', 'CPI 2018'); set('from', FIRST); set('to', LAST);
+    const e = await open(f);
+    const root = e.querySelector('.bt-fgrp');
+    addCond(root, 'dateRange');
+    await sleep(300);
+    e.querySelector('input[data-p="to"]').closest('.wd').querySelector('.wd-ico').click();
+    await sleep(300);
+    rec('shot161', true, 'kalendarz Do');
+  }
   if (part === 'poprawki') {
     const XSS = '"><img src=x onerror=window.__xss=1>';
     const eh = (extra = {}) => { const d = document.createElement('div'); document.body.append(d); const calls = []; const m = F.mountFilterEditor(d, { days: DAYS, from: FIRST, to: LAST, onTemplates: (l) => calls.push(l), ...extra }); return { d, m, calls }; };
     const evCond = (name) => ({ k: 'event', name });
+    // 1.6.1 (przegląd wizualny P2-A1): pola „Od” i „Do” zakresu dat w filtrze mają zakres danych i dni bez danych jak „Data startu” w kreatorze, a otwierają się na miesiącu daty startu
+    await section('zakres', async () => {
+      const x = eh({ filter: { op: 'and', not: false, items: [{ k: 'dateRange', from: '', to: '' }] } });
+      await sleep(80);
+      const inTo = x.d.querySelector('input[data-p="to"]'), inFrom = x.d.querySelector('input[data-p="from"]');
+      rec('zakres', inTo && inFrom && inFrom.min === FIRST && inFrom.max === LAST && inTo.min === FIRST && inTo.max === LAST, 'min i max pól Od i Do = zakres danych: ' + JSON.stringify([inFrom?.min, inFrom?.max, inTo?.min, inTo?.max]));
+      inTo.closest('.wd').querySelector('.wd-ico').click();
+      await sleep(150);
+      const pop = document.querySelector('.wd-pop');
+      const ym = FIRST.slice(0, 7);
+      rec('zakres', !!pop && !!pop.querySelector(`td[data-iso="${FIRST}"]`), 'pole puste otwiera się na miesiącu daty startu (' + ym + '), nie na dzisiejszym');
+      const weekend = [...pop?.querySelectorAll('td[data-iso]') || []].find((td) => td.dataset.iso.startsWith(ym) && !DAYS.some((d) => d.day === td.dataset.iso));
+      rec('zakres', !!weekend && weekend.classList.contains('dis'), 'dzień bez danych (weekend) przekreślony: ' + weekend?.dataset.iso + ' ' + weekend?.className);
+      rec('zakres', /bez danych/.test(pop?.querySelector('.wd-legend')?.textContent || ''), 'legenda „Przekreślone dni: bez danych”');
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      inTo.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      x.m.destroy(); x.d.remove();
+      // warunek dodany później z listy (bez przerysowania drzewa) też dostaje zakres
+      const y = eh();
+      await sleep(60);
+      addCond(y.d.querySelector('.bt-fgrp'), 'dateRange');
+      await sleep(60);
+      const yTo = y.d.querySelector('input[data-p="to"]');
+      rec('zakres', !!yTo && yTo.min === FIRST && yTo.max === LAST && yTo.dataset.wdStart === FIRST, 'warunek dodany z listy ma min, max i miesiąc startu: ' + JSON.stringify([yTo?.min, yTo?.max, yTo?.dataset.wdStart]));
+      y.m.destroy(); y.d.remove();
+    });
     await section('xss', async () => {
       // filtr z sesji / szablonu z ładunkiem w polu liczbowym: odrzucony w całości, bez wstawienia znaczników
       const a = eh({ filter: { op: 'and', not: false, items: [{ k: 'gap', unit: 'pct', min: XSS }, evCond('CPI')] } });

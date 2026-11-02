@@ -164,6 +164,8 @@ try {
   report.results = results;
   writeFileSync(path.join(WYNIKI, 'H1-e2e.json'), JSON.stringify(report, null, 1));
   const failed = results.filter((r) => !r.ok).length;
-  console.log(`\n${results.length - failed} passed, ${failed} failed (procesy ${pids.join(', ')} zatrzymane)`);
+  // trzy liczby (zasada „dowód, nie status”): pominięte to sekcje spoza ONLY (domyślnie wszystkie cztery są uruchamiane, więc 0)
+  const skippedSec = ['indeks', 'wydajnosc', 'scenariusz', 'L'].filter((x) => !ONLY.includes(x));
+  console.log(`\n${results.length - failed} passed, ${failed} failed, ${skippedSec.length} skipped${skippedSec.length ? ` (${skippedSec.join(', ')})` : ''} (procesy ${pids.join(', ')} zatrzymane)`);
   process.exit(failed ? 1 : 0);
 }

@@ -19,7 +19,7 @@ const parseNum = (s) => {
 // pola cen (migracja 003): pokazywane tylko gdy baza Trade'y je ma
 const PRICES = [['entryPrice', 'Cena wejścia'], ['exitPrice', 'Cena wyjścia'], ['sl', 'SL'], ['tp', 'TP'], ['be', 'BE']]; // BE: migracja 004 (P26, 28.10.2026)
 
-export function createForm({ getModel, types, getDefaults, reload, onSaved, onClose }) {
+export function createForm({ getModel, types, getDefaults, reload, onSaved, onClose, onDelete = null }) {
   let root = null, dlg = null, trade = null, opener = null, saving = false, snapshot = '', discarding = false, shotsCtl = null;
 
   const model = () => getModel();
@@ -79,11 +79,11 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
         <div id="f-banner" class="banner" role="alert" hidden></div>
         <div class="fgrid">
           ${fld('typ', L('Typ'), seg('typ', typItems, v.typ), { cls: 'span4', labelFor: false })}
-          ${fld('date', L('Data wejścia'), `<input id="f-date" name="date" type="date" value="${esc(v.date)}" required aria-describedby="e-date">`, { cls: 'span1' })}
-          ${fld('time', L('Godzina wejścia'), `<input id="f-time" name="time" type="time" step="60" value="${esc(v.time)}" aria-describedby="e-time">`, { cls: 'span1', hint: L('Puste, jeśli nie znasz godziny.') })}
+          ${fld('date', L('Data wejścia'), `<input id="f-date" name="date" type="text" data-wd="date" value="${esc(v.date)}" required aria-describedby="e-date">`, { cls: 'span1' })}
+          ${fld('time', L('Godzina wejścia'), `<input id="f-time" name="time" type="text" data-wd="time" data-wd-pusty value="${esc(v.time)}" aria-describedby="e-time">`, { cls: 'span1', hint: L('Puste, jeśli nie znasz godziny.') })}
           ${exitOk
-            ? `${fld('exitDate', L('Data wyjścia'), `<input id="f-exitDate" name="exitDate" type="date" value="${esc(v.exitDate)}" aria-describedby="e-exitDate">`, { cls: 'span1', hint: L('Puste = ta sama data.') })}
-               ${fld('exitTime', L('Godzina wyjścia'), `<input id="f-exitTime" name="exitTime" type="time" step="60" value="${esc(v.exitTime)}" aria-describedby="e-exitTime">`, { cls: 'span1', hint: L('Daje czas trwania trade\'a.') })}`
+            ? `${fld('exitDate', L('Data wyjścia'), `<input id="f-exitDate" name="exitDate" type="text" data-wd="date" data-wd-pusty value="${esc(v.exitDate)}" aria-describedby="e-exitDate">`, { cls: 'span1', hint: L('Puste = ta sama data.') })}
+               ${fld('exitTime', L('Godzina wyjścia'), `<input id="f-exitTime" name="exitTime" type="text" data-wd="time" data-wd-pusty value="${esc(v.exitTime)}" aria-describedby="e-exitTime">`, { cls: 'span1', hint: L('Daje czas trwania trade\'a.') })}`
             : `<div class="fld span2"><span class="lbl">${L('Wyjście')}</span><p class="fhint">${L('W bazie Trade\'y nie ma jeszcze pola „Wyjście”. Uruchom aktualizację (Aktualizuj.cmd albo update.sh), która je doda.')}</p></div>`}
           ${fld('instrument', L('Instrument'), select('instrument', 'instrument', v.instrument), { cls: 'span1' })}
           ${fld('setup', L('Setup'), select('setup', 'setup', v.setup), { cls: 'span1' })}
@@ -110,8 +110,10 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
         <button type="button" class="btn ghost" data-f-act="keep">${esc(tr('Wróć do formularza'))}</button><button type="button" class="btn" data-f-act="discard">${esc(tr('Odrzuć zmiany'))}</button>`;
     }
     const left = guide.on ? `<span class="fmsg">${esc(tr('Tryb przewodnika: zapis zostaje w pamięci przeglądarki, Notion bez zmian.'))}</span>`
-      : trade ? `<a class="fmsg link" href="${esc(trade.url)}" target="_blank" rel="noopener">${esc(tr('Otwórz w Notion (tam też usuniesz wpis)'))}</a>` : `<span class="fmsg">${esc(tr('Zapis idzie wprost do bazy Trade\'y w Notion.'))}</span>`;
-    return `${left}<span class="grow"></span><button type="button" class="btn ghost" data-f-act="close">${esc(tr('Anuluj'))}</button>
+      : trade ? `<a class="fmsg link" href="${esc(trade.url)}" target="_blank" rel="noopener">${esc(tr('Otwórz w Notion'))}</a>` : `<span class="fmsg">${esc(tr('Zapis idzie wprost do bazy Trade\'y w Notion.'))}</span>`;
+    // [U] 2026-11-01 «Archiwum Notion + Cofnij»: istniejący trade da się usunąć także z formularza (strona w Notion trafia do archiwum, patrz deleteTrade w app.js)
+    const del = trade && onDelete && !guide.on ? `<button type="button" class="btn ghost danger-t" data-f-act="delete">${esc(tr('Usuń trade'))}</button>` : '';
+    return `${left}<span class="grow"></span>${del}<button type="button" class="btn ghost" data-f-act="close">${esc(tr('Anuluj'))}</button>
       <button type="submit" form="f-form" class="btn primary" data-f-act="save" id="f-save">${esc(trade ? tr('Zapisz zmiany') : tr('Dodaj do Notion'))}</button>`;
   }
 
@@ -287,6 +289,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
         else if (act === 'keep') { discarding = false; dlg.querySelector('#f-foot').innerHTML = footHtml(); field('date').focus(); }
         else if (act === 'discard') closeNow();
         else if (act === 'reload') reloadAndReopen();
+        else if (act === 'delete') { if (!saving && trade) Promise.resolve(onDelete(trade)).then((done) => { if (done) closeNow(); }); }
         return;
       }
       const segBtn = e.target.closest('[data-seg] button');

@@ -35,7 +35,7 @@ const HIST_EDGE = 40;
 // getDaily() = świece 1D sesji zamkniętych w oknie bazowym przed kursorem (PDH/PDL), onHistory(n) = ile świec historii doszło (testy, pomiar).
 // L (31.10.2026): plOf(position) → { pts, usd, r } (otwarty wynik liczy replay z ceną bieżącą i prowizją), onTradeAction({ kind: 'pct', pct } | { kind: 'cancel', id } |
 // { kind: 'move', id, changes }) → akcje z warstwy handlu (etykieta pozycji z X i procentami, przeciągane zlecenia oczekujące z SL/TP), fmtUsd(x) → kwota.
-export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '1m', colors, onCrosshair = () => {}, hideDate = false, daily = [], getNews = () => [], rysunki = null, getHistory = null, historyEnd = () => null, getDaily = () => [], onHistory = () => {}, plOf = null, onTradeAction = null, fmtUsd = (x) => String(x), labels = {} } = {}) {
+export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '1m', colors, onCrosshair = () => {}, hideDate = false, daily = [], getNews = () => [], autoScale = true, onAutoChange = () => {}, rysunki = null, getHistory = null, historyEnd = () => null, getDaily = () => [], onHistory = () => {}, plOf = null, onTradeAction = null, fmtUsd = (x) => String(x), labels = {} } = {}) {
   if (!LWC) throw new Error('bt-wykres: brak modułu Lightweight Charts');
   let c = colors;
   let candles = [], hide = !!hideDate, step = tfSec(tf), secs = (parseTf(tf)?.sec ?? 60) < 60, cursorT = null;
@@ -63,6 +63,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   const th = themeOptions(c);
   const chart = LWC.createChart(host, {
     autoSize: true, ...th,
+    rightPriceScale: { ...th.rightPriceScale, autoScale: true },
     timeScale: { ...th.timeScale, ...timeOpts().timeScale, rightOffset: 6, shiftVisibleRangeOnNewBar: true },
     localization: timeOpts().localization,
   });
@@ -156,15 +157,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
         const price = series.coordinateToPrice(y), li = chart.timeScale().coordinateToLogical(x);
         return { price, time: li == null ? null : G.indexToTime(candles, Math.round(li), step) };
       },
-      hold: (on) => {
-        const ps = series.priceScale();
-        if (on && !held) {
-          const o = chart.options();
-          held = { opts: { handleScroll: structuredClone(o.handleScroll), handleScale: structuredClone(o.handleScale) }, auto: ps.options().autoScale };
-          chart.applyOptions({ handleScroll: false, handleScale: false });
-          if (held.auto) ps.applyOptions({ autoScale: false });
-        } else if (!on && held) { chart.applyOptions(held.opts); if (held.auto) ps.applyOptions({ autoScale: true }); held = null; }
-      },
+      hold: (on) => holdScale(on),
       toHex: (v) => { const p = probe(v); const m = /^rgba\((\d+), (\d+), (\d+)/.exec(p); return m ? `#${[m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}` : p; },
       colors: () => c, instrument, tradeId: null, doc: rysunki.doc || null, bars: () => pkg, confirm: rysunki.confirm, saveDoc: rysunki.saveDoc, isActive: rysunki.isActive,
       extra: () => wantPos,
@@ -178,6 +171,24 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
     mgr = new D.DrawingManager(chart, series, {});
   }
   let held = null;
+  // tymczasowe wyłączenie przesuwania i autoskalowania na czas przeciągania rysunku; wraca poprzedni stan (auto nie zawsze true)
+  function holdScale(on) {
+    const p = series.priceScale();
+    if (on && !held) {
+      const o = chart.options();
+      held = { opts: { handleScroll: structuredClone(o.handleScroll), handleScale: structuredClone(o.handleScale) }, auto: p.options().autoScale };
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+      if (held.auto) p.applyOptions({ autoScale: false });
+    } else if (!on && held) { chart.applyOptions(held.opts); if (held.auto) p.applyOptions({ autoScale: true }); held = null; }
+  }
+  // [U] 1.11.2026 «nie ma do wybrania auto trybu w backtest, jest wlaczone i nie da sie go ywlaczyc»: stan autoskalowania osi ceny jest wykresu, nie kroku. Przeciągnięcie osi go wyłącza (LWC),
+  // dwuklik na osi włącza; kroki, skoki i doładowanie historii go nie ruszają. Tymczasowe wyłączenie przy przeciąganiu rysunków (hold) przywraca stan sprzed.
+  let autoY = autoScale !== false, autoInit = autoY;
+  const ps = () => series.priceScale();
+  const setAuto = (on) => { on = !!on; ps().applyOptions({ autoScale: on }); if (autoY !== on) { autoY = on; onAutoChange(on); } };
+  const syncAuto = () => { if (held) return; const a = ps().options().autoScale !== false; if (a !== autoY) { autoY = a; onAutoChange(a); } };
+  host.addEventListener('pointerup', () => setTimeout(syncAuto, 0));
+  host.addEventListener('dblclick', () => setTimeout(syncAuto, 0));
   // H2 (30.10.2026): motyw na żywo w replayu: tło, siatka, świece, nakładki i rysunki z kolorem domyślnym (wcześniej kolory czytane raz przy otwarciu ekranu)
   const mo = typeof MutationObserver === 'function' ? new MutationObserver(() => {
     const next = readColors(host);
@@ -478,6 +489,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
       pkgAll();
       chart.timeScale().scrollToRealTime();
       dirty();
+      if (!autoInit) { autoInit = true; requestAnimationFrame(() => requestAnimationFrame(() => { if (!autoY) ps().applyOptions({ autoScale: false }); })); }
       if (!hist.length && !hDone) loadHistory();
     } else if (u.kind === 'append') {
       for (const k of u.bars) put(k.slice(0, 6));
@@ -489,6 +501,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
 
   return {
     apply,
+    setAuto, auto: () => autoY, hold: holdScale,
     bars: () => candles,
     overlays: () => overlayModel(), // H1: model nakładek (sesje, PDH/PDL) do sprawdzenia „brak przyszłości” w odbiorze
     setTf(next) { step = tfSec(next); secs = (parseTf(next)?.sec ?? 60) < 60; chart.applyOptions(timeOpts()); resetHistory(); },

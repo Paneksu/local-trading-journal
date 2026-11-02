@@ -19,10 +19,10 @@
 // English: full-screen replay on a continuous timeline: one cursor for all charts, gaps skipped, jumps, orders, journaling, immediate Notion sync.
 import { t, locale } from './i18n.js';
 import { esc, fmtR, WEEKDAYS, weekdayIdx, shortDate } from './format.js';
-import { createBuilder, REPLAY_TFS, visibleCount } from './bt-swieca.js';
+import { createBuilder, REPLAY_TFS, visibleCount, isReplayTf, checkCustomTf, tfNeeds1s } from './bt-swieca.js';
 import { nyAt, visibleNews, nextNews, jumpTarget, skrotOf, sanitizeBt, skipGap, stepCursor, hintOf, skrotLabel } from './bt-czas.js';
 import { emptyBook, advance, MULT } from './bt-wypelnienia.js';
-import { toTrade, mountJournal, todoOf, setupSuggestions } from './bt-journal.js';
+import { toTrade, nextTradeId, mountJournal, todoOf, setupSuggestions } from './bt-journal.js';
 import { isUnsent, needsUpdate } from './bt-notion.js';
 import { account as accountOf, openPL, riskBalance, commissionOf, createExcursionTracker } from './bt-konto.js';
 import { mountDock } from './bt-szuflada.js';
@@ -35,7 +35,7 @@ import { createDrawingStore, symOf } from './bt-rysunki.js';
 import { createReplayData, sessionOpenAt, nextOpen } from './bt-dane.js';
 import { migrateSession, nyDayOf } from './bt-sesja.js';
 import { matchDays } from './bt-filtr.js';
-import { confirmDialog } from './modal.js';
+import { confirmDialog, toast } from './modal.js';
 import { LWC_URL, DRAW_URL, readColors } from './wykres.js';
 import { dayTypeLabel } from './bt-filtr-widok.js';
 import { chartTz, fmtIn, tzLabel } from './podglad.js';
@@ -54,7 +54,7 @@ const LAYOUTS = ['1', '2h', '2v', '4'];
 const CELLS = { 1: 1, '2h': 2, '2v': 2, 4: 4 };
 const GEAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 
-// Układ z sesji (albo z localStorage) sprowadzony do poprawnego: tyle wykresów, ile pokazuje układ, instrumenty tylko z sesji, interwały z REPLAY_TFS.
+// Układ z sesji (albo z localStorage) sprowadzony do poprawnego: tyle wykresów, ile pokazuje układ, instrumenty tylko z sesji, interwały poprawne wg isReplayTf (lista REPLAY_TFS to tylko domyślne wartości).
 // Brakujące wykresy dostają kolejne instrumenty sesji i interwał ostatniego wykresu.
 export function normLayout(layout, instruments, valid = null) {
   const kind = LAYOUTS.includes(layout?.kind) ? layout.kind : '1';
@@ -66,7 +66,9 @@ export function normLayout(layout, instruments, valid = null) {
     const tfPrev = charts[i - 1]?.tf || have[have.length - 1]?.tf;
     charts.push({
       instrument: c && pool.includes(c.instrument) ? c.instrument : pool[i % pool.length],
-      tf: REPLAY_TFS.includes(c?.tf) ? c.tf : (REPLAY_TFS.includes(tfPrev) ? tfPrev : '1m'),
+      tf: isReplayTf(c?.tf) ? c.tf : (isReplayTf(tfPrev) ? tfPrev : '1m'),
+      // [U] 1.11.2026 «nie ma do wybrania auto trybu w backtest…»: autoskalowanie osi ceny per wykres, domyślnie włączone
+      auto: c?.auto !== false,
     });
   }
   const active = Number.isInteger(layout?.active) && layout.active >= 0 && layout.active < charts.length ? layout.active : 0;
@@ -87,7 +89,7 @@ function dayLabel(day) {
 }
 
 // openReplay(root, { sessionId }) → API ekranu. loadRange/loadBounds/loadFeatures podmienia strona testowa (np. syntetyczne newsy).
-export function openReplay(root, { sessionId, client = createSessionClient(), loadRange = null, loadBounds = null, loadFeatures = null, loadDays = null, loadNews = null, loadLwc = () => import(LWC_URL), loadDraw = () => import(DRAW_URL).catch(() => null), getSettings = () => sanitizeBt(null), getSetups = () => [], confirm = (o) => confirmDialog(o), onStats = null, onClosed = () => {}, onReopen = () => {}, onClose = () => {}, notionEveryMs = NOTION_RETRY_MS, storage = globalThis.localStorage, raf = (f) => globalThis.requestAnimationFrame(f), caf = (id) => globalThis.cancelAnimationFrame(id), now = () => Date.now() } = {}) {
+export function openReplay(root, { sessionId, client = createSessionClient(), loadRange = null, loadBounds = null, loadFeatures = null, loadDays = null, loadNews = null, loadLwc = () => import(LWC_URL), loadDraw = () => import(DRAW_URL).catch(() => null), getSettings = () => sanitizeBt(null), getSetups = () => [], confirm = (o) => confirmDialog(o), notify = (m, o) => toast(m, o), onStats = null, onClosed = () => {}, onReopen = () => {}, onClose = () => {}, onFavTfs = () => {}, notionEveryMs = NOTION_RETRY_MS, storage = globalThis.localStorage, raf = (f) => globalThis.requestAnimationFrame(f), caf = (id) => globalThis.cancelAnimationFrame(id), now = () => Date.now() } = {}) {
   const el = document.createElement('div');
   el.className = 'bt-screen';
   el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', t('Replay backtestu'));
@@ -139,6 +141,55 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   const cur = () => cells[activeIdx] || cells[0] || null;
   const curInst = () => cur()?.instrument || '';
   const curTf = () => cur()?.tf || '1m';
+  // [U] 1.11.2026 «oraz nie da sie dowolnie zmieniac timeframe i ustawiac ulubonych stalych i powinny byc od razu poakzane ulubione a nie lsita rozwiajana»:
+  // ulubione interwały replayu to przyciski w nagłówku każdego wykresu (lista w bloku ustawień bt.favTfs, wspólna dla wykresów sesji, osobna od Live); aktywny własny interwał
+  // spoza ulubionych dochodzi jako dodatkowy przycisk. Decyzja gustu: osobna lista dla replayu, bo ma inne dozwolone interwały niż wykres trade'a.
+  let favs = sanitizeBt(getSettings()).favTfs;
+  const sec1sAt = (inst) => !!data && inside(data.real1s(inst), cursor);
+  const autoTitle = (on) => `${t('Automatyczna skala ceny. Wyłącz, żeby przesuwać wykres w pionie i skalować oś ceny (przeciąganie, kółko).')} ${on ? t('Teraz włączone.') : t('Teraz wyłączone.')}`;
+  const tfProblemText = (code) => ({
+    format: t('Interwał to liczba i jednostka: s, m albo h, np. 7m, 45s, 2h.'),
+    unit: t('W replayu interwał podaje się w sekundach, minutach albo godzinach (s, m, h).'),
+    max: t('Najdłuższy interwał własny to 24 godziny.'),
+    multiple: t('Od minuty w górę interwał musi być wielokrotnością 60 sekund (świeca bazowa to 1m).'),
+    no1s: t('Interwały krótsze niż minuta są tylko w oknie z danymi 1s (NQ, 9:30–11:00 czasu NY). Tu najmniejszy interwał to 1m.'),
+  })[code] || '';
+  // przycisk ulubionego interwału sekundowego bez dzielnika minuty jest wyłączony poza oknem 1s (jak pole „Własny”), z powodem w title
+  function gateTfs(c) {
+    const ok = sec1sAt(c.instrument);
+    c.el.querySelectorAll('.bt-tfs button').forEach((b) => {
+      const off = !ok && tfNeeds1s(b.dataset.tf);
+      b.disabled = off;
+      if (off) b.title = tfProblemText('no1s'); else b.removeAttribute('title');
+    });
+  }
+  function paintTfs(only = null) {
+    for (const c of only ? [only] : cells) {
+      const list = favs.includes(c.tf) ? favs : [...favs, c.tf].sort((a, b) => parseTf(a).sec - parseTf(b).sec);
+      c.el.querySelector('.bt-tfs').innerHTML = list.map((x) => `<button type="button" data-tf="${esc(x)}" aria-pressed="${x === c.tf}">${esc(x)}</button>`).join('');
+      gateTfs(c);
+      const fav = c.el.querySelector('.bt-tffav'), isFav = favs.includes(c.tf);
+      fav.textContent = isFav ? t('★ Usuń {tf} z ulubionych', { tf: c.tf }) : t('☆ Dodaj {tf} do ulubionych', { tf: c.tf });
+      fav.setAttribute('aria-pressed', String(isFav));
+      c.el.querySelector('.bt-tfchips').innerHTML = favs.map((x) => `<span class="swc-chip">${esc(x)}<button type="button" data-tfdel="${esc(x)}" aria-label="${esc(t('Usuń {tf}', { tf: x }))}"${favs.length < 2 ? ' disabled' : ''}>×</button></span>`).join('');
+    }
+  }
+  function toggleFav(tf) {
+    if (!isReplayTf(tf)) return;
+    const next = favs.includes(tf) ? favs.filter((x) => x !== tf) : [...favs, tf].sort((a, b) => parseTf(a).sec - parseTf(b).sec);
+    if (!next.length) return;
+    favs = sanitizeBt({ favTfs: next }).favTfs;
+    paintTfs();
+    onFavTfs(favs);
+  }
+  // wspólny wybór interwału w stopce: lista ulubionych/standardowych plus aktywny własny interwał
+  function footTf() {
+    const s = $('.bt-tf'), v = curTf();
+    if (!s) return;
+    if (![...s.options].some((o) => o.value === v)) { const o = document.createElement('option'); o.value = v; o.textContent = v; o.dataset.custom = '1'; s.appendChild(o); }
+    for (const o of [...s.options]) if (o.dataset.custom && o.value !== v) o.remove();
+    s.value = v;
+  }
   const sessionInstruments = () => (doc?.def?.instruments?.length ? doc.def.instruments : ['NQ']).filter((i) => Object.hasOwn(FAMILY, i));
   // 409 stale (sesja zmieniona w innej karcie) to osobny stan: handel stoi, zapisy ustają, komunikat z przyciskiem „Otwórz ponownie”; inne błędy to zwykły komunikat
   function onSaveError(e) {
@@ -171,6 +222,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (ev.type !== 'closed') return;
     const trade = tradeFrom(ev.position);
     (doc.trades ||= []).push(trade);
+    doc.tradeSeq = Math.max(Number(doc.tradeSeq) || 0, Number(String(trade.id).slice(1)) || 0);
     onClosed({ ...ev.position, maeR: trade.maeR, mfeR: trade.mfeR, tradeId: trade.id });
     openJournal(trade);
     // zapis trade'a robi wywołujący (onCommit panelu albo advanceAll) jednym zapisem; client.notion wysyła zaległy zapis przed POST
@@ -179,7 +231,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   function tradeFrom(pos) {
     syncDrawings(); // rysunki z ostatnich 120 ms trafiają do magazynu przed migawką
     // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 1: prowizja $ za kontrakt z kreatora, domyślnie 0)
-    return toTrade(pos, { day: nyDayOf(pos.entryT), contract: null, stream: streamOf(pos.instrument), drawings: store ? store.snapshot(pos.instrument) : null, trades: doc.trades, commission: commissionOf(doc.def) });
+    return toTrade(pos, { day: nyDayOf(pos.entryT), contract: null, stream: streamOf(pos.instrument), drawings: store ? store.snapshot(pos.instrument) : null, trades: doc.trades, id: nextTradeId(doc.trades, doc.tradeSeq), commission: commissionOf(doc.def) });
   }
   // ---- L: Journal trade'a w klasycznym oknie (bt-journal-okno.js) ----
   // [U] 31.10.2026 «Przyjmuję wszystkie» (J2: tylko zamknięte trade'y; J4: rysunki Journala to migawka trade'a, rysunki sesji bez zmian; J5: poprawki wysłanego trade'a w tle do Notion)
@@ -195,6 +247,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     jwDirty = false;
     jw = openJournalWindow({
       trades: () => doc?.trades || [], id,
+      onDelete: (tid) => { deleteTrade(tid); },
       fetchRange: loadRange || ((q) => client.range(q)),
       maxTOf: (tr) => journalMaxT(tr, { cursor, real1s: data?.real1s(tr.instrument) || [] }),
       setups: setupSuggestions(getSetups(), doc.trades), known: getSetups(),
@@ -221,6 +274,125 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       },
     });
     return jw;
+  }
+
+  // ---- [U] 2026-11-01 «Archiwum Notion + Cofnij»: usuwanie zamkniętego trade'a (Historia w szufladzie i okno Journala) ----
+  // Trade sesji powstaje dopiero przy pełnym zamknięciu pozycji, więc otwartej pozycji tą drogą nie da się usunąć (najpierw ją zamknij); lista trade'ów to same zamknięte.
+  // Kolejność: potwierdzenie → serwer przenosi stronę trade'a do kosza Notion (błąd Notion = nic się u nas nie zmienia, komunikat w powiadomieniu) → trade znika z sesji,
+  // saldo, equity, wynik dnia i statystyki liczą się od nowa (account() z doc.trades) → zapis sesji (awaitowany) → powiadomienie „Cofnij” (9 s, Ctrl+Z): strona wraca z kosza,
+  // trade wraca na swoje miejsce i jest wysyłany do Notion jak nowy (idempotentnie po znaczniku, bez dubla). Trade bez strony w Notion (niewysłany) usuwa się tylko lokalnie.
+  // Numer trade'a nie wraca (doc.tradeSeq).
+  // Decyzja 2026-11-02 (poprawki po przeglądach), zamknięcie replayu w trakcie usuwania: usuwanie kończy się też po zamknięciu (trade znika z pliku sesji, powiadomienie z Cofnij żyje),
+  // więc Notion i plik sesji nigdy nie rozchodzą się z powodu samego zamknięcia karty. Zapis sesji po usunięciu, który się nie udał, zostawia trade w pliku, ale Cofnij to naprawia
+  // (serwer przywraca samą stronę), a nieudany zapis ponawia się też sam przy następnym zapisie klienta (kolejka klienta).
+  let deleting = false, busyRestore = () => {};
+  const failText = (e, what = 'delete') => {
+    if (e?.code === 'network' || !e?.status) return e?.code === 'flush' ? flushText(what) : t('Nie mogę połączyć się z lokalnym serwerem. Uruchom dashboard ponownie (Dashboard.vbs albo start.sh).');
+    if (e.code === 'flush') return flushText(what);
+    return e.message || (what === 'delete' ? t('Nie udało się usunąć trade\'a.') : t('Nie udało się przywrócić trade\'a.'));
+  };
+  const flushText = (what) => (what === 'delete' ? t('Nie udało się zapisać sesji, więc trade nie został usunięty. Spróbuj ponownie za chwilę.') : t('Nie udało się zapisać sesji, więc trade nie został przywrócony. Spróbuj ponownie za chwilę.'));
+  // zapis sesji z potwierdzeniem (persist połyka błąd, a tu wynik jest potrzebny do komunikatu)
+  async function saveNow() {
+    try { await client.save(doc, { now: true }); return true; } catch (e) { onSaveError(e); return false; }
+  }
+  async function deleteTrade(id) {
+    if (deleting || closed || stale || !doc) return false;
+    const x = (doc.trades || []).find((y) => y && y.id === id);
+    if (!x || !Number.isFinite(x.exitT)) return false;
+    pause();
+    deleting = true;
+    // stan „w trakcie usuwania”: przyciski usuwania nieaktywne, dopóki serwer nie odpowie (podwójne kliknięcie niczego nie dubluje)
+    document.documentElement.setAttribute('data-deleting', '1');
+    try {
+      const hasPage = !!x.notion?.id || Number.isFinite(x.notion?.postAt);
+      const dirT = x.dir === 'Short' ? t('Short') : t('Long');
+      const sum = `${x.instrument} ${dirT} × ${x.qty} · ${Number.isFinite(x.r) ? fmtR(x.r) : '–'} · ${Number.isFinite(x.pnl) ? fmtMoney(x.pnl) : '–'}`;
+      const ok = await confirm({
+        title: t('Usunąć trade {id}?', { id }),
+        text: `${sum}. ${t('Trade zniknie z sesji, a saldo, equity i statystyki przeliczą się bez niego.')} ${hasPage ? t('Jego strona trafi do kosza w Notion i po 30 dniach zniknie na stałe. Trade przywrócisz przyciskiem „Cofnij” zaraz po usunięciu.') : t('Nie ma jeszcze strony w Notion, więc nic tam się nie zmieni.')}`,
+        ok: t('Usuń trade'), danger: true,
+      });
+      if (!ok || closed || !doc) return false;
+      // stan „w trakcie”: w klikniętym wierszu (i w oknie Journala tego trade'a) „Usuń” zmienia się w „Usuwanie…”, pozostałe przyciski są przygaszone (CSS [data-deleting])
+      const busy = [...document.querySelectorAll(`[data-dka="delete"][data-id="${id}"]`), ...(jw && jw.tradeId() === id ? document.querySelectorAll('.bt-jw-del') : [])];
+      for (const b of busy) { b.dataset.orig = b.textContent; b.textContent = t('Usuwanie…'); }
+      busyRestore = () => { for (const b of busy) if (b.isConnected && b.dataset.orig) { b.textContent = b.dataset.orig; delete b.dataset.orig; } };
+      let skip = false;
+      for (;;) {
+        try { await client.trashTrade(sessionId, id, { skipNotion: skip }); break; } catch (e) {
+          if (closed) return false;
+          // Notion nie zna strony (usunięta na stałe albo brak dostępu): usunięcie tylko lokalne wyłącznie za osobną zgodą
+          if (e?.code === 'notion-missing' && !skip) {
+            const go = await confirm({ title: t('Nie znaleziono strony w Notion'), text: t('W Notion nie ma strony tego trade\'a albo integracja nie ma do niej dostępu. Usunąć trade tylko z aplikacji? Niczego w Notion nie zmienię.'), ok: t('Usuń tylko z aplikacji'), danger: true });
+            if (!go || closed) return false;
+            skip = true; continue;
+          }
+          notify(failText(e, 'delete'), { error: true });
+          return false;
+        }
+      }
+      // strona jest już w koszu: od tej chwili wszystkie ścieżki kończą usunięcie (także po zamknięciu replayu)
+      if (closed || !doc) return finishClosed(id);
+      const index = (doc.trades || []).findIndex((y) => y && y.id === id);
+      if (index < 0) return false;
+      const [removed] = doc.trades.splice(index, 1);
+      doc.tradeSeq = Math.max(Number(doc.tradeSeq) || 0, Number(String(id).slice(1)) || 0);
+      if (journal?.id === id) closeJournal();
+      if (jw && jw.tradeId() === id) {
+        const rest = doc.trades.filter((y) => y && Number.isFinite(y.exitT));
+        const next = rest[Math.min(index, rest.length - 1)];
+        if (next) jw.show(next.id); else jw.close();
+      }
+      computeAccount(); paintBar(); paintDock();
+      const saved = await saveNow();
+      notify(saved ? t('Trade usunięty') : t('Trade usunięty, ale zapis sesji się nie udał. Cofnij przywróci stronę w Notion.'), { ms: 9000, error: !saved, action: { label: t('Cofnij'), undo: true, run: () => undoDelete(removed, index) } });
+      return true;
+    } finally { deleting = false; busyRestore(); busyRestore = () => {}; document.documentElement.removeAttribute('data-deleting'); }
+  }
+  // replay zamknięty w trakcie usuwania: trade znika z pliku sesji (świeżo wczytanego), powiadomienie z Cofnij działa jak zwykle
+  async function finishClosed(id) {
+    try {
+      // zapis wysłany przy zamykaniu replayu musi się skończyć przed odczytem pliku (inaczej load wyprzedza zapis, a nasz zapis nadpisuje plik starszą wersją)
+      await client.flush().catch(() => {});
+      const d = await client.load(sessionId);
+      const index = (d.trades || []).findIndex((y) => y && y.id === id);
+      if (index < 0) return false;
+      const [removed] = d.trades.splice(index, 1);
+      d.tradeSeq = Math.max(Number(d.tradeSeq) || 0, Number(String(id).slice(1)) || 0);
+      await client.save(d, { now: true });
+      notify(t('Trade usunięty'), { ms: 9000, action: { label: t('Cofnij'), undo: true, run: () => undoDelete(removed, index) } });
+      return true;
+    } catch (e) { notify(failText(e, 'delete'), { error: true }); return false; }
+  }
+  async function undoDelete(removed, index) {
+    let back;
+    try { back = await client.restoreTrade(sessionId, removed.id); } catch (e) { notify(failText(e, 'restore'), { error: true }); return false; }
+    removed.notion = { id: null, state: 'pending', error: null };
+    let ok = false;
+    if (!closed && doc) {
+      if (!(doc.trades || []).some((y) => y && y.id === removed.id)) (doc.trades ||= []).splice(Math.min(index, doc.trades.length), 0, removed);
+      computeAccount(); paintBar(); paintDock();
+      ok = await saveNow();
+    } else {
+      // replay zamknięty w czasie powiadomienia: trade wraca do świeżo wczytanego pliku sesji
+      try {
+        await client.flush().catch(() => {});
+        const d = await client.load(sessionId);
+        if (!(d.trades || []).some((y) => y && y.id === removed.id)) (d.trades ||= []).splice(Math.min(index, d.trades.length), 0, removed);
+        await client.save(d, { now: true });
+        ok = true;
+      } catch { ok = false; }
+    }
+    // „Trade przywrócony” dopiero po potwierdzonym zapisie sesji; kopia trade'a w księdze serwera czeka do tego zapisu, więc ponowienie jest możliwe
+    if (!ok) {
+      notify(t('Strona wróciła z kosza, ale zapis sesji się nie udał. Spróbuj ponownie.'), { error: true, ms: 9000, action: { label: t('Spróbuj ponownie'), run: () => undoDelete(removed, index) } });
+      return false;
+    }
+    // strona wróciła z kosza: wysyłka rozpoznaje ją po znaczniku i podpina, bez dubla; trade bez strony czeka jak każdy niewysłany
+    if (back?.restored) { if (!closed && doc) sendNotion({}); else client.notion({ sessionId }).catch(() => {}); }
+    notify(t('Trade przywrócony'));
+    return true;
   }
 
   // ---- E1: panel journalingu w rogu wykresu instrumentu (opcjonalny, replay na niego nie czeka) i lista „do uzupełnienia” ----
@@ -299,6 +471,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       const r = await client.notion({ sessionId, ...opts });
       if (closed || !doc) return r;
       for (const x of doc.trades || []) if (x && r?.notion?.[x.id]) x.notion = r.notion[x.id];
+      // wiersze Historii pokazują stan wysyłki, więc po odpowiedzi serwera odświeżamy też szufladę (po Cofnij stan wraca do „wysłany” bez ruchu kursora)
+      paintDock();
       if (r?.failed?.length) msg(t('Nie zapisano w Notion: {n}. {err}', { n: r.failed.length, err: r.failed[0].error || '' }));
       else if (r?.sent) msg(t('Zapisano w Notion: {n}', { n: r.sent }));
       return r;
@@ -395,10 +569,11 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       const secTf = (parseTf(c.tf)?.sec ?? 60) < 60;
       const r1 = data?.real1s(c.instrument) || [], show = secTf && !inside(r1, cursor);
       c.secnote.hidden = !show;
+      gateTfs(c);
       if (show) c.secnote.textContent = r1.length ? t('Sekundy od 9:30 do 11:00 NY, poza tym świece 1m.') : t('Ten instrument ma tylko świece 1m.');
     }
     paintTodo();
-    $('.bt-tf').value = curTf();
+    footTf();
     el.querySelectorAll('[data-layout]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.layout === (doc.layout?.kind || '1'))));
   }
 
@@ -454,11 +629,18 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   }
   function cellHtml(i, cfgC) {
     const ins = sessionInstruments().map((x) => `<option value="${esc(x)}"${x === cfgC.instrument ? ' selected' : ''}>${esc(x)}</option>`).join('');
-    const tfs = REPLAY_TFS.map((x) => `<option value="${x}"${x === cfgC.tf ? ' selected' : ''}>${x}</option>`).join('');
     return `
       <div class="bt-ch">
         <select class="sp-in sp-sel bt-ci" aria-label="${esc(t('Instrument wykresu'))}">${ins}</select>
-        <select class="sp-in sp-sel bt-ct" aria-label="${esc(t('Interwał wykresu'))}">${tfs}</select>
+        <div class="seg sm bt-tfs" role="group" aria-label="${esc(t('Interwał wykresu'))}"></div>
+        <span class="bt-tfw"><button type="button" class="icon-btn bt-tfmore" aria-expanded="false" aria-label="${esc(t('Własny interwał i ulubione'))}" title="${esc(t('Własny interwał i ulubione'))}">⋯</button>
+          <div class="bt-tfpop" hidden>
+            <form class="bt-tfadd"><input class="sp-in" type="text" maxlength="6" placeholder="${esc(t('Własny, np. 7m'))}" spellcheck="false" autocomplete="off" aria-label="${esc(t('Własny interwał'))}"><button type="submit" class="btn sm">${esc(t('Ustaw'))}</button></form>
+            <p class="note bt-tfmsg" role="status"></p>
+            <button type="button" class="btn sm bt-tffav"></button>
+            <p class="lbl">${esc(t('Ulubione'))}</p><div class="swc-chips bt-tfchips"></div>
+          </div></span>
+        <div class="seg sm bt-auto" role="group" aria-label="${esc(t('Skala ceny'))}"><button type="button" data-swc="auto" aria-pressed="${cfgC.auto !== false}" title="${esc(autoTitle(cfgC.auto !== false))}">${esc(t('Auto'))}</button></div>
         <span class="swc-save" aria-live="polite"></span><span class="swc-meter" hidden></span>
         <button type="button" class="btn sm swc-draw" aria-expanded="false">${esc(t('Rysuj'))}</button>
         <div class="swc-tools" role="toolbar" aria-label="${esc(t('Narzędzia rysowania'))}"></div>
@@ -482,6 +664,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const base = store.docOf(sym);
     cell.chart = createReplayChart(sel('.bt-plot'), {
       LWC, D, instrument: cfgC.instrument, tf: cfgC.tf, colors: (colors = readColors(sel('.bt-plot'))), getNews: () => visibleNews(data.news(), cursor),
+      autoScale: cfgC.auto !== false,
+      onAutoChange: (on) => { const ab = sel('[data-swc="auto"]'); ab.setAttribute('aria-pressed', String(on)); ab.title = autoTitle(on); if (doc.layout.charts[i]) doc.layout.charts[i] = { ...doc.layout.charts[i], auto: on }; persist(); },
       // K: pełna historia: porcje świec interwału wykresu sprzed okna bazowego, do początku danych
       getHistory: (before) => data.history(cell.instrument, cell.tf, before), historyEnd: () => data.baseFrom(), getDaily: () => dailyOf(cell.instrument),
       // L: etykieta otwartego wyniku na linii pozycji (cena bieżąca instrumentu, prowizja sesji) i akcje z warstwy handlu
@@ -535,7 +719,32 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (posEditFn) cell.chart.onPositionEdit((pr) => posEditFn(pr, cell.instrument));
     host.addEventListener('pointerdown', () => activate(i), true);
     sel('.bt-ci').addEventListener('change', (ev) => setCell(i, { instrument: ev.target.value }));
-    sel('.bt-ct').addEventListener('change', (ev) => setCell(i, { tf: ev.target.value }));
+    paintTfs(cell);
+    const pop = sel('.bt-tfpop'), more = sel('.bt-tfmore'), tmsg = sel('.bt-tfmsg');
+    // zamykanie kliknięciem obok panelu (jak wybierak daty): nasłuch tylko, gdy menu jest otwarte
+    let offOutside = null;
+    const openPop = (on) => {
+      pop.hidden = !on; more.setAttribute('aria-expanded', String(on));
+      offOutside?.(); offOutside = null;
+      if (!on) return;
+      const h = (ev) => { if (!pop.contains(ev.target) && !more.contains(ev.target)) openPop(false); };
+      document.addEventListener('pointerdown', h, true);
+      offOutside = () => document.removeEventListener('pointerdown', h, true);
+      tmsg.textContent = ''; paintTfs(cell); sel('.bt-tfadd input').focus();
+    };
+    more.addEventListener('click', () => openPop(pop.hidden));
+    pop.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Escape') { openPop(false); more.focus(); } });
+    sel('.bt-tfs').addEventListener('click', (ev) => { const b = ev.target.closest('[data-tf]'); if (b) setCell(i, { tf: b.dataset.tf }); });
+    sel('.bt-tffav').addEventListener('click', () => { toggleFav(cell.tf); });
+    pop.addEventListener('click', (ev) => { const d = ev.target.closest('[data-tfdel]'); if (d) toggleFav(d.dataset.tfdel); });
+    sel('.bt-tfadd').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const inp = ev.currentTarget.querySelector('input'), r = checkCustomTf(inp.value, { sec1s: sec1sAt(cell.instrument) });
+      if (r.problem) { const why = `${inp.value.trim()}: ${tfProblemText(r.problem)}`; inp.setAttribute('aria-invalid', 'true'); inp.title = why; tmsg.textContent = why; tmsg.classList.add('err'); return; }
+      inp.removeAttribute('aria-invalid'); inp.title = ''; tmsg.textContent = ''; tmsg.classList.remove('err');
+      setCell(i, { tf: r.tf }); inp.value = ''; openPop(false);
+    });
+    sel('[data-swc="auto"]').addEventListener('click', () => cell.chart.setAuto(!cell.chart.auto()));
     sel('.swc-draw').addEventListener('click', (ev) => { const o = sel('.swc-tools').classList.toggle('open'); ev.currentTarget.setAttribute('aria-expanded', String(o)); });
     return cell;
   }
@@ -552,7 +761,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   }
   function markActive() {
     cells.forEach((c, i) => { c.el.dataset.active = String(i === activeIdx); });
-    $('.bt-tf').value = curTf();
+    footTf();
   }
   function activate(i) {
     if (i === activeIdx || !cells[i]) return;
@@ -572,13 +781,15 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       buildCells(); render(); persist();
       return;
     }
-    if (patch.tf && REPLAY_TFS.includes(patch.tf) && patch.tf !== c.tf) {
+    // 1.6.1: ulubiony 45s albo 7s poza oknem 1s nie włącza się (nierówne świece), tak samo jak w polu „Własny”
+    if (patch.tf && tfNeeds1s(patch.tf) && !sec1sAt(c.instrument)) return;
+    if (patch.tf && isReplayTf(patch.tf) && patch.tf !== c.tf) {
       c.tf = patch.tf;
       doc.layout.charts[i] = { ...doc.layout.charts[i], tf: c.tf };
       c.builder = createBuilder(streamOf(c.instrument), c.tf);
       c.chart.setTf(c.tf);
       if (i !== activeIdx) { activeIdx = i; doc.layout.active = i; markActive(); }
-      c.el.querySelector('.bt-ct').value = c.tf;
+      paintTfs();
       render(); persist();
     }
   }
@@ -802,7 +1013,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     }
     const sk = norm(skrotOf(ev));
     if (!sk) return;
-    if (sk === 'SPACE' && tg && (tg.tagName === 'BUTTON' || tg.tagName === 'A')) return; // Spacja na przycisku robi swoje
+    // Spacja na przycisku robi swoje, z jednym wyjątkiem: „Cofnij” w powiadomieniu ignoruje Spację (decyzja 2026-11-02, wariant a), więc w replayu znaczy ona „graj” jak bez fokusu
+    if (sk === 'SPACE' && tg && (tg.tagName === 'BUTTON' || tg.tagName === 'A') && !tg.closest?.('.toast-act')) return;
     const c = cfg();
     const action = Object.entries(c.skroty).find(([, v]) => norm(v) === sk)?.[0];
     const jmp = action ? null : c.jumps.find((j) => norm(j.skrot) === sk);
@@ -951,6 +1163,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       storage,
       onAction: (kind, { instrument: k, id }) => {
         if (kind === 'journal') { openJournalWin(id); return; }
+        if (kind === 'delete') { deleteTrade(id); return; }
         if (!orders) return;
         if (kind === 'be') orders.beFor(k);
         else if (kind === 'half') orders.closePct(k, 50);

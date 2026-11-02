@@ -56,6 +56,7 @@ const STATUS_WORD = { ok: 'gotowe', warn: 'uwaga', error: 'błąd', info: 'infor
 const INTEGRATIONS_URL = 'https://www.notion.so/profile/integrations';
 const INTEGRATION_NAME = 'JustJournal';
 const RESUME_KEY = 'thq.obResume';
+const NOTE_KEY = 'thq.obSettingsNote';
 const fmtUsd = (x) => new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(x) || 0);
 
 // N6: przebieg kreatora (czysta funkcja, test w przeglądarce). Dane rynkowe po połączeniu Notion w każdej ścieżce, bo klucze są per komputer.
@@ -77,6 +78,11 @@ async function call(url, body) {
 const post = (url, body = {}) => call(url, body);
 const get = (url) => call(url);
 const L = (s, p) => esc(t(s, p));
+// stan ładowania przycisku: spinner (.spin działa w .busy), tekst, aria-busy; ruch wyłączany przez prefers-reduced-motion w styles.css
+const SPIN = '<span class="spin" aria-hidden="true"></span>';
+const lab = (on, idle, busy) => (on ? `${SPIN}${L(busy)}` : L(idle));
+const ba = (on) => (on ? ' aria-busy="true"' : '');
+const bc = (on) => (on ? ' busy' : '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // onAddTrade(): „Dodaj pierwszy trade” na ekranie Gotowe (formularz dashboardu)
@@ -88,6 +94,8 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   const open = { schema: null, demo: null, fix: null };
   const tok = { replace: false, checking: false, ok: null, err: '', timer: 0, last: '' };
   const pg = { pages: null, err: '', sel: '', timer: 0, sig: '', autoNext: 0 };
+  // busy: trwa „Połącz istniejący dziennik” (/api/setup/connect)
+  const cn = { busy: false };
   const mk = { pageId: '', title: '', demo: true, job: null, starting: false, err: '', timer: 0, done: false };
   let tests = 0;
   let path = 'nowy';                        // wybrana ścieżka świeżej instalacji
@@ -180,6 +188,32 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
 
   // ---------- krok: Strona (i Dostęp) ----------
   const pageIcon = (p) => (p.icon && !/^https?:/.test(p.icon) ? `<span class="pg-emoji" aria-hidden="true">${esc(p.icon)}</span>` : LOGO.page);
+  // 1.6.1: czytelny opis strony: które bazy JustJournal na niej leżą (pełny tytuł strony jest w nagłówku wiersza)
+  const dbList = (keys) => keys.map((d) => t(DB_NAME[d] || d)).join(', ');
+  function pageStatus(p) {
+    if (p.journal) return esc(t('Jest tu już dziennik: {list}', { list: dbList(p.present?.length ? p.present : Object.keys(p.journal.dsIds || {})) }));
+    if (p.partial) return esc(t('Niepełny dziennik, brakuje: {list}', { list: dbList(p.partial) }));
+    return L('Nowy dziennik powstanie w tej stronie');
+  }
+  // informacja po połączeniu: który blok ustawień dashboardu podpięto (gdy leżał poza stroną z bazami)
+  function settingsNote(st) {
+    if (!st) return '';
+    let out = '';
+    if (st.state === 'adopted') out = t('Podpięto ustawienia dashboardu z istniejącego bloku na stronie „{page}”. Nowy blok nie powstał.', { page: st.pageTitle || t('Bez tytułu') });
+    if (st.state === 'adopted' && st.others > 0) {
+      const when = st.updatedAt ? new Date(st.updatedAt).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '';
+      out += ' ' + t('Znaleziono więcej bloków ustawień ({n}). Wybrano najnowszy, zapisany {date}.', { n: st.others + 1, date: when || '?' });
+    }
+    // skan zatrzymany na limicie stron: użytkownik ma wiedzieć, że mógł zostać pominięty inny blok
+    if (st.truncated) out += (out ? ' ' : '') + t('Przejrzano tylko {n} stron udostępnionych integracji, więc innego bloku ustawień mogło nie być widać.', { n: st.scanned });
+    return out.trim();
+  }
+  function rememberSettingsNote(st) {
+    const note = settingsNote(st);
+    mk.settingsNote = note;
+    try { if (note) sessionStorage.setItem(NOTE_KEY, note); else sessionStorage.removeItem(NOTE_KEY); } catch { /* brak */ }
+    return note;
+  }
   function pagesZoneHtml() {
     const access = cur() === 'dostep';
     const pages = pg.pages || [];
@@ -191,7 +225,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const sel = pages.find((p) => p.id === pg.sel);
     const many = pages.length > 20 ? `<p class="fhint ob-many">${esc(t('Integracja widzi {n} stron. Wystarczy jedna, w której ma powstać dziennik.', { n: pages.length }))}</p>` : '';
     return `${many}<ul class="pg-list" role="radiogroup" aria-label="${L('Strony w Notion')}">${pages.map((p) => `<li><button type="button" class="pg" role="radio" aria-checked="${p.id === pg.sel}" data-ob="page" data-v="${esc(p.id)}">
-        <span class="ck-logo">${pageIcon(p)}</span><span class="ck-txt"><b>${esc(p.title || t('Bez tytułu'))}</b><span>${p.journal ? L('Jest tu już dziennik') : p.partial ? esc(t('Niepełny dziennik, brakuje: {list}', { list: p.partial.map((d) => t(DB_NAME[d] || d)).join(', ') })) : L('Nowy dziennik powstanie w tej stronie')}</span></span>
+        <span class="ck-logo">${pageIcon(p)}</span><span class="ck-txt"><b>${esc(p.title || t('Bez tytułu'))}</b><span>${pageStatus(p)}</span>${p.partial && p.present?.length ? `<span>${esc(t('Bazy JustJournal na tej stronie: {list}', { list: dbList(p.present) }))}</span>` : ''}${p.parentTitle ? `<span>${esc(t('Leży w: {name}', { name: p.parentTitle }))}</span>` : ''}</span>
         ${p.journal ? `<span class="um-add">${L('dziennik')}</span>` : ''}</button></li>`).join('')}</ul>
       ${sel?.journal ? `<p class="fhint">${L('Na tej stronie jest już dziennik (np. z innego komputera). Połączymy go bez zmian w Notion.')}</p>` : ''}
       <details class="ob-more"><summary>${L('Nie widzisz swojej strony?')}</summary>${how}${poradnikLink(['notion-polaczenia'])}</details>`;
@@ -224,14 +258,19 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   }
   function startPagesPoll() { stopTimers(); pg.sig = ''; pollPages(); pg.timer = setInterval(pollPages, 3000); }
   async function choosePage() {
+    if (cn.busy) return;
     const p = (pg.pages || []).find((x) => x.id === pg.sel);
     if (!p) return;
     if (p.journal) {
+      // [U] 1.11.2026 «ladowanie lub cos zrby bylo widac ze sie kliklo bo sie dlugo czeka tam»: natychmiastowy stan ładowania, blokada podwójnego kliknięcia
+      cn.busy = true; pg.err = ''; paintFoot();
       try {
         const r = await post('/api/setup/connect', { pageId: p.id });
-        toast(t('Połączono istniejący dziennik.'));
+        const note = rememberSettingsNote(r.settings);
+        toast(r.settings?.state === 'adopted' ? note : `${t('Połączono istniejący dziennik.')} ${note}`.trim(), { ms: note ? 9000 : 0 });
         await afterInstall(r.lang);
       } catch (e) { pg.err = e.message; const z = card?.querySelector('.pg-zone'); if (z) z.innerHTML = pagesZoneHtml(); }
+      finally { cn.busy = false; paintFoot(); }
       return;
     }
     mk.pageId = p.id; mk.title = p.title;
@@ -261,6 +300,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   }
   function paintBuild() { const b = card?.querySelector('.ob-build'); if (b && cur() === 'dziennik') { const keepDemo = card.querySelector('#ob-demo'); card.querySelector('.ob-body').innerHTML = buildHtml(); void keepDemo; } paintFoot(); }
   async function startBuild() {
+    if (mk.starting || mk.job?.running) return;
     mk.starting = true; mk.err = '';
     mk.demo = card?.querySelector('#ob-demo')?.checked ?? mk.demo;
     paintBuild();
@@ -275,7 +315,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
       paintBuild();
       if (mk.job.done || mk.job.error) {
         clearInterval(mk.timer); mk.timer = 0;
-        if (mk.job.done) { mk.done = true; await sleep(mk.job.skippedViews?.length ? 2200 : 700); afterInstall(); }
+        if (mk.job.done) { mk.done = true; rememberSettingsNote(mk.job.settings); await sleep(mk.job.skippedViews?.length ? 2200 : 700); afterInstall(); }
       }
     }, 700);
   }
@@ -369,7 +409,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const sc = d.shortcut === 'missing' ? `<p>${L('Utworzę skrót „Otwórz journal w Notion” w folderze dashboardu.')}</p>` : '';
     const nothing = !list && !sc;
     return `<div class="ck-fix ob-fixall"><p class="ck-plan-h">${nothing ? L('Nie ma nic do naprawienia automatycznie.') : L('Zostanie dodane w Notion (nic nie zostanie usunięte ani nadpisane):')}</p>${list}${sc}${man}
-      <div class="ck-act">${nothing ? '' : `<button type="button" class="btn primary sm" data-ob="fixall-apply" ${s.applying ? 'disabled' : ''}>${s.applying ? L('Naprawiam…') : L('Napraw')}</button>`}<button type="button" class="btn ghost sm" data-ob="fixall-cancel">${L('Anuluj')}</button></div></div>`;
+      <div class="ck-act">${nothing ? '' : `<button type="button" class="btn primary sm${bc(s.applying)}" data-ob="fixall-apply" ${s.applying ? 'disabled' : ''}${ba(s.applying)}>${lab(s.applying, 'Napraw', 'Naprawiam…')}</button>`}<button type="button" class="btn ghost sm" data-ob="fixall-cancel">${L('Anuluj')}</button></div></div>`;
   }
   function demoAction() {
     const s = open.demo;
@@ -378,7 +418,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     if (s.err) return `<p class="ferr">${L('Nie udało się: {msg}', { msg: s.err })}</p>`;
     const n = s.data?.count || 0;
     return `<div class="ck-plan"><p class="ck-plan-h">${esc(t.p('{n} wpisów DEMO trafi do kosza Notion (da się je przywrócić w Notion).', n))}</p>
-      <div class="ck-act"><button type="button" class="btn primary sm danger" data-ob="demo-apply" ${s.applying || !n ? 'disabled' : ''}>${s.applying ? L('Usuwam…') : esc(t.p('Usuń {n} wpisów', n))}</button><button type="button" class="btn ghost sm" data-ob="demo-cancel">${L('Anuluj')}</button></div></div>`;
+      <div class="ck-act"><button type="button" class="btn primary sm danger${bc(s.applying)}" data-ob="demo-apply" ${s.applying || !n ? 'disabled' : ''}${ba(s.applying)}>${s.applying ? lab(true, '', 'Usuwam…') : esc(t.p('Usuń {n} wpisów', n))}</button><button type="button" class="btn ghost sm" data-ob="demo-cancel">${L('Anuluj')}</button></div></div>`;
   }
   function rowBase(id) {
     const base = {
@@ -509,8 +549,8 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     const issues = Object.values(G).flat().filter((r) => r.st === 'error' || r.st === 'warn').length;
     const sumTxt = issues ? esc(t.p('Zostały {n} rzeczy do poprawienia.', issues)) : L('Wszystko gotowe.');
     // „Napraw wszystko” naprawia tylko Notion (pola, widoki, blok ustawień, skrót); dane rynkowe poprawiasz w kroku Dane rynkowe
-    const fixBtn = notionIssues ? `<button type="button" class="btn primary sm" data-ob="fixall" ${open.fix ? 'disabled' : ''}>${L('Napraw wszystko')}</button>` : '';
-    return `${head}${lead}<div class="ck-sum ${issues ? 'bad' : 'good'}" role="status" aria-live="polite"><b>${sumTxt}</b><span class="ck-sum-act">${fixBtn}<button type="button" class="btn sm" data-ob="recheck" ${running ? 'disabled' : ''}>${running ? L('Sprawdzam…') : L('Sprawdź ponownie')}</button></span></div>
+    const fixBtn = notionIssues ? `<button type="button" class="btn primary sm${bc(open.fix?.loading)}" data-ob="fixall" ${open.fix ? 'disabled' : ''}${ba(open.fix?.loading)}>${lab(open.fix?.loading, 'Napraw wszystko', 'Sprawdzam…')}</button>` : '';
+    return `${head}${lead}<div class="ck-sum ${issues ? 'bad' : 'good'}" role="status" aria-live="polite"><b>${sumTxt}</b><span class="ck-sum-act">${fixBtn}<button type="button" class="btn sm${bc(running)}" data-ob="recheck" ${running ? 'disabled' : ''}${ba(running)}>${lab(running, 'Sprawdź ponownie', 'Sprawdzam…')}</button></span></div>
       ${fixAllHtml()}<ul class="ck-list ck-grps">${GROUPS.map((g) => groupHtml(g, G[g.id], { st: sts[g.id], summary: sum[g.id], action: act[g.id] || '' })).join('')}</ul>`;
   }
 
@@ -548,6 +588,10 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
   }
 
   // ---------- krok: Gotowe (N6): bez automatycznego przejścia, kolejne kroki do wyboru ----------
+  function settingsInfo() {
+    if (mk.settingsNote) return mk.settingsNote;
+    try { return sessionStorage.getItem(NOTE_KEY) || ''; } catch { return ''; }
+  }
   function gotoweHtml() {
     const by = Object.fromEntries((res?.checks || []).map((c) => [c.id, c]));
     const dn = by.demo?.count || 0;
@@ -563,6 +607,7 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     if (noKey) items.push(item(LOGO.chart, 'Wykresy świecowe', L('Czekają na klucz Databento. Dodasz go teraz albo później w Ustawieniach → Źródła danych.'), `<button type="button" class="btn sm" data-ob="goto-dane">${L('Połącz dane rynkowe')}</button>`));
     return `<h1 class="ob-h" id="ob-title" tabindex="-1">${kod ? L('Gotowe, masz tu wszystkie swoje dane') : L('Gotowe. Dziennik działa.')}</h1>
       <p class="ob-lead">${kod ? L('Dziennik z Notion i Twoje ustawienia (paleta, marginesy BE, język, motyw) są już na tym urządzeniu. Filtry i układ paneli ustawisz tu osobno.') : L('Co dalej? Wybierz, od czego zaczniesz. Do pierwszych kroków wrócisz w Ustawieniach → Konto i Notion.')}</p>
+      ${settingsInfo() ? `<p class="fhint">${esc(settingsInfo())}</p>` : ''}
       ${issues ? `<div class="ck-sum bad"><b>${esc(t('Gotowość pokazała rzeczy do poprawienia: {n}.', { n: issues }))}</b><span class="ck-sum-act"><button type="button" class="btn sm" data-ob="goto-ready">${L('Wróć do gotowości')}</button></span></div>` : ''}
       <ul class="ck-list ob-next">${items.join('')}</ul>`;
   }
@@ -575,24 +620,24 @@ export function createOnboarding({ getMeta = () => ({}), onGuide = () => {}, onU
     // N6: bez „Wstecz” z Gotowe. final (ocena wyglądu P2-8, P3): „Wstecz” w Dzienniku tylko przed utworzeniem (i po błędzie), w Danych rynkowych
     // tylko do kroku, który niczego nie powtórzy (Dziennik po utworzeniu w tej sesji kreatora albo Strona z istniejącym dziennikiem)
     const prev = flow[step - 1];
-    const backOk = id === 'dziennik' ? !mk.starting && !mk.job?.running && !mk.job?.done
+    const backOk = cn.busy ? false : id === 'dziennik' ? !mk.starting && !mk.job?.running && !mk.job?.done
       : id === 'dane' ? (prev === 'dziennik' && !!mk.job?.done) || prev === 'strona'
         : id !== 'gotowe';
     const back = step && backOk ? `<button type="button" class="btn ghost" data-ob="back">${L('Wstecz')}</button>` : '';
     let main;
-    if (id === 'token') main = `<button type="button" class="btn primary" data-ob="next" ${tok.ok ? '' : 'disabled'}>${L('Dalej')}</button>`;
-    else if (id === 'kod') main = `<button type="button" class="btn primary" data-ob="import" ${codeReady() && !kd.busy ? '' : 'disabled'}>${kd.busy ? L('Łączę…') : L('Dalej')}</button>`;
+    if (id === 'token') main = `<button type="button" class="btn primary${bc(tok.checking)}" data-ob="next" ${tok.ok ? '' : 'disabled'}${ba(tok.checking)}>${lab(tok.checking, 'Dalej', 'Sprawdzam…')}</button>`;
+    else if (id === 'kod') main = `<button type="button" class="btn primary${bc(kd.busy)}" data-ob="import" ${codeReady() && !kd.busy ? '' : 'disabled'}${ba(kd.busy)}>${lab(kd.busy, 'Dalej', 'Łączę…')}</button>`;
     else if (id === 'gotowe') main = `<button type="button" class="btn primary" data-ob="finish">${L('Przejdź do dashboardu')}</button>`;
     else if (id === 'dane') main = `<button type="button" class="btn primary" data-ob="next">${daneConfigured() ? L('Dalej') : L('Pomiń ten krok')}</button>`;
     else if (id === 'strona') {
       const sel = (pg.pages || []).find((p) => p.id === pg.sel);
-      main = `<button type="button" class="btn primary" data-ob="choose" ${sel ? '' : 'disabled'}>${sel?.journal ? L('Połącz istniejący dziennik') : L('Dalej')}</button>`;
+      main = `<button type="button" class="btn primary${bc(cn.busy)}" data-ob="choose" ${sel && !cn.busy ? '' : 'disabled'}${ba(cn.busy)}>${cn.busy ? lab(true, '', 'Łączę z Notion…') : sel?.journal ? L('Połącz istniejący dziennik') : L('Dalej')}</button>`;
     } else if (id === 'dostep') main = `<button type="button" class="btn" data-ob="goto-ready">${L('Wróć do gotowości')}</button>`;
     else if (id === 'dziennik') {
       const job = mk.job;
       main = job?.error ? `<button type="button" class="btn primary" data-ob="build">${L('Ponów')}</button>`
         : job?.done ? `<button type="button" class="btn primary" data-ob="next">${L('Dalej')}</button>`
-          : `<button type="button" class="btn primary" data-ob="build" ${mk.starting || job?.running ? 'disabled' : ''}>${mk.starting || job?.running ? L('Tworzę…') : L('Utwórz dziennik')}</button>`;
+          : `<button type="button" class="btn primary${bc(mk.starting || job?.running)}" data-ob="build" ${mk.starting || job?.running ? 'disabled' : ''}${ba(mk.starting || job?.running)}>${lab(mk.starting || job?.running, 'Utwórz dziennik', 'Zakładam dziennik…')}</button>`;
     } else if (last) main = `<button type="button" class="btn primary" data-ob="finish">${L('Zakończ')}</button>`;
     else main = `<button type="button" class="btn primary" data-ob="next">${L('Dalej')}</button>`;
     // „Zamknij kreator” kończy pierwsze kroki; w Danych rynkowych i na Gotowe go nie ma (tam główny przycisk idzie dalej)

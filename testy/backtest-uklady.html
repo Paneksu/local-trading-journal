@@ -111,10 +111,10 @@ try {
       rec('uklady', disk && disk.layout.charts.length === 2 && disk.layout.charts.every((c) => c.instrument && c.tf), `układ zapisany w pliku sesji: ${JSON.stringify(disk?.layout)}`);
       // wybór instrumentu i TF w nagłówku wykresu
       const c1 = cells()[1];
-      const ci = c1.querySelector('.bt-ci'), ct = c1.querySelector('.bt-ct');
-      rec('uklady', ci && ct && [...ci.options].map((o) => o.value).join() === 'NQ,ES' && ct.options.length === 12, 'nagłówek: instrument z instrumentów sesji, 12 interwałów');
+      const ci = c1.querySelector('.bt-ci'), ct = c1.querySelector('.bt-tfs'), setTfBtn = (cell, v) => cell.querySelector(`.bt-tfs [data-tf="${v}"]`).click();
+      rec('uklady', ci && ct && [...ci.options].map((o) => o.value).join() === 'NQ,ES' && ct.querySelectorAll('button').length >= 5 && !c1.querySelector('select.bt-ct'), 'nagłówek: instrument z instrumentów sesji, ulubione interwały jako przyciski (nie lista)');
       ci.value = 'ES'; ci.dispatchEvent(new Event('change', { bubbles: true }));
-      ct.value = '5m'; ct.dispatchEvent(new Event('change', { bubbles: true }));
+      setTfBtn(c1, '5m');
       rec('uklady', R.charts()[1].instrument === 'ES' && R.doc().layout.charts[1].tf === '5m' && R.doc().layout.charts[1].instrument === 'ES', 'zmiana instrumentu i TF drugiego wykresu trafia do układu sesji');
       // nowa sesja dostaje ostatni układ
       R.close();
@@ -272,8 +272,8 @@ try {
       rec('widoczny', lines(cs[2]).length === 1, 'ta sama linia na drugim wykresie NQ (1m)');
       rec('widoczny', lines(cs[1]).length === 0 && lines(cs[3]).length === 0, 'nie pojawia się na wykresach ES');
       // zmiana interwału nie gubi rysunków: NQ 1m → 5m, NQ 15s → 1m
-      cells()[2].querySelector('.bt-ct').value = '5m'; cells()[2].querySelector('.bt-ct').dispatchEvent(new Event('change', { bubbles: true }));
-      cells()[0].querySelector('.bt-ct').value = '1m'; cells()[0].querySelector('.bt-ct').dispatchEvent(new Event('change', { bubbles: true }));
+      cells()[2].querySelector('.bt-tfs [data-tf="5m"]').click();
+      cells()[0].querySelector('.bt-tfs [data-tf="1m"]').click();
       rec('widoczny', lines(RA.charts()[0]).length === 1 && lines(RA.charts()[2]).length === 1, 'linia widoczna w każdym interwale (5m i 1m)');
       // ES: pozioma linia z wykresu 5m widoczna na ES 1m, nie na NQ
       const e = RA.charts()[3].liveBars(), eb = e[e.length - 1];

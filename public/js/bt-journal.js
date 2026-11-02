@@ -13,9 +13,11 @@ import { SETUP_RE, SETUP_MAX, listOf } from './bt-notion.js';
 export const JOURNAL_MARGIN = 40; // px: panel nie może przecinać pionu świecy przy kursorze ± tyle
 
 // Następny wolny numer trade'a w sesji: 't1', 't2', … (liczy też trade'y z innych dni; numeru nie używa się ponownie)
-export function nextTradeId(trades) {
+// [U] 2026-11-01 «Archiwum Notion + Cofnij»: po usunięciu trade'a jego numer też nie wraca (id jest kluczem idempotencji strony w Notion i celem Cofnij),
+// dlatego floor = najwyższy numer, jaki sesja kiedykolwiek nadała (doc.tradeSeq).
+export function nextTradeId(trades, floor = 0) {
   const ids = (trades || []).map((x) => Number(String(x?.id).slice(1)) || 0);
-  return 't' + (Math.max(0, ...ids) + 1);
+  return 't' + (Math.max(0, Number(floor) || 0, ...ids) + 1);
 }
 
 // toTrade(position, { day, contract, stream, drawings, trades }) → Trade (kształt z 00-wspolne). `position` to zamknięta pozycja silnika (exits, entryT, sl0…),

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: autoskalowanie osi w replayu (strona robocza)</title>
+<!-- Strona robocza testów backtest-D1 (testy/backtest-D1-uklady.mjs: ?part=uklady, ?part=rysunki, D2: ?part=callout i H2: ?part=kolory), Chrome/Edge headless przez CDP, podawana tylko przez dashboard
+     testowy (THQ_TEST_PAGES=1) pod /__testy/. Serwer testowy ma w THQ_CONFIG_DIR wyłącznie świece syntetyczne (NQ z 1s w 9:30-11:00, ES tylko 1m). Prawdziwe moduły:
+     bt-replay.js, bt-wykres.js, bt-rysunki.js, rysunki.js (paczka rysowania), prawdziwy styles.css i features.css. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }] }.
+     ?part=shot&kind=2h|4 zostawia otwarty ekran (zrzuty), ?theme=platinum zmienia motyw. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const part = qs.get('part') || 'uklady';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(25); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const getJson = async (u) => (await fetch(u, { cache: 'no-store' })).json();
+// zapis rysunków do Notion (trade'y Live) nie może się zdarzyć w replayu: liczymy żądania
+const posts = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = (u, o) => { if (String(u).includes('/api/drawings/save')) posts.push(String(u)); return realFetch(u, o); };
+
+const DAY = '2024-03-12';
+try {
+  for (const k of ['thq.bt.open.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k);
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, DEFAULT_JUMPS } = await import('/js/bt-czas.js');
+  const { mergeBase, candlesAt } = await import('/js/bt-swieca.js');
+  const { positionPrices } = await import('/js/rysunki.js');
+  const { createDrawingStore } = await import('/js/bt-rysunki.js');
+  const client = createSessionClient();
+  const dayAll = await (await import('/__testy/bt-zgodnosc.js')).replayDay(DAY, ["NQ","ES"]);
+  const loadDay = async () => dayAll;
+  const streams = { NQ: mergeBase(dayAll.inst.NQ.m1, dayAll.inst.NQ.s1, dayAll.inst.NQ.real1s), ES: mergeBase(dayAll.inst.ES.m1, dayAll.inst.ES.s1, dayAll.inst.ES.real1s) };
+  const c0 = nyAt(DAY, '09:31');
+  const LAY4 = { kind: '4', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }, { instrument: 'NQ', tf: '1m' }, { instrument: 'ES', tf: '5m' }] };
+  const LAY2 = { kind: '2h', active: 0, charts: [{ instrument: 'NQ', tf: '15s' }, { instrument: 'ES', tf: '1m' }] };
+  const mk = async (name, { layout = null, cursor = null } = {}) => {
+    const doc = newSessionDoc({
+      id: newSessionId(), name,
+      def: { instruments: ['NQ', 'ES'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, startTime: '09:00', accountId: null, filter: null, excluded: [] },
+      now: Date.now(),
+    });
+    if (layout) doc.layout = JSON.parse(JSON.stringify(layout));
+    if (cursor) doc.cursor = cursor;
+    await client.create(doc);
+    return doc;
+  };
+  const open = async (doc, opts = {}) => {
+    localStorage.removeItem('thq.bt.layout.v1');
+    const R = openReplay(document.body, { sessionId: doc.id, client, loadDay, ...opts });
+    await R.ready;
+    window.__btCharts = R.charts();
+    return R;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const cells = () => [...scr().querySelectorAll('.bt-cell')];
+  const layoutBtn = (k) => scr().querySelector(`[data-layout="${k}"]`);
+  const activate = (R, i) => { cells()[i].querySelector('.bt-plot').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); window.dispatchEvent(new PointerEvent('pointerup')); window.__btCharts = R.charts(); };
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (name, v) => { const i = P(`[name="${name}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  const rect = (el) => el.getBoundingClientRect();
+  const lastT = (ch) => { const b = ch.bars(); return b.length ? b[b.length - 1][0] : null; };
+
+  if (part === 'tf') {
+    const { sanitizeBt } = await import('/js/bt-czas.js');
+    const { visibleCount, mergeBase: mb } = await import('/js/bt-swieca.js');
+    const { aggregate } = await import('/js/swiece.js');
+    const favSaved = [];
+    const doc = await mk('Sesja interwaly', { cursor: c0 });
+    const R = await open(doc, { onFavTfs: (l) => favSaved.push(l) });
+    const cell = () => cells()[0];
+    const tfBtns = () => [...cell().querySelectorAll('.bt-tfs button')].map((b) => b.dataset.tf);
+    const pressed = () => [...cell().querySelectorAll('.bt-tfs button[aria-pressed="true"]')].map((b) => b.dataset.tf);
+    const custom = (v) => { cell().querySelector('.bt-tfmore').click(); const f = cell().querySelector('.bt-tfadd'); f.querySelector('input').value = v; f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); };
+    const msg = () => cell().querySelector('.bt-tfmsg').textContent;
+    const lastBars = () => R.charts()[0].bars();
+    await section('tf', async () => {
+      rec('tf', !cell().querySelector('select.bt-ct') && tfBtns().join() === '15s,1m,5m,15m,1h', 'ulubione interwały jako przyciski, bez listy rozwijanej: ' + tfBtns().join());
+      rec('tf', pressed().join() === '1m', 'aktywny interwał podświetlony: ' + pressed().join());
+      cell().querySelector('[data-tf="5m"]').click();
+      rec('tf', R.doc().layout.charts[0].tf === '5m' && pressed().join() === '5m', 'klik ulubionego zmienia interwał i zapisuje go w układzie');
+      custom('7m');
+      await sleep(150);
+      rec('tf', R.doc().layout.charts[0].tf === '7m' && pressed().join() === '7m' && tfBtns().includes('7m'), 'własny interwał 7m: ustawiony, dodatkowy przycisk podświetlony ' + JSON.stringify([R.doc().layout.charts[0].tf, pressed(), tfBtns(), msg()]));
+      const stream = mb(dayAll.inst.NQ.m1, dayAll.inst.NQ.s1, dayAll.inst.NQ.real1s);
+      const cur = R.cursor();
+      const want = aggregate(stream.bars.slice(0, visibleCount(stream, cur)), '7m') || [];
+      const tail = lastBars().slice(-5), wt = want.slice(-5);
+      rec('tf', wt.length === 5 && JSON.stringify(tail.map((k) => k.slice(0, 5))) === JSON.stringify(wt.map((k) => k.slice(0, 5))), 'agregat 7m równy aggregate() ze świec bazowych do kursora (ostatnie 5)');
+      rec('tf', tail.every((k, j) => j === 0 || k[0] - tail[j - 1][0] === 420), 'świece 7m co 420 s');
+      const c1 = R.cursor();
+      R.step(1); await sleep(80);
+      const c2 = R.cursor();
+      rec('tf', c2 > c1 && c2 - c1 <= 420, 'krok replayu = jedna świeca 7m: ' + (c2 - c1) + ' s');
+      const l0 = lastBars()[lastBars().length - 1][0];
+      R.step(1); await sleep(60);
+      const l1 = lastBars()[lastBars().length - 1][0];
+      rec('tf', l1 - l0 === 420, 'kolejny krok dodaje następną świecę 7m (' + (l1 - l0) + ' s)');
+      R.step(-1); await sleep(60);
+      rec('tf', R.cursor() < c2 + 420, 'krok wstecz o jedną świecę');
+      custom('45s'); await sleep(100);
+      rec('tf', R.doc().layout.charts[0].tf === '45s', 'NQ w oknie 1s przyjmuje 45s');
+      custom('90s');
+      rec('tf', cell().querySelector('.bt-tfadd .sp-in').getAttribute('aria-invalid') === 'true' && getComputedStyle(cell().querySelector('.bt-tfadd .sp-in')).boxShadow.includes('inset') && cell().querySelector('.bt-tfmsg').classList.contains('err') && /^90s: /.test(msg()), 'błędny interwał: obrys pola, komunikat w kolorze błędu i z wpisaną wartością: ' + msg());
+      rec('tf', R.doc().layout.charts[0].tf === '45s' && /60 sekund/.test(msg()), '90s odrzucone z powodem: ' + msg());
+      custom('45s'); await sleep(60);
+      rec('tf', !cell().querySelector('.bt-tfadd .sp-in').hasAttribute('aria-invalid') && !cell().querySelector('.bt-tfmsg').classList.contains('err') && msg() === '', 'poprawny interwał czyści stan błędu');
+      custom('1D'); rec('tf', /sekundach, minutach albo godzinach/.test(msg()) && R.doc().layout.charts[0].tf === '45s', '1D odrzucone z powodem');
+      custom('abc'); rec('tf', /liczba i jednostka/.test(msg()), 'śmieci odrzucone z powodem');
+      custom('25h'); rec('tf', /24 godziny/.test(msg()), '25h odrzucone z powodem');
+      cell().querySelector('.bt-tfmore').click();
+      cell().querySelector('.bt-tffav').click();
+      rec('tf', favSaved.length === 1 && favSaved[0].includes('45s') && tfBtns().includes('45s'), 'gwiazdka dodaje aktywny interwał do ulubionych i zgłasza zapis do ustawień: ' + JSON.stringify(favSaved[0]));
+      cell().querySelector('[data-tfdel="45s"]').click();
+      rec('tf', favSaved.length === 2 && !favSaved[1].includes('45s'), 'usunięcie z ulubionych');
+      cell().querySelector('.bt-ci').value = 'ES'; cell().querySelector('.bt-ci').dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(150);
+      custom('30s');
+      rec('tf', /najmniejszy interwał to 1m/.test(msg()) && cell().querySelector('.bt-tfs [aria-pressed="true"]')?.dataset.tf !== '30s', 'ES: interwał sekundowy odrzucony z powodem: ' + msg());
+      custom('3m'); await sleep(100);
+      rec('tf', R.doc().layout.charts[0].tf === '3m', 'ES przyjmuje 3m');
+      // ulubione interwały sekundowe, które nie dzielą minuty (45s, 7s), też wymagają okna 1s: klik na ES nie może ich włączyć (świece o nierównych odstępach)
+      cell().querySelector('.bt-ci').value = 'NQ'; cell().querySelector('.bt-ci').dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(150);
+      custom('45s'); await sleep(100);
+      cell().querySelector('.bt-tfmore').click(); cell().querySelector('.bt-tffav').click();
+      rec('tf', tfBtns().includes('45s') && R.doc().layout.charts[0].tf === '45s', 'NQ w oknie 1s: 45s ustawione i dodane do ulubionych');
+      cell().querySelector('[data-tf="5m"]').click();
+      cell().querySelector('.bt-ci').value = 'ES'; cell().querySelector('.bt-ci').dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(150);
+      const b45 = () => cell().querySelector('[data-tf="45s"]'), b15 = () => cell().querySelector('[data-tf="15s"]');
+      rec('tf', b45().disabled && /najmniejszy interwał to 1m/.test(b45().title), 'ES: przycisk 45s wyłączony z powodem w title: ' + b45().disabled + ' ' + b45().title);
+      rec('tf', !b15().disabled, 'ES: 15s (dzielnik minuty) nadal dostępne, z notatką o świecach 1m');
+      b45().click(); R.setCell(0, { tf: '45s' }); await sleep(80);
+      rec('tf', R.doc().layout.charts[0].tf === '5m', 'ES: klik i setCell na 45s nie zmieniają interwału (jest ' + R.doc().layout.charts[0].tf + ')');
+      cell().querySelector('.bt-ci').value = 'NQ'; cell().querySelector('.bt-ci').dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(150);
+      rec('tf', !b45().disabled, 'NQ w oknie 1s: przycisk 45s znów aktywny');
+      b45().click(); await sleep(80);
+      rec('tf', R.doc().layout.charts[0].tf === '45s', 'NQ w oknie 1s: klik w ulubione 45s działa');
+      cell().querySelector('[data-tf="5m"]').click();
+      cell().querySelector('.bt-ci').value = 'ES'; cell().querySelector('.bt-ci').dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(150);
+      // menu „⋯” zamyka się po kliknięciu obok (ale nie po kliknięciu w sam panel)
+      const popEl = () => cell().querySelector('.bt-tfpop');
+      cell().querySelector('.bt-tfmore').click();
+      popEl().querySelector('input').dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      rec('tf', !popEl().hidden, 'kliknięcie w panel menu nie zamyka go');
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      rec('tf', popEl().hidden && cell().querySelector('.bt-tfmore').getAttribute('aria-expanded') === 'false', 'kliknięcie obok zamyka menu interwałów');
+      custom('7m'); await sleep(80);
+      rec('tf', scr().querySelector('.bt-tf').value === '7m', 'wybór interwału w stopce zgodny z własnym interwałem');
+      rec('tf', JSON.stringify(sanitizeBt({ favTfs: ['5m', '7m', '1D', 'xx', '5m', '90s', '30s'] }).favTfs) === '["30s","5m","7m"]', 'sanitizeBt: ulubione tylko poprawne, bez duplikatów, rosnąco');
+      rec('tf', JSON.stringify(sanitizeBt(null).favTfs) === '["15s","1m","5m","15m","1h"]' && JSON.stringify(sanitizeBt({ favTfs: [] }).favTfs) === '["15s","1m","5m","15m","1h"]', 'domyślne ulubione 15s, 1m, 5m, 15m, 1h');
+      const disk = await until(async () => { const x = await getJson('/api/backtest/session/' + doc.id); return x.layout?.charts?.[0]?.tf === '7m' ? x : null; }, 4000);
+      rec('tf', !!disk, 'interwał własny zapisany w pliku sesji');
+      R.close();
+      const R2 = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      await R2.ready; await sleep(200);
+      rec('tf', cells()[0].querySelector('.bt-tfs [aria-pressed="true"]')?.dataset.tf === '7m', 'po ponownym otwarciu własny interwał nadal aktywny');
+      R2.close();
+    });
+  }
+  // zrzuty 1.6.1: ?part=shot161&state=auto-on|auto-off|menu|blad (ulubione 7m dodane w stanach menu i blad)
+  if (part === 'shot161') {
+    const doc = await mk('Sesja zrzut', { cursor: c0 });
+    const R = await open(doc);
+    for (let i = 0; i < 20; i++) R.step(1);
+    const st = qs.get('state') || 'auto-on';
+    const c = cells()[0];
+    if (st === 'auto-off') { c.querySelector('[data-swc="auto"]').click(); await sleep(200); }
+    if (st === 'menu' || st === 'blad') {
+      c.querySelector('.bt-tfmore').click();
+      const f = c.querySelector('.bt-tfadd'); f.querySelector('input').value = '7m'; f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await sleep(200);
+      c.querySelector('.bt-tfmore').click();
+      c.querySelector('.bt-tffav').click();
+      if (st === 'blad') { c.querySelector('.bt-tfadd input').value = '90s'; c.querySelector('.bt-tfadd').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); }
+      await sleep(200);
+    }
+    rec('shot161', true, 'stan ' + st);
+  }
+  if (part === 'shot') {
+    const doc = await mk('Sesja zrzut', { cursor: c0 });
+    const R = await open(doc);
+    for (let i = 0; i < 20; i++) R.step(1);
+    cells()[0].querySelector('[data-swc="auto"]').click();
+    const c = cells()[0];
+    c.querySelector('.bt-tfmore').click();
+    const f = c.querySelector('.bt-tfadd'); f.querySelector('input').value = '7m'; f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await sleep(300);
+    c.querySelector('.bt-tfmore').click();
+    c.querySelector('.bt-tfadd input').value = '90s'; c.querySelector('.bt-tfadd').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await sleep(300);
+  }
+  if (part === 'usun' || part === 'usunshot') {
+    const { createBacktestView } = await import('/js/bt-widok.js');
+    const mkWith = async (name, trades) => {
+      const d = await mk(name, { cursor: c0 });
+      d.trades = trades;
+      await client.flush().catch(() => {});
+      await client.save(d, { now: true });
+      return d;
+    };
+    const tr = (id, r) => ({ id, instrument: 'NQ', dir: 'Long', r, pnl: r * 100, journal: 'todo', notion: { id: null, state: 'pending', error: null } });
+    const dA = await mkWith('Sesja do usunięcia', [tr('t1', 1), tr('t2', -1)]);
+    const dB = await mkWith('Sesja pusta', []);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const memo = { getItem: () => null, setItem() {}, removeItem() {} };
+    const removed = [];
+    const view = createBacktestView({ client, storage: memo, onRemoved: (id) => removed.push(id), getSettings: () => null });
+    view.mount(host);
+    const rowOf = (id) => host.querySelector(`tr[data-id="${id}"]`);
+    await until(() => rowOf(dA.id) && rowOf(dB.id));
+    const dlg = () => document.querySelector('.scrim .modal');
+    if (part === 'usunshot') {
+      rowOf(dA.id).querySelector('[data-bt="delete"]').click();
+      await until(() => dlg());
+      await sleep(300);
+    } else await section('usun', async () => {
+      rec('usun', !!rowOf(dA.id)?.querySelector('[data-bt="delete"]'), 'na liście sesji jest akcja „Usuń”');
+      // sesja z niewysłanymi trade'ami: ostrzeżenie z liczbą i przycisk „Najpierw wyślij do Notion”
+      rowOf(dA.id).querySelector('[data-bt="delete"]').click();
+      await until(() => dlg());
+      // twarde spacje po pojedynczych literach (modal.js nb) zamieniamy na zwykłe: asercje czytają zdania
+      const txt = (dlg()?.textContent || '').replace(/ /g, ' ');
+      rec('usun', /Sesja do usunięcia/.test(txt) && /Trade'ów w sesji: 2/.test(txt) && /w Notion: 0/.test(txt), 'okno: nazwa sesji, liczba trade\'ów i ile w Notion: ' + txt.slice(0, 160));
+      rec('usun', /Trade'y wysłane do Notion zostają w bazie Trade'y; usuwasz tylko sesję z tego komputera \(kursor, zlecenia, rysunki, niewysłane trade'y\)/.test(txt), 'okno: informacja, że trade\'y z Notion zostają');
+      rec('usun', /niewysłanych do Notion trade'ów: 2/.test(txt) && !!dlg().querySelector('[data-cd="extra"]') && /Najpierw wyślij do Notion/.test(dlg().querySelector('[data-cd="extra"]').textContent), 'ostrzeżenie o 2 niewysłanych trade\'ach i przycisk „Najpierw wyślij do Notion”');
+      // „Anuluj” nic nie usuwa
+      dlg().querySelector('[data-cd="no"]').click();
+      await sleep(100);
+      rec('usun', !!rowOf(dA.id) && (await getJson('/api/backtest/session/' + dA.id)).id === dA.id, 'Anuluj: sesja zostaje');
+      const before = await (await fetch('/api/backtest/session/' + dA.id, { cache: 'no-store' })).text();
+      rowOf(dA.id).querySelector('[data-bt="delete"]').click();
+      await until(() => dlg());
+      dlg().querySelector('[data-cd="yes"]').click();
+      await until(() => !rowOf(dA.id));
+      rec('usun', !rowOf(dA.id) && rowOf(dB.id) && removed.join() === dA.id, 'po potwierdzeniu sesja znika z listy i zgłasza usunięcie (kopia definicji w ustawieniach)');
+      rec('usun', (await fetch('/api/backtest/session/' + dA.id)).status === 404, 'plik sesji nie jest już w katalogu sesji');
+      const tt = document.getElementById('toast');
+      rec('usun', tt && !tt.hidden && /Sesja usunięta/.test(tt.textContent) && !!tt.querySelector('.toast-act'), 'powiadomienie „Sesja usunięta · Cofnij”');
+      tt.querySelector('.toast-act').click();
+      await until(() => rowOf(dA.id));
+      const after = await (await fetch('/api/backtest/session/' + dA.id, { cache: 'no-store' })).text();
+      rec('usun', !!rowOf(dA.id) && after === before, 'Cofnij przywraca sesję bez zmian treści');
+      // sesja bez trade'ów: bez ostrzeżenia
+      rowOf(dB.id).querySelector('[data-bt="delete"]').click();
+      await until(() => dlg());
+      rec('usun', !dlg().querySelector('.cd-note') && !dlg().querySelector('[data-cd="extra"]'), 'sesja bez trade\'ów: bez ostrzeżenia i bez przycisku wysyłki');
+      dlg().querySelector('[data-cd="no"]').click();
+      view.unmount();
+    });
+  }
+  if (part === 'auto') {
+    const doc = await mk('Sesja autoskala', { cursor: c0 });
+    const R = await open(doc);
+    const ch = () => R.charts()[0];
+    const btn = () => cells()[0].querySelector('[data-swc="auto"]');
+    const pr = () => ch().series.priceScale().getVisibleRange();
+    // Przeciągnięcie osi w LWC wywołuje wewnętrznie priceScale.applyOptions({ autoScale: false }) (to samo robi dwuklik z true); strona robocza nie ma szerokości osi
+    // (headless nie rysuje etykiet), więc zamiast zdarzeń myszy powtarza ten skutek i puszcza przycisk jak użytkownik: sprawdzamy odczyt stanu po puszczeniu.
+    const axisDrag = async () => {
+      const plot = cells()[0].querySelector('.bt-plot');
+      ch().series.priceScale().applyOptions({ autoScale: false });
+      plot.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await sleep(120);
+    };
+    await section('auto', async () => {
+      rec('auto', btn() && btn().getAttribute('aria-pressed') === 'true' && ch().auto() === true, 'przełącznik Auto w nagłówku wykresu, domyślnie włączony');
+      for (let i = 0; i < 4; i++) R.step(1);
+      await sleep(80);
+      await axisDrag();
+      rec('auto', ch().auto() === false && btn().getAttribute('aria-pressed') === 'false', 'przeciągnięcie osi ceny wyłącza auto i przełącznik to pokazuje');
+      // kropka stanu przed „Auto”: włączone = pełna, wyłączone = sam obrys; title mówi, w jakim stanie jest przełącznik
+      const dot = () => { const d = getComputedStyle(btn(), '::after'); return { w: d.width, bg: d.backgroundColor, bd: d.borderTopColor, content: d.content }; };
+      const off = dot();
+      btn().click(); await sleep(80);
+      const on = dot();
+      rec('auto', off.content !== 'none' && off.w === '6px' && on.bg !== off.bg, 'kropka stanu przed „Auto” (::after, bo ::before to pole dotyku) różni się w obu stanach: ' + JSON.stringify([off, on]));
+      rec('auto', /Teraz włączone/.test(btn().title), 'title przy włączonym: ' + btn().title);
+      await axisDrag();
+      rec('auto', /Teraz wyłączone/.test(btn().title), 'title przy wyłączonym: ' + btn().title);
+      const r0 = pr();
+      for (let i = 0; i < 30; i++) R.step(1);
+      await sleep(80);
+      const r1 = pr();
+      rec('auto', ch().auto() === false && btn().getAttribute('aria-pressed') === 'false', 'kroki replayu nie włączają auto');
+      rec('auto', Math.abs(r1.from - r0.from) < 1e-6 && Math.abs(r1.to - r0.to) < 1e-6, 'skala ceny stoi w miejscu przy krokach (' + JSON.stringify(r0) + ' → ' + JSON.stringify(r1) + ')');
+      R.setTf('5m'); await sleep(80); R.step(1); R.step(-1);
+      rec('auto', ch().auto() === false, 'zmiana interwału, krok w tył nie włączają auto');
+      const disk = await until(async () => { const x = await getJson('/api/backtest/session/' + doc.id); return x.layout?.charts?.[0]?.auto === false ? x : null; }, 4000);
+      rec('auto', !!disk, 'stan auto=false zapisany w layout.charts[0] sesji');
+      R.close();
+      const R2 = openReplay(document.body, { sessionId: doc.id, client, loadDay });
+      await R2.ready;
+      window.__btCharts = R2.charts();
+      await sleep(400);
+      rec('auto', R2.charts()[0].auto() === false && cells()[0].querySelector('[data-swc="auto"]').getAttribute('aria-pressed') === 'false' && R2.charts()[0].series.priceScale().options().autoScale === false, 'po ponownym otwarciu sesji auto nadal wyłączone');
+      const r2 = R2.charts()[0].series.priceScale().getVisibleRange();
+      R2.step(1); R2.step(1); await sleep(80);
+      rec('auto', R2.charts()[0].auto() === false, 'krok po ponownym otwarciu nie włącza auto');
+      cells()[0].querySelector('[data-swc="auto"]').click();
+      rec('auto', R2.charts()[0].auto() === true && cells()[0].querySelector('[data-swc="auto"]').getAttribute('aria-pressed') === 'true' && R2.charts()[0].series.priceScale().options().autoScale === true, 'klik przełącznika włącza auto');
+      cells()[0].querySelector('[data-swc="auto"]').click();
+      rec('auto', R2.charts()[0].auto() === false, 'klik przełącznika wyłącza auto');
+      const plot = cells()[0].querySelector('.bt-plot'), rr = plot.getBoundingClientRect();
+      R2.charts()[0].series.priceScale().applyOptions({ autoScale: true });
+      plot.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: rr.right - 20, clientY: rr.top + 100 }));
+      await sleep(120);
+      rec('auto', R2.charts()[0].auto() === true && R2.charts()[0].series.priceScale().options().autoScale === true, 'dwuklik na osi ceny włącza auto');
+      // tymczasowe wyłączenie przy przeciąganiu rysunków przywraca poprzedni stan, nie zawsze true
+      const rys = R2.charts()[0].rysunki();
+      R2.charts()[0].setAuto(false);
+      R2.charts()[0].hold(true); R2.charts()[0].hold(false);
+      rec('auto', R2.charts()[0].series.priceScale().options().autoScale === false && R2.charts()[0].auto() === false, 'przeciąganie rysunku nie włącza auto, gdy było wyłączone');
+      const prev = R2.charts()[0].setAuto; prev(true);
+      R2.charts()[0].hold(true); R2.charts()[0].hold(false);
+      rec('auto', R2.charts()[0].series.priceScale().options().autoScale === true, 'przeciąganie rysunku przywraca auto, gdy było włączone');
+      R2.close();
+    });
+  }
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks });
+}
+</script>
+</body>
+</html>

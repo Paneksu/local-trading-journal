@@ -903,7 +903,7 @@ button.cell .cv, button.cell .cn { width: 100%; }
 .cc-h[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
 .sp-sessions { display: flex; flex-direction: column; gap: 6px; align-self: stretch; }
 .sp-sess { display: grid; grid-template-columns: minmax(70px, 1fr) auto auto auto; align-items: center; gap: 8px; }
-.sp-sess .sp-in { width: 96px; height: 28px; padding: 0 6px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.sp-sess .sp-in { width: 112px; height: 28px; padding: 0 6px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
 .sp-keyrow { display: flex; gap: 8px; align-self: stretch; }
 .sp-keyrow .sp-key { flex: 1; min-width: 0; width: auto; }
 .sp-kvs { align-self: stretch; }
@@ -912,7 +912,7 @@ button.cell .cv, button.cell .cn { width: 100%; }
 .sp-lic a { color: inherit; text-decoration: underline; }
 @media (max-width: 1023px) {
   .sp-keyrow .sp-key, .sp-sess .sp-in, .cc-h { font-size: 16px; height: 40px; }
-  .sp-sess .sp-in { width: 108px; }
+  .sp-sess .sp-in { width: 126px; }
 }
 
 /* newsy makro USD i earningsy (1.4.0): nakładki na wykresie, karty „Dzisiaj” i „Wyniki spółek”, sekcje Ustawień. Kolory tylko z tokenów (--n-red, --n-orange, --n-yellow, --n-blue, --fg-2). */
@@ -1046,6 +1046,28 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-l-ago { color: var(--fg-2); font-size: var(--t-sm); white-space: nowrap; }
 .bt-tab .bt-l-ago { padding-left: 24px; } /* H2 #14: specyficzność wyższa niż .bt-tab td/th (sam .bt-l-ago przegrywał) */
 .bt-l-act { text-align: right; white-space: nowrap; }
+.cd-note { margin: 10px 0 0; font-size: var(--t-sm); color: var(--loss); }
+.cd-note.ok { color: var(--profit); }
+/* Cofnij w powiadomieniu: tekst akcji w kolorze głównym, pogrubiony, podkreślenie po najechaniu i na fokusie, bez podkładki (decyzja 2026-11-02, przegląd wyglądu P2-2) */
+.toast .toast-act { margin-left: 8px; color: var(--fg); font-weight: 600; background: none; }
+.toast .toast-act:hover, .toast .toast-act:focus-visible { text-decoration: underline; background: none; }
+/* Jedna reguła położenia dla WSZYSTKICH powiadomień, w replayu i w dzienniku (decyzja 2026-11-02, przegląd wyglądu, runda 3): szeroki ekran w prawym dolnym rogu poza tabelą szuflady (kończy się ok. 1000 px),
+   przy ≤ 480 px u góry na pełną szerokość, żeby nic nie zasłaniało wierszy z „Usuń” */
+.toast, .toast.has-act { left: auto; right: 16px; transform: none; bottom: calc(52px + env(safe-area-inset-bottom)); }
+@media (max-width: 480px) {
+  .toast, .toast.has-act { top: calc(env(safe-area-inset-top) + 8px); bottom: auto; left: 8px; right: 8px; max-width: none; text-align: center; }
+}
+/* skróty klawiszowe w powiadomieniach i w Journalu nie mają sensu bez klawiatury */
+@media (hover: none) { .toast-key, .bt-jw-kbd { display: none; } }
+/* STAN przy ≤ 480 px: kolumna ukryta, stan jako druga linia komórki instrumentu (tekst z kropką) */
+.bt-dk-st2 { display: none; }
+@media (max-width: 480px) {
+  .bt-dk-stc { display: none; }
+  .bt-dk-st2 { display: block; font-size: var(--t-xs, 11px); color: var(--fg-2); }
+}
+/* [U] 2026-11-01 «Archiwum Notion + Cofnij»: akcje „Usuń trade” jako tekst w kolorze straty (bez podkładki), jak inne stany w aplikacji */
+.btn.ghost.danger-t, .btn.ghost.lb-del, .btn.ghost.bt-jw-del, .btn.ghost.bt-dk-del { color: var(--loss); }
+.mf [data-cd="extra"] { margin-right: 8px; }
 .bt-form { display: flex; flex-direction: column; gap: 12px; }
 .bt-fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px 20px; }
 .bt-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -1149,7 +1171,7 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-ctl .bt-jump { width: auto; max-width: 190px; height: 28px; }
 .bt-sj { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center; }
 .bt-sj > input[data-btf="name"] { flex: 1 1 100%; }
-.bt-sj > select, .bt-sj > input[type="time"], .bt-sj > input[type="number"] { flex: 1 1 110px; min-width: 0; width: auto; }
+.bt-sj > select, .bt-sj > .wd, .bt-sj > input[type="number"] { flex: 1 1 110px; min-width: 0; width: auto; }
 .bt-sj > select { min-width: 9.5em; } /* H2 P1 #22: pełna nazwa skoku („Następny news”, „Przesunięcie (min)”) */
 .bt-sj > .bt-skrot { flex: 0 0 64px; width: 64px; } /* H2 P1 #22: skrót skoku to jeden klawisz; pełny zapis w title */
 .bt-sj { padding-bottom: 8px; border-bottom: 1px solid var(--line); } /* H2 P3 #19: granica między skokami */
@@ -1178,6 +1200,25 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-grid:not([data-kind="1"]) .bt-cell[data-active="true"] { box-shadow: inset 0 0 0 1px var(--fg-2); }
 .bt-ch { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 8px; }
 .bt-ch .sp-in.sp-sel { width: auto; height: 26px; font-size: var(--t-sm); }
+/* ulubione interwały jako przyciski; przy wąskim ekranie przewijane poziomo w obrębie nagłówka */
+.bt-tfs { max-width: 100%; overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; scrollbar-width: none; }
+.bt-tfs button { flex: 0 0 auto; }
+.bt-tfw { position: relative; display: inline-flex; }
+.bt-ch { position: relative; }
+.bt-tfpop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: 260px; max-width: calc(100vw - 32px); padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--popover); border-radius: 8px; box-shadow: var(--float-shadow); }
+/* przy 375 px chip ulubionego i jego „×” mają cel dotyku 44 px (jak reszta backtestu) */
+@media (max-width: 640px) { .bt-tfchips .swc-chip { height: 44px; padding: 0 0 0 12px; } .bt-tfchips .swc-chip button { width: 44px; height: 44px; font-size: 18px; } }
+@media (max-width: 640px) { .bt-tfw { position: static; } .bt-tfpop { left: 8px; right: 8px; width: auto; max-width: none; top: 100%; } }
+.bt-tfpop[hidden] { display: none; }
+/* Auto osi ceny: kropka stanu przed etykietą (włączone: pełna, wyłączone: sam obrys), bo pojedynczy przycisk w .seg nie ma sąsiada do porównania. ::before zajmuje pole dotyku */
+.bt-auto button { display: inline-flex; align-items: center; gap: 6px; }
+.bt-auto button::after { content: ""; order: -1; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1px solid rgb(var(--fg-rgb) / .5); flex: none; }
+.bt-auto button[aria-pressed="true"]::after { background: var(--fg); border-color: var(--fg); }
+.bt-tfadd { display: flex; gap: 6px; }
+.bt-tfadd .sp-in { flex: 1; min-width: 0; }
+.bt-tfadd .sp-in[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
+.bt-tfmsg.err { color: var(--danger); }
+.bt-tfmsg:empty { display: none; }
 .bt-ch .swc-save { font-size: var(--t-xs); color: var(--fg-2); }
 .bt-ch .swc-save:empty, .bt-ch .swc-meter[hidden] { display: none; }
 .bt-cell .swc-stage { min-height: 0; }
@@ -1759,7 +1800,9 @@ html.sv-open .tabbar { visibility: hidden; }
 .bt-sj > .bt-sjl-k { grid-area: lk; } .bt-sj > .bt-sjl-v { grid-area: lv; } .bt-sj > .bt-sjk { grid-area: ls; margin: 0; }
 .bt-sj > .lbl { font-size: var(--t-xs); color: var(--fg-2); }
 .bt-sj > [data-btf="cel.kind"] { grid-area: k; width: 100%; }
-.bt-sj > [data-btf^="cel."]:not([data-btf="cel.kind"]), .bt-sj > .bt-sj-nov { grid-area: v; width: 100%; min-width: 0; }
+.bt-sj > [data-btf^="cel."]:not([data-btf="cel.kind"]), .bt-sj > .bt-sj-nov, .bt-sj > .wd { grid-area: v; width: 100%; min-width: 0; }
+/* wybor-daty (1.6.1): pole godziny skoku w opakowaniu wybieraka */
+.bt-sj > .wd > input { width: 100%; }
 .bt-sj > .bt-skrot { grid-area: s; width: 100%; }
 .bt-sj > .icon-btn { grid-area: x; justify-self: end; }
 /* P3: Ustawienia na szerokim ekranie: kolumna treści (860 px) wyśrodkowana w panelu zamiast przy lewej krawędzi (decyzja gustu) */
@@ -1796,3 +1839,134 @@ html.sv-open .tabbar { visibility: hidden; }
   .bt-tag-lv { padding-right: 6px; }
   .bt-tag-m { left: auto; right: 0; }
 }
+/* stan ładowania przycisku (kreator pierwszych kroków, Źródła danych): spinner .spin z .busy; czytelniejszy niż zwykły disabled */
+.btn.busy:disabled { opacity: .8; cursor: progress; }
+
+/* ---------- wybierak daty i godziny (wybor-daty.js, 1.6.1) ----------
+   [U] 1.11.2026 «stworz w naszym stylu design okna ustawiania czasu i daty, ma byc proste w uzytku najlepiej»
+   Pole zostaje polem dashboardu (.sp-in / .fld), dochodzi ikona i etykieta strefy; okno jak popover Ustawień i kalendarz okresu (.rp, .rd).
+   Na ≤ 1023 px arkusz od dołu jak .rp, komórki i przyciski 44 px. Tekst bez podkładek; tło mają tylko komórki, przyciski i pola. */
+.wd { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; vertical-align: middle; width: fit-content; }
+/* pola na całą szerokość (formularze trade'a i Prop, kreator sesji, skok w Ustawieniach): opakowanie też */
+.fld > .wd, .bt-f > .wd { width: 100%; }
+.fld > .wd > input, .bt-f > .wd > input { width: 100%; }
+.wd > input { min-width: 0; padding-right: 32px; font-variant-numeric: tabular-nums; }
+.wd-date > input { min-width: 128px; }
+.wd-time > input { min-width: 86px; }
+.wd.has-tz > input { min-width: 108px; padding-right: 54px; }
+.wd > input[aria-expanded="true"] { box-shadow: var(--well-shadow), 0 0 0 1.5px rgb(var(--fg-rgb) / .4); }
+.wd > input[aria-invalid="true"] { box-shadow: var(--well-shadow), 0 0 0 1.5px var(--danger); }
+.wd-tz { position: absolute; right: 32px; top: 50%; transform: translateY(-50%); font-size: var(--t-xs); font-weight: 700; letter-spacing: .06em; color: var(--fg-2); pointer-events: none; }
+.wd-ico {
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px;
+  display: grid; place-items: center; background: transparent; color: var(--fg-2); cursor: pointer; transition: color .15s var(--ease), background-color .15s var(--ease);
+}
+@media (hover: hover) { .wd-ico:hover { color: var(--fg); background: rgb(var(--fg-rgb) / .08); } }
+.wd-ico:active { background: rgb(var(--fg-rgb) / .14); }
+.wd-pop {
+  position: fixed; z-index: 200; inset: auto; margin: 0; border: 0; padding: 10px 12px 12px; width: 292px; max-width: calc(100vw - 16px); overflow: visible;
+  border-radius: 10px; background: var(--popover); color: var(--fg); box-shadow: var(--float-shadow); font-size: var(--t-base); animation: rp-in .16s var(--spring);
+}
+.wd-pop-time { width: 236px; }
+.wd-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.wd-h { margin: 0 0 8px; font-size: var(--t-sm); font-weight: 600; color: var(--fg-2); }
+.wd-nav { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
+.wd-nav .icon-btn { flex: none; font-size: 16px; line-height: 1; }
+.wd-ttl {
+  position: relative; flex: 1; min-width: 0; height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 6px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--fg); font: inherit; font-size: var(--t-md); font-weight: 700; text-transform: capitalize; font-variant-numeric: tabular-nums; cursor: pointer;
+  transition: background-color .15s var(--ease);
+}
+.wd-ttl svg { color: var(--fg-2); flex: none; }
+.wd-ttl:disabled { cursor: default; }
+@media (hover: hover) { .wd-ttl:not(:disabled):hover { background: rgb(var(--fg-rgb) / .08); } }
+.wd-grid { width: 100%; border-collapse: separate; border-spacing: 0 2px; table-layout: fixed; }
+.wd-grid th { padding: 0 0 4px; font-size: var(--t-sm); font-weight: 500; letter-spacing: normal; text-transform: none; color: var(--fg-2); text-align: center; }
+.wd-grid td {
+  height: 32px; padding: 0; border: 0; border-radius: 6px; vertical-align: middle; text-align: center; font-size: var(--t-base); font-weight: 500; font-variant-numeric: tabular-nums; cursor: pointer;
+  transition: background-color .12s var(--ease), color .12s var(--ease);
+}
+.wd-grid td.off { color: rgb(var(--fg-rgb) / .72); }
+.wd-grid td.today:not(.sel) { box-shadow: inset 0 0 0 1.5px rgb(var(--fg-rgb) / .55); }
+.wd-grid td.sel { background: var(--fg); color: var(--on-fg); font-weight: 700; }
+.wd-grid td.dis { color: rgb(var(--fg-rgb) / .36); text-decoration: line-through; text-decoration-color: rgb(var(--fg-rgb) / .3); cursor: not-allowed; }
+.wd-grid td:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+@media (hover: hover) { .wd-grid td:not(.sel):not(.dis):hover { background: rgb(var(--fg-rgb) / .1); } }
+.wd-grid td:not(.dis):active { background: rgb(var(--fg-rgb) / .16); }
+.wd-mgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 2px 0; }
+.wd-cell {
+  position: relative; height: 40px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--fg); font: inherit; font-size: var(--t-base); font-weight: 600;
+  text-transform: capitalize; font-variant-numeric: tabular-nums; cursor: pointer; transition: background-color .12s var(--ease), color .12s var(--ease);
+}
+.wd-cell.now:not([aria-pressed="true"]) { box-shadow: inset 0 0 0 1.5px rgb(var(--fg-rgb) / .55); }
+.wd-cell[aria-pressed="true"] { background: var(--fg); color: var(--on-fg); }
+.wd-cell:disabled { color: rgb(var(--fg-rgb) / .36); cursor: not-allowed; }
+@media (hover: hover) { .wd-cell:not(:disabled):not([aria-pressed="true"]):hover { background: rgb(var(--fg-rgb) / .1); } }
+.wd-cell:not(:disabled):active { background: rgb(var(--fg-rgb) / .16); }
+.wd-f { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.wd-legend { margin-left: auto; text-align: right; line-height: 1.3; }
+.wd-clock { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 2px 0 10px; }
+.wd-spin { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.wd-step {
+  position: relative; width: 60px; height: 24px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: transparent; color: var(--fg-2); cursor: pointer;
+  transition: background-color .12s var(--ease), color .12s var(--ease);
+}
+@media (hover: hover) { .wd-step:hover { color: var(--fg); background: rgb(var(--fg-rgb) / .08); } }
+.wd-step:active { background: rgb(var(--fg-rgb) / .16); }
+.wd-num {
+  width: 60px; height: 48px; display: grid; place-items: center; border-radius: 8px; background: var(--input); box-shadow: var(--well-shadow);
+  font-family: var(--mono); font-size: var(--t-kpi); font-weight: 500; font-variant-numeric: tabular-nums; cursor: ns-resize; user-select: none;
+}
+.wd-num:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.wd-colon { padding-bottom: 3px; font-family: var(--mono); font-size: var(--t-kpi); color: var(--fg-2); }
+.wd-ztag { margin-left: 2px; font-size: var(--t-sm); font-weight: 700; letter-spacing: .06em; color: var(--fg-2); }
+.wd-pre { margin-bottom: 2px; }
+.wd-pre button { font-variant-numeric: tabular-nums; }
+.wd-pop-time .wd-f .btn { min-width: 76px; }
+/* godziny sesji (Ustawienia → Wykresy) przy telefonie: etykieta w osobnym wierszu, pola na pełną szerokość kolumny, miejsce na „NY” przy cyfrach (przegląd wizualny 1.6.1, P2-A2) */
+@media (max-width: 480px) {
+  .sp-sess { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .sp-sess > .check { grid-column: 1 / -1; }
+  .sp-sess .wd { width: 100%; }
+  .sp-sess .wd > input, .sp-sess .wd.has-tz > input { width: 100%; min-width: 0; padding-right: 72px; }
+}
+@media (max-width: 1023px) {
+  .wd > input { padding-right: 44px; }
+  .wd.has-tz > input { padding-right: 66px; min-width: 124px; }
+  .wd-date > input { min-width: 150px; }
+  .wd-time > input { min-width: 100px; }
+  .wd-tz { right: 44px; }
+  .wd-ico { width: 38px; height: 38px; }
+  .wd-pop.is-sheet {
+    inset: auto 0 0 0; width: auto; max-width: none; max-height: 92dvh; overflow-y: auto; border-radius: 18px 18px 0 0;
+    padding: 0 16px calc(16px + env(safe-area-inset-bottom)); animation-name: rp-up;
+  }
+  .wd-pop.is-sheet::backdrop { background: var(--scrim); }
+  .is-sheet .wd-grab { display: block; margin: 8px auto 10px; }
+  .is-sheet .wd-h { font-size: var(--t-base); }
+  .is-sheet .wd-nav .icon-btn { width: 44px; height: 44px; font-size: 20px; }
+  .is-sheet .wd-ttl { height: 44px; font-size: var(--t-lg); }
+  .is-sheet .wd-grid th { font-size: var(--t-base); }
+  .is-sheet .wd-grid td { height: 44px; font-size: 16px; }
+  .is-sheet .wd-cell { height: 52px; font-size: 16px; }
+  .is-sheet .wd-f { flex-wrap: wrap; gap: 8px; }
+  .is-sheet .wd-f .btn { height: 44px; flex: 1; font-size: var(--t-base); }
+  .is-sheet .wd-f .grow { display: none; }
+  .is-sheet .wd-legend { flex-basis: 100%; order: -1; margin: 0 0 4px; text-align: left; }
+  .is-sheet .wd-step { width: 96px; height: 44px; }
+  .is-sheet .wd-num { width: 96px; height: 64px; font-size: 2.2rem; }
+  .is-sheet .wd-colon { font-size: 2.2rem; }
+  .is-sheet .wd-pre button { height: 44px; font-size: 15px; }
+}
+@media (prefers-reduced-motion: reduce) { .wd-pop { animation: none !important; } .wd-ico, .wd-ttl, .wd-grid td, .wd-cell, .wd-step { transition: none !important; } }
+/* usuwanie trade'ów (decyzja 2026-11-02, przegląd wyglądu): cele dotyku akcji w wierszu Historii ≥ 44 px przy ≤ 480 px (wygląd „Usuń” jako samego tekstu bez zmian), stan w trakcie usuwania, wyrównanie „Otwórz w Notion” */
+@media (max-width: 480px) {
+  .bt-dk-t td.bt-dk-a .btn { min-height: 44px; min-width: 44px; }
+  .bt-dk-t td.bt-dk-a { gap: 0; }
+  .bt-dk-t td.bt-dk-a .bt-dk-del { min-width: 13ch; }
+}
+[data-deleting] .bt-dk-del, [data-deleting] .bt-jw-del { opacity: .5; pointer-events: none; cursor: progress; }
+.lb-actions { align-items: center; }
+.lb-actions .lb-link { margin-top: 0; }
+/* stała szerokość „Usuń” / „Usuwanie…”: zmiana napisu w stanie „w trakcie” nie przesuwa kolumny akcji (przy 375 px przyklejonej) */
+.bt-dk-del { min-width: 13ch; }

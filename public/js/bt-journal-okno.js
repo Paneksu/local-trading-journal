@@ -10,10 +10,11 @@ import { t } from './i18n.js';
 import { esc, fmtR, fmtMoney } from './format.js';
 import { createPodglad, tfSec } from './podglad.js';
 import { aggregate } from './swiece.js';
-import { mergeBase, candlesAt, REPLAY_TFS } from './bt-swieca.js';
+import { mergeBase, candlesAt, isReplayTf } from './bt-swieca.js';
 import { pxText } from './bt-journal.js';
 import { SETUP_RE, SETUP_MAX, journalState } from './bt-notion.js';
 import { STATE_LABEL, fmtHeld } from './bt-szuflada.js';
+import { overlay } from './modal.js';
 
 const HIST_DAYS = 390, SEC_DAYS = 8, MAX_BARS = 50_000;
 const svg = (d, s = 18) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -32,7 +33,7 @@ export function journalMaxT(trade, { cursor = Infinity, real1s = [] } = {}) {
 }
 
 // Źródło świec Journala zgodne z GET /api/candles ({ bars }): API zakresu replayu (te same świece co w replayu), bez świec po maxT. Świeca interwału, która w chwili maxT
-// jeszcze trwała, jest złożona tylko ze świec bazowych zakończonych do maxT (jak na wykresie replayu w tej chwili). Interwały spoza REPLAY_TFS (4h, 1D, 1W, 1M) z 1h.
+// jeszcze trwała, jest złożona tylko ze świec bazowych zakończonych do maxT (jak na wykresie replayu w tej chwili). Interwały, które nie są interwałami replayu (4h, 1D, 1W, 1M; ważne są też własne jak 7m), z 1h.
 export function journalSource({ fetchRange, instrument, maxT }) {
   const sym = instrument;
   async function hist(from, to, tf) {
@@ -67,7 +68,7 @@ export function journalSource({ fetchRange, instrument, maxT }) {
     maxT,
     async get(from, to, tf) {
       const want = String(tf);
-      const base = REPLAY_TFS.includes(want) ? want : '1h';
+      const base = isReplayTf(want) ? want : '1h';
       let out = await bars(from, to, base);
       if (base !== want) out = aggregate(out, want) || [];
       // przyszłość wykluczona drugi raz: żadna świeca nie zaczyna się po maxT
@@ -86,7 +87,7 @@ export const tradeArgOf = (x) => ({
 // openJournalWindow(opts) → { close, el, tradeId(), show(id), editing(), view() }
 // opts: trades() → zamknięte trade'y sesji (kolejność sesji), id, fetchRange, maxTOf(trade), setups, known, fmtTime(sec), onSave(id, { setup, notes }) → void,
 // onDrawings(id, doc) → void (migawka rysunków trade'a), onClose(), loadEditor() → import('./wykres.js')
-export function openJournalWindow({ root = document.body, trades, id, fetchRange, maxTOf, setups = [], known = [], fmtTime = (s) => String(s), onSave = () => {}, onDrawings = () => {}, onClose = () => {}, loadEditor = () => import('./wykres.js'), setup: preset = '' }) {
+export function openJournalWindow({ root = document.body, trades, id, fetchRange, maxTOf, setups = [], known = [], fmtTime = (s) => String(s), onSave = () => {}, onDrawings = () => {}, onDelete = null, onClose = () => {}, loadEditor = () => import('./wykres.js'), setup: preset = '' }) {
   const el = document.createElement('div');
   el.className = 'lb bt-jw';
   el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', t('Journal trade\'a backtestu'));
@@ -100,7 +101,7 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
         <label class="bt-jr-f"><span class="lbl">${esc(t('Setup'))}</span><input class="sp-in" name="setup" type="text" list="${dl}" maxlength="${SETUP_MAX}" autocomplete="off"><datalist id="${dl}">${setups.map((s) => `<option value="${esc(s)}"></option>`).join('')}</datalist></label>
         <label class="bt-jr-f bt-jw-n"><span class="lbl">${esc(t('Notatka'))}</span><textarea class="sp-in" name="notes" rows="3" maxlength="2000"></textarea></label>
       </div>
-      <div class="lb-actions"><button type="button" class="btn primary" data-jw="save" title="${esc(t('Zapisz (Ctrl+Enter), Esc zamyka'))}" aria-keyshortcuts="Control+Enter">${esc(t('Zapisz'))}</button><span class="note bt-jw-kbd" aria-hidden="true">${esc(t('Ctrl+Enter zapisuje · Esc zamyka'))}</span><a class="btn lb-link" data-jw="notion" target="_blank" rel="noopener" hidden>${esc(t('Otwórz w Notion'))}</a>
+      <div class="lb-actions"><button type="button" class="btn primary" data-jw="save" title="${esc(t('Zapisz (Ctrl+Enter), Esc zamyka'))}" aria-keyshortcuts="Control+Enter">${esc(t('Zapisz'))}</button><span class="note bt-jw-kbd" aria-hidden="true">${esc(t('Ctrl+Enter zapisuje · Esc zamyka'))}</span><a class="btn lb-link" data-jw="notion" target="_blank" rel="noopener" hidden>${esc(t('Otwórz w Notion'))}</a>${onDelete ? `<button type="button" class="btn ghost bt-jw-del" data-jw="delete">${esc(t('Usuń trade'))}</button>` : ''}
         <span class="note bt-jw-msg" role="status"></span></div></div>`;
   root.appendChild(el);
   const $ = (s) => el.querySelector(s);
@@ -215,6 +216,8 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
   // klawisze: Journal ma pierwszeństwo przed skrótami replayu (te są wyłączone, dopóki okno jest otwarte); w polach tylko Escape i Ctrl+Enter
   function onKey(ev) {
     if (closed || !el.isConnected) return;
+    // okno pytania otwarte nad Journalem (np. potwierdzenie usunięcia trade'a) dostaje klawisze, w tym Escape, przed Journalem
+    if (overlay.current) return;
     const tg = ev.target, field = tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || tg.isContentEditable);
     if (field && el.contains(tg)) {
       if (ev.key === 'Enter' && (tg.name === 'setup' || ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); ev.stopImmediatePropagation(); save(); }
@@ -236,6 +239,7 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
     else if (a === 'prev') step(-1);
     else if (a === 'next') step(1);
     else if (a === 'save') save();
+    else if (a === 'delete') { if (cur && onDelete && !ed) onDelete(cur.id); }
     else if (a === 'details') { noDet = !noDet; paintNav(); pv?.redraw?.(); }
   });
   f('setup').addEventListener('input', () => { f('setup').removeAttribute('aria-invalid'); msg(''); });

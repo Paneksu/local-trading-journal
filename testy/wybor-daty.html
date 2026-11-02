@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: wybierak daty i godziny (strona robocza)</title>
+<!-- Strona robocza testów wybor-daty (testy/backtest-wybor-daty.mjs): Chrome/Edge headless przez CDP, podawana przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Sprawdza sam komponent public/js/wybor-daty.js: wartość, zdarzenia, klawiaturę, ARIA, zakres, godzinę i arkusz przy 375 px. Wynik: pre#wynik z JSON-em { checks }.
+     ?theme=platinum, ?shot=date|time: zostawia otwarte okno do zrzutu. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 24px; background: var(--chrome); color: var(--fg); }
+  .box { display: flex; flex-wrap: wrap; gap: 18px; max-width: 900px; }
+  .box label { display: flex; flex-direction: column; gap: 6px; }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; margin-top: 420px; }
+</style>
+</head>
+<body>
+<form id="f" class="box" novalidate>
+  <label><span class="lbl">Data startu</span><input class="sp-in" type="text" data-wd="date" name="from" value="2024-03-12" min="2024-01-02" max="2024-12-31" data-wd-poza="Poza zakresem danych"></label>
+  <label><span class="lbl">Godzina startu (NY)</span><input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-wd-presety="09:00,09:30,10:00,11:00" name="startTime" value="09:00"></label>
+  <label><span class="lbl">Data wyjścia</span><input class="sp-in" type="text" data-wd="date" data-wd-pusty name="exit" value=""></label>
+  <label><span class="lbl">Dzień z danymi</span><input class="sp-in" type="text" data-wd="date" name="rule" value="2024-03-12"></label>
+  <label><span class="lbl">Ważny do</span><input class="sp-in" type="text" data-wd="date" name="en" value="2026-11-01"></label>
+</form>
+<div id="sess" class="sp-sessions" style="overflow: hidden; width: calc(100vw - 48px)" role="group" aria-label="Godziny sesji">
+  <div class="sp-sess"><label class="check"><input type="checkbox" checked> Azja</label><input type="text" data-wd="time" data-wd-tz="NY" class="sp-in" value="00:00" aria-label="Początek sesji Azja"><span aria-hidden="true">-</span><input type="text" data-wd="time" data-wd-tz="NY" class="sp-in" value="05:00" aria-label="Koniec sesji Azja"></div>
+  <div class="sp-sess"><label class="check"><input type="checkbox" checked> NY</label><input type="text" data-wd="time" data-wd-tz="NY" class="sp-in" value="09:30" aria-label="Początek sesji NY"><span aria-hidden="true">-</span><input type="text" data-wd="time" data-wd-tz="NY" class="sp-in" value="16:00" aria-label="Koniec sesji NY"></div>
+</div>
+<pre id="wynik">…</pre>
+<script type="module">
+import { setDayRule, setLang, isOpen } from '/js/wybor-daty.js';
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 4000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const NATIVE = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+const shown = (el) => NATIVE.get.call(el);
+const type = (el, txt) => { NATIVE.set.call(el, txt); el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' })); };
+const key = (el, k, o = {}) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+const pd = (el, pointerType = 'mouse') => { const ev = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType }); el.dispatchEvent(ev); if (!ev.defaultPrevented && pointerType === 'mouse' && el.focus) el.focus(); };
+const pop = () => document.querySelector('.wd-pop');
+// headless bez fokusu okna nie wysyła blur przy el.blur(): zdarzenie jak przy wyjściu z pola Tabem
+const leave = (el) => { const had = document.activeElement === el; el.blur(); if (had && !document.hasFocus()) el.dispatchEvent(new FocusEvent('blur', { relatedTarget: null })); };
+const ev = { input: [], change: [] };
+const f = document.getElementById('f');
+f.addEventListener('input', (e) => ev.input.push([e.target.name, e.target.value]));
+f.addEventListener('change', (e) => ev.change.push([e.target.name, e.target.value]));
+let docEsc = 0;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') docEsc++; });
+const $ = (s) => document.querySelector(s);
+const from = $('[name="from"]'), tm = $('[name="startTime"]'), exit = $('[name="exit"]'), ruleIn = $('[name="rule"]'), enIn = $('[name="en"]');
+const reset = () => { ev.input.length = 0; ev.change.length = 0; };
+await until(() => from.closest('.wd'));
+
+if (qs.get('shot')) {
+  if (qs.get('shot') === 'time') { tm.focus(); key(tm, 'ArrowDown', { altKey: true }); }
+  else { from.focus(); key(from, 'ArrowDown'); }
+  out.textContent = JSON.stringify({ checks: [] });
+} else {
+
+await section('wartosc', async () => {
+  rec('wartosc', from.value === '2024-03-12' && shown(from) === '12.03.2024', `wartość ISO, w polu PL: ${from.value} / ${shown(from)}`);
+  rec('wartosc', from.type === 'text' && from.getAttribute('role') === 'combobox' && from.placeholder === 'dd.mm.rrrr', `pole tekstowe z podpowiedzią formatu: ${from.placeholder}`);
+  from.value = '2024-02-29';
+  rec('wartosc', shown(from) === '29.02.2024' && from.value === '2024-02-29', `ustawienie z kodu: ${shown(from)}`);
+  rec('wartosc', new FormData(f).get('from') === '2024-02-29' && new FormData(f).get('startTime') === '09:00', `FormData w starym formacie: ${new FormData(f).get('from')} ${new FormData(f).get('startTime')}`);
+  reset(); from.focus(); type(from, '5.3.2024');
+  rec('wartosc', ev.input.length === 1 && ev.input[0][1] === '2024-03-05' && ev.change.length === 0, `wpisanie: input z nową wartością, bez change: ${JSON.stringify(ev)}`);
+  type(from, '5.3.20');
+  rec('wartosc', from.value === '' && ev.input.at(-1)[1] === '', 'niepełna data: wartość pusta jak w natywnym polu');
+  reset(); type(from, '5.3.24'); leave(from);
+  rec('wartosc', from.value === '2024-03-05' && shown(from) === '05.03.2024' && ev.change.length === 1 && ev.change[0][1] === '2024-03-05', `wyjście z pola: rok dwucyfrowy, change raz: ${shown(from)} ${JSON.stringify(ev.change)}`);
+  reset(); from.focus(); leave(from);
+  rec('wartosc', ev.change.length === 0, 'bez zmiany: bez change');
+  reset(); from.focus(); type(from, '1.4.2024'); key(from, 'Enter');
+  rec('wartosc', from.value === '2024-04-01' && ev.change.length === 1, `Enter zatwierdza: ${from.value}`);
+  reset(); type(from, '31.02.2024'); leave(from);
+  rec('wartosc', from.getAttribute('aria-invalid') === 'true' && ev.change.length === 0 && from.value === '', 'zła data: aria-invalid, bez change');
+  from.focus(); type(from, '1.1.2023'); leave(from);
+  rec('wartosc', from.value === '2024-01-02' && !from.hasAttribute('aria-invalid'), `poza min: przycięte do min: ${from.value}`);
+  from.value = '2024-03-12';
+});
+
+await section('klawiatura', async () => {
+  from.focus(); reset();
+  rec('klawiatura', from.getAttribute('aria-haspopup') === 'dialog' && from.getAttribute('aria-expanded') === 'false', 'combobox z oknem dialog');
+  key(from, 'ArrowDown');
+  await until(() => pop());
+  const p = pop();
+  rec('klawiatura', p && p.getAttribute('role') === 'dialog' && from.getAttribute('aria-expanded') === 'true' && from.getAttribute('aria-controls') === p.id, 'strzałka w dół otwiera dialog, aria-expanded i aria-controls');
+  rec('klawiatura', /Data startu/.test(p.getAttribute('aria-label')), `nazwa okna: ${p.getAttribute('aria-label')}`);
+  rec('klawiatura', p.querySelector('table[role="grid"]') && p.querySelector('th').getAttribute('abbr') === 'poniedziałek' && p.querySelectorAll('tbody tr').length === 6, 'siatka grid, tydzień od poniedziałku, 6 tygodni');
+  rec('klawiatura', document.activeElement?.dataset?.iso === '2024-03-12' && document.activeElement.getAttribute('aria-selected') === 'true', `fokus na wybranym dniu: ${document.activeElement?.dataset?.iso}`);
+  const a = () => document.activeElement?.dataset?.iso;
+  key(document.activeElement, 'ArrowRight'); const r1 = a();
+  key(document.activeElement, 'ArrowDown'); const r2 = a();
+  key(document.activeElement, 'Home'); const r3 = a();
+  key(document.activeElement, 'End'); const r4 = a();
+  rec('klawiatura', r1 === '2024-03-13' && r2 === '2024-03-20' && r3 === '2024-03-18' && r4 === '2024-03-24', `strzałki, Home, End: ${r1} ${r2} ${r3} ${r4}`);
+  key(document.activeElement, 'PageDown');
+  rec('klawiatura', a() === '2024-04-24' && /kwiecień 2024/i.test(pop().querySelector('.wd-ttl').textContent), `PageDown: następny miesiąc: ${a()} ${pop().querySelector('.wd-ttl').textContent}`);
+  key(document.activeElement, 'PageUp', { shiftKey: true });
+  rec('klawiatura', a() === '2024-01-02', `Shift+PageUp: rok wstecz przycięty do min: ${a()}`);
+  key(document.activeElement, 'PageDown');
+  rec('klawiatura', a() === '2024-02-02', `przełom miesięcy: ${a()}`);
+  const before = document.activeElement;
+  key(before, 'Tab');
+  rec('klawiatura', pop().contains(document.activeElement) && document.activeElement !== before, 'Tab zostaje w oknie');
+  key(document.activeElement, 'Tab', { shiftKey: true });
+  rec('klawiatura', document.activeElement === before, 'Shift+Tab wraca');
+  reset(); key(document.activeElement, 'Enter');
+  rec('klawiatura', !pop() && from.value === '2024-02-02' && ev.change.length === 1 && document.activeElement === from, `Enter wybiera, zamyka i oddaje fokus: ${from.value}`);
+  key(from, 'ArrowDown', { altKey: true }); await until(() => pop());
+  key(document.activeElement, 'ArrowRight'); const escBefore = docEsc; reset();
+  key(document.activeElement, 'Escape');
+  rec('klawiatura', !pop() && from.value === '2024-02-02' && ev.change.length === 0 && document.activeElement === from && docEsc === escBefore, 'Escape zamyka bez zmiany i nie zamyka okna nadrzędnego');
+  // mysz: fokus zostaje w polu, okno pod polem
+  leave(from); pd(from);
+  await until(() => pop());
+  await sleep(300);
+  rec('klawiatura', pop() && document.activeElement === from && !pop().classList.contains('is-sheet'), 'klik myszą: okno otwarte, fokus w polu (można pisać)');
+  const r = pop().getBoundingClientRect(), fr = from.getBoundingClientRect();
+  rec('klawiatura', r.top >= fr.bottom && r.top - fr.bottom < 12 && Math.abs(r.left - from.closest('.wd').getBoundingClientRect().left) < 2, `okno pod polem: ${Math.round(r.top)} / ${Math.round(fr.bottom)}`);
+  type(from, '15.2.2024');
+  rec('klawiatura', pop().querySelector('td[aria-selected="true"]')?.dataset.iso === '2024-02-15', 'wpisana data od razu zaznaczona w kalendarzu');
+  reset(); pop().querySelector('td[data-iso="2024-02-20"]').click();
+  rec('klawiatura', !pop() && from.value === '2024-02-20' && ev.change.length === 1, `klik w dzień wybiera: ${from.value}`);
+  pd(from); await until(() => pop());
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }));
+  rec('klawiatura', !pop() && from.getAttribute('aria-expanded') === 'false', 'klik poza oknem zamyka');
+  from.value = '2024-03-12';
+});
+
+await section('zakres', async () => {
+  from.focus(); key(from, 'ArrowDown'); await until(() => pop());
+  pop().querySelector('[data-wa="m"][data-v="-1"]').click(); pop().querySelector('[data-wa="m"][data-v="-1"]').click();
+  const d1 = pop().querySelector('td[data-iso="2024-01-01"]');
+  rec('zakres', d1?.getAttribute('aria-disabled') === 'true' && /Poza zakresem danych: 2 stycznia 2024 – 31 grudnia 2024/.test(d1.title), `dzień przed min wyłączony z powodem: ${d1?.title}`);
+  reset(); d1.click();
+  rec('zakres', pop() && ev.change.length === 0, 'klik w wyłączony dzień nic nie zmienia');
+  // 1.6.1 (przegląd wizualny P3-A4): „Dziś” poza zakresem min i max nie jest pokazywane (wyłączony przycisk bez powodu do istnienia)
+  rec('zakres', !pop().querySelector('[data-wa="today"]') && !!pop().querySelector('.wd-f'), '„Dziś” poza zakresem nie jest renderowane');
+  pop().querySelector('.wd-ttl').click();
+  rec('zakres', pop().querySelectorAll('.wd-cell').length === 12 && /2024/.test(pop().querySelector('.wd-ttl').textContent), 'szybki wybór: 12 miesięcy roku');
+  pop().querySelector('[data-wa="y"][data-v="1"]').click();
+  rec('zakres', [...pop().querySelectorAll('.wd-cell')].every((b) => b.disabled), 'rok poza zakresem: miesiące wyłączone');
+  pop().querySelector('[data-wa="y"][data-v="-1"]').click();
+  pop().querySelector('.wd-cell[data-v="7"]').click();
+  rec('zakres', /lipiec 2024/i.test(pop().querySelector('.wd-ttl').textContent) && pop().querySelector('table[role="grid"]'), `wybór miesiąca wraca do dni: ${pop().querySelector('.wd-ttl').textContent}`);
+  pop().querySelector('.wd-ttl').click(); pop().querySelector('.wd-ttl').click();
+  rec('zakres', pop().querySelectorAll('.wd-cell').length === 12 && pop().querySelector('.wd-cell[data-v="2024"]') && pop().querySelector('.wd-cell[data-v="2026"]')?.disabled, 'lata: strona 12 lat, lata poza zakresem wyłączone');
+  key(document.activeElement, 'Escape'); key(document.activeElement, 'Escape');
+  if (pop()) key(document.activeElement, 'Escape');
+  // reguła dni (kreator: dni bez świec)
+  let calls = 0;
+  setDayRule(ruleIn, async (a, b) => { calls++; await sleep(30); const m = new Map(); for (let d = new Date(a + 'T12:00:00Z'); d.toISOString().slice(0, 10) <= b; d = new Date(d.getTime() + 86400000)) { const w = d.getUTCDay(); if (w === 0 || w === 6) m.set(d.toISOString().slice(0, 10), 'Weekend: giełda zamknięta'); } m.set('2024-03-13', 'Brak świec w tym dniu'); return m; });
+  ruleIn.focus(); key(ruleIn, 'ArrowDown'); await until(() => pop());
+  rec('zakres', /Sprawdzam dni/.test(pop().querySelector('.wd-legend')?.textContent || ''), 'ładowanie dni z danymi');
+  await until(() => pop().querySelector('td[data-iso="2024-03-16"][aria-disabled="true"]'));
+  const sat = pop().querySelector('td[data-iso="2024-03-16"]'), gap = pop().querySelector('td[data-iso="2024-03-13"]');
+  rec('zakres', sat?.title === 'Weekend: giełda zamknięta' && gap?.title === 'Brak świec w tym dniu' && /Przekreślone dni/.test(pop().querySelector('.wd-legend').textContent) && calls === 1, `dni bez danych z powodem: ${sat?.title} / ${gap?.title}`);
+  reset(); key(document.activeElement, 'ArrowRight'); key(document.activeElement, 'Enter');
+  rec('zakres', pop() && ev.change.length === 0, 'Enter na dniu bez danych nic nie wybiera');
+  key(document.activeElement, 'Escape');
+  // pole opcjonalne: „Wyczyść”, „Dziś” bez zakresu
+  exit.focus(); key(exit, 'ArrowDown'); await until(() => pop());
+  reset(); pop().querySelector('[data-wa="today"]').click();
+  const td = new Date(); const tk = `${td.getFullYear()}-${String(td.getMonth() + 1).padStart(2, '0')}-${String(td.getDate()).padStart(2, '0')}`;
+  rec('zakres', exit.value === tk && ev.change.length === 1, `„Dziś”: ${exit.value}`);
+  key(exit, 'ArrowDown'); await until(() => pop());
+  reset(); pop().querySelector('[data-wa="clear"]').click();
+  rec('zakres', exit.value === '' && shown(exit) === '' && ev.change.length === 1, '„Wyczyść” w polu, które może być puste');
+  rec('zakres', !document.querySelectorAll('.wd-pop').length, 'po zamknięciu bez okien w drzewie');
+});
+
+await section('godzina', async () => {
+  rec('godzina', tm.value === '09:00' && shown(tm) === '09:00' && tm.closest('.wd').querySelector('.wd-tz')?.textContent === 'NY', 'godzina GG:MM z etykietą NY');
+  tm.focus(); reset();
+  tm.setSelectionRange(0, 0); key(tm, 'ArrowUp');
+  tm.setSelectionRange(4, 4); key(tm, 'ArrowUp');
+  tm.setSelectionRange(4, 4); key(tm, 'ArrowUp', { shiftKey: true });
+  rec('godzina', tm.value === '10:11' && ev.input.length === 3 && ev.change.length === 0, `strzałki: godziny i minuty pod kursorem, Shift co 10: ${tm.value}`);
+  tm.setSelectionRange(4, 4); tm.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+  rec('godzina', tm.value === '10:12', `kółko: ${tm.value}`);
+  leave(tm);
+  rec('godzina', ev.change.length === 1 && ev.change[0][1] === '10:12', 'change po wyjściu z pola');
+  tm.focus(); key(tm, 'ArrowDown', { altKey: true }); await until(() => pop());
+  const p = pop();
+  rec('godzina', p.classList.contains('wd-pop-time') && /NY/.test(p.getAttribute('aria-label')) && p.querySelectorAll('[role="spinbutton"]').length === 2 && p.querySelector('.wd-ztag')?.textContent === 'NY', `okno godziny z NY: ${p.getAttribute('aria-label')}`);
+  const sp = p.querySelector('[role="spinbutton"][data-p="h"]');
+  rec('godzina', document.activeElement === sp && sp.getAttribute('aria-valuenow') === '10' && sp.getAttribute('aria-valuemax') === '23', 'fokus na godzinach, aria-valuenow');
+  reset(); p.querySelector('[data-wa="pre"][data-v="09:30"]').click();
+  rec('godzina', tm.value === '09:30' && p.querySelector('[data-wa="pre"][data-v="09:30"]').getAttribute('aria-pressed') === 'true', `preset 9:30: ${tm.value}`);
+  key(document.activeElement, 'Escape');
+  rec('godzina', !pop() && tm.value === '10:12' && ev.change.length === 0, `Escape cofa do wartości sprzed otwarcia: ${tm.value}`);
+  key(tm, 'ArrowDown', { altKey: true }); await until(() => pop());
+  reset(); key(document.activeElement, 'ArrowUp'); key(document.activeElement, 'ArrowRight');
+  key(document.activeElement, 'ArrowDown');
+  pop().querySelector('[data-wa="t"][data-p="m"][data-v="1"]').click();
+  rec('godzina', tm.value === '11:15', `spin: godzina +1, minuta −1, przycisk +5 do pełnych 5 min: ${tm.value}`);
+  key(document.activeElement, '0'); key(document.activeElement, '5');
+  rec('godzina', tm.value === '11:05', `cyfry wpisane w minutach: ${tm.value}`);
+  key(document.activeElement, 'Enter');
+  rec('godzina', !pop() && ev.change.length === 1 && ev.change[0][1] === '11:05' && document.activeElement === tm, 'Enter zamyka i zatwierdza');
+  reset(); type(tm, '930'); leave(tm);
+  rec('godzina', tm.value === '09:30' && shown(tm) === '09:30' && ev.change.at(-1)[1] === '09:30', `wpisane „930”: ${shown(tm)}`);
+});
+
+if (innerWidth < 1024) await section('mobile', async () => {
+  pd(from, 'touch');
+  await until(() => pop());
+  await sleep(400);
+  const p = pop(), r = p.getBoundingClientRect();
+  rec('mobile', p.classList.contains('is-sheet') && p.getAttribute('aria-modal') === 'true' && Math.round(r.width) === innerWidth && Math.abs(r.bottom - innerHeight) < 2, `arkusz od dołu na całą szerokość: ${Math.round(r.left)},${Math.round(r.bottom)} ${Math.round(r.width)}×${Math.round(r.height)}`);
+  rec('mobile', p.contains(document.activeElement) && document.activeElement !== from, 'dotyk: fokus w kalendarzu, bez klawiatury ekranowej');
+  const small = [...p.querySelectorAll('td, .wd-f .btn, .wd-ttl')].filter((x) => x.getBoundingClientRect().height < 44).length;
+  rec('mobile', small === 0, `cele dotyku ≥ 44 px (za małe: ${small})`);
+  rec('mobile', document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1 && p.scrollWidth <= p.clientWidth + 1, 'bez poziomego przewijania');
+  p.querySelector('td[data-iso="2024-03-20"]').click();
+  rec('mobile', !pop() && from.value === '2024-03-20', 'dotknięcie dnia wybiera');
+});
+
+// 1.6.1 (przegląd wizualny P2-A2): godziny sesji w Ustawieniach → Wykresy przy telefonie: etykieta w osobnym wierszu, pola na pełną szerokość w karcie, „NY” nie styka się z cyframi
+if (innerWidth <= 480) await section('mobile', async () => {
+  const box = document.getElementById('sess'), br = box.getBoundingClientRect();
+  const rows = [...box.querySelectorAll('.sp-sess')];
+  for (const row of rows) {
+    const lab = row.querySelector('label').getBoundingClientRect();
+    const ins = [...row.querySelectorAll('input[data-wd]')];
+    const inside = ins.every((i) => { const r = i.getBoundingClientRect(); return r.left >= br.left - 0.5 && r.right <= br.right + 0.5; });
+    rec('mobile', inside, 'pola godzin w granicach karty: ' + ins.map((i) => Math.round(i.getBoundingClientRect().right)).join(',') + ' przy prawej krawędzi ' + Math.round(br.right));
+    rec('mobile', ins.every((i) => i.getBoundingClientRect().top >= lab.bottom - 0.5), 'etykieta sesji w osobnym wierszu nad polami');
+    const wide = ins.every((i) => i.getBoundingClientRect().width >= (br.width - 24) / 2 - 2);
+    rec('mobile', wide, 'pola na pełną szerokość kolumny: ' + ins.map((i) => Math.round(i.getBoundingClientRect().width)).join(','));
+    const gaps = ins.map((i) => { const cs = getComputedStyle(i), tz = i.parentElement.querySelector('.wd-tz'); return tz.getBoundingClientRect().left - (i.getBoundingClientRect().left + parseFloat(cs.paddingLeft) + 5 * 9); });
+    rec('mobile', ins.every((i) => parseFloat(getComputedStyle(i).paddingRight) >= 70), 'miejsce na „NY” przy cyfrach: padding-right ' + ins.map((i) => getComputedStyle(i).paddingRight).join(','));
+    void gaps;
+  }
+});
+
+await section('en', async () => {
+  setLang('en');
+  enIn.value = '2026-11-01';
+  rec('en', shown(enIn) === '11/01/2026', `EN mm/dd/yyyy: ${shown(enIn)}`);
+  enIn.focus(); type(enIn, '11/05/2026'); leave(enIn);
+  rec('en', enIn.value === '2026-11-05' && shown(enIn) === '11/05/2026', `EN wpisane: ${enIn.value}`);
+  key(enIn, 'ArrowDown'); await until(() => pop());
+  const first = pop().querySelector('tbody td').dataset.iso;
+  rec('en', new Date(first + 'T12:00:00Z').getUTCDay() === 1, `tydzień od poniedziałku także w EN: ${first}`);
+  key(document.activeElement, 'Escape');
+  rec('en', !isOpen(), 'zamknięte');
+  setLang(null);
+});
+
+out.textContent = JSON.stringify({ checks });
+}
+</script>
+</body>
+</html>
