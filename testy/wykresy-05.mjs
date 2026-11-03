@@ -215,15 +215,20 @@ export default ({ test, H, assert, ROOT }) => {
       const S = await lib('public/js/stats.js');
       const id = (await H.dash(R.S.base, '/api/trades', { ...NEW, exitDate: '2026-10-26', exitTime: '10:15' })).j.id;
       const p = await R.props(id);
-      assert.equal(p.Data.date.time_zone, 'America/New_York', 'zapis ustawia time_zone');
-      assert.equal(p['Wyjście'].date.time_zone, 'America/New_York');
+      // Notion oddaje przy odczycie start Z PRZESUNIĘCIEM i time_zone: null (jeden odczyt z prawdziwego Notion 3.11.2026), więc strefę zapisu sprawdzamy po przesunięciu (NY: −04:00/−05:00, Warszawa: +01:00/+02:00)
+      assert.match(p.Data.date.start, /-04:00$/, 'zapis ustawia strefę NY (przesunięcie)');
+      assert.match(p['Wyjście'].date.start, /-04:00$/);
       const t = S.normalizeTrades([await R.row(id)])[0];
       assert.equal(t.at, Date.UTC(2026, 9, 26, 13, 30), '09:30 w Nowym Jorku (EDT) = 13:30 UTC');
       assert.equal(t.dur, 45, 'czas trwania z wejścia i wyjścia w tej samej strefie');
-      // tz niepoprawna → Europe/Warsaw (09:30 CEST = 07:30 UTC 26.10.2026)
+      // [U] 3.11.2026 «mala poprawka do notion i do journalingu, ja wpisuje godziny wedle nowojorskiego czasu nie polskiego»: tz niepoprawna → America/New_York (09:30 EDT = 13:30 UTC 26.10.2026; do 3.11.2026 domyślną była Warszawa)
       const id2 = (await H.dash(R.S.base, '/api/trades', { ...NEW, tz: 'Nie/Ma' })).j.id;
-      assert.equal((await R.props(id2)).Data.date.time_zone, 'Europe/Warsaw');
-      assert.equal(S.normalizeTrades([await R.row(id2)])[0].at, Date.UTC(2026, 9, 26, 8, 30), '26.10.2026 Warszawa ma jeszcze CET (zmiana czasu 25.10): 09:30 = 08:30 UTC');
+      assert.match((await R.props(id2)).Data.date.start, /-04:00$/);
+      assert.equal(S.normalizeTrades([await R.row(id2)])[0].at, Date.UTC(2026, 9, 26, 13, 30), '26.10.2026 Nowy Jork ma jeszcze czas letni (zmiana 1.11): 09:30 = 13:30 UTC');
+      // jawna strefa zostaje (Warszawa: od 25.10 CET, 09:30 = 08:30 UTC)
+      const id3 = (await H.dash(R.S.base, '/api/trades', { ...NEW, tz: 'Europe/Warsaw' })).j.id;
+      assert.match((await R.props(id3)).Data.date.start, /\+01:00$/);
+      assert.equal(S.normalizeTrades([await R.row(id3)])[0].at, Date.UTC(2026, 9, 26, 8, 30));
     } finally { R.stop(); }
   });
 

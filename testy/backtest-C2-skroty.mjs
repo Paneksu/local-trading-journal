@@ -49,6 +49,6 @@ export default ({ test, H, assert, ROOT }) => {
     assert.deepEqual(out.bt.jumps.map((j) => j.skrot), bt.jumps.map((j) => j.skrot), 'skrót każdego skoku zostaje');
     assert.deepEqual(out.bt.jumps.map((j) => j.cel), bt.jumps.map((j) => j.cel), 'cel każdego skoku zostaje');
     assert.deepEqual(sanitizeBt(out.bt), bt, 'po synchronizacji blok bt jest taki sam');
-    assert.ok(Object.keys(out.bt.skroty).length === 12, 'wszystkie 12 akcji (J: drawEntry; K: bez endDay; M: be, half)');
+    assert.ok(Object.keys(out.bt.skroty).length === 15, 'wszystkie 15 akcji (J: drawEntry; K: bez endDay; M: be, half; 1.7-2: reverse; 1.7-4: goDate, goPrice)');
   });
 };

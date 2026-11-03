@@ -4,6 +4,7 @@
 // [U] 31.10.2026 «Przenieś»: sesja v1 (1.5.0) otwiera się w modelu v2 bez utraty danych; stare pola zostają w `v1`.
 // English: v2 session model (continuous replay time) and the lossless v1 → v2 migration applied on read.
 import { nyAt } from './bt-czas.js';
+import { migrateBook } from './bt-ksiega.js';
 
 export const SESSION_V = 2;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -34,7 +35,8 @@ function mergeDrawings(byDay) {
 // migrateSession(doc) → nowy dokument v2 (wejście bez zmian). Dokument v2 wraca jako kopia bez zmian (idempotentna).
 export function migrateSession(doc) {
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return doc;
-  if (doc.v === SESSION_V) return clone(doc);
+  // 1.7.0: sesja zostaje v: 2 (powrót do 1.6.x nie zrobi z niej v1), a księga przechodzi migrateBook (czysta, idempotentna): pozycje dostają zdarzenia, lustro zostaje
+  if (doc.v === SESSION_V) { const same = clone(doc); if (same.book) same.book = migrateBook(same.book); return same; }
   const src = clone(doc);
   const { pool, dayIdx, days, drawings, ...rest } = src;
   const def = { ...(src.def || {}) };
@@ -48,6 +50,7 @@ export function migrateSession(doc) {
   if (cursor == null && curDay) { try { cursor = nyAt(curDay, def.startTime || '09:00'); } catch { cursor = null; } }
   const out = { ...rest, v: SESSION_V, def, cursor, drawings: mergeDrawings(drawings) };
   out.v1 = { pool: pool ?? [], dayIdx: dayIdx ?? 0, days: days ?? {}, order: order ?? null, seed: seed ?? null, to: to ?? null, drawings: drawings ?? {} };
+  if (out.book) out.book = migrateBook(out.book);
   return out;
 }
 

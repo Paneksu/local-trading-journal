@@ -37,7 +37,9 @@ export default ({ test, H, assert, ROOT }) => {
     const u = src('public/js/ustawienia.js');
     for (const m of MODS) assert.ok(u.includes(`from './${m}'`), `ustawienia.js importuje ${m}`);
     const files = readdirSync(path.join(ROOT, 'public/js')).filter((f) => /^ust-.*\.js$/.test(f));
-    assert.deepEqual(files.filter((f) => f !== 'ust-wspolne.js').sort(), [...MODS].sort());
+    // ust-strefa.js (odbiór 1.7.0) to podmoduł sekcji „Kopie i diagnostyka” (importuje go ust-diag.js), nie osobna sekcja
+    assert.ok(src('public/js/ust-diag.js').includes("from './ust-strefa.js'"), 'ust-diag.js importuje ust-strefa.js');
+    assert.deepEqual(files.filter((f) => f !== 'ust-wspolne.js' && f !== 'ust-strefa.js').sort(), [...MODS].sort());
     const U = await imp('public/js/ustawienia.js');
     assert.deepEqual(U.SECTIONS.map((s) => s.id), ['konto', 'zrodla', 'dysk', 'wyglad', 'wykresy', 'backtest', 'diag']);
     assert.equal(U.sectionOf('ogolne'), 'wyglad'); assert.equal(U.sectionOf('urzadzenia'), 'konto'); assert.equal(U.sectionOf('dane'), 'wyglad'); assert.equal(U.sectionOf('be'), 'wyglad');

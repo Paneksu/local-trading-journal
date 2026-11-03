@@ -42,7 +42,9 @@
       rec(!$('.lb-del')?.offsetParent, 'okno szczegółów zamknięte po usunięciu');
       rec(!(await serverHas(id)), 'strona trade\'a jest w koszu Notion (zapytanie jej nie zwraca)');
       const tt = await until(() => toastEl());
-      rec(tt && /Trade usunięty/.test(tt.textContent) && /Cofnij \((Ctrl\+Z|⌘Z)\)/.test(tt.textContent), 'powiadomienie „Trade usunięty · Cofnij (Ctrl+Z)”');
+      // 1.7-1 (runda 4): skrót klawiszowy w „Cofnij” tylko tam, gdzie jest klawiatura; na dotyku i przy ≤ 640 px samo „Cofnij”
+  const noKeys = matchMedia('(hover: none), (max-width: 640px)').matches;
+  rec(tt && /Trade usunięty/.test(tt.textContent) && (noKeys ? !/Ctrl|⌘/.test(tt.textContent) && /Cofnij/.test(tt.textContent) : /Cofnij \((Ctrl\+Z|⌘Z)\)/.test(tt.textContent)), noKeys ? 'powiadomienie „Trade usunięty · Cofnij” (bez skrótu na dotyku)' : 'powiadomienie „Trade usunięty · Cofnij (Ctrl+Z)”');
       rec(tt && !tt.contains(document.activeElement), 'fokus nie wskakuje na powiadomienie');
       key(document.body, { key: 'z', code: 'KeyZ', ctrlKey: true });
       await until(() => has(id));

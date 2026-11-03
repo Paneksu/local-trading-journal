@@ -366,12 +366,19 @@ export function shapes(drawing, s) {
 //     w stronę zysku (cena BE = wejście + kierunek × beLevel), przerywana linia --be na szerokości pozycji z podpisem „BE”;
 // (2) R:R, słowa użytkownika: «pokazuj rr na pozycjach ktore rysuje sam»: tylko pozycje rysowane (nie zablokowana pozycja trade'a),
 //     tekst bez podkładki (preferencja: bez zaokrąglonych podkładek pod tekstem) przy linii wejścia, po stronie zysku.
+const BE_MIN_W = 40;
 export function positionExtras(drawing, s, g) {
   const st = drawing.style || {}, out = [];
   if (Number.isFinite(st.beLevel)) {
     const price = g.entry + g.dir * st.beLevel, y = s.y(price);
-    out.push({ t: 'line', x1: g.x1, y1: y, x2: g.x2, y2: y, cls: 'drw-be', dash: 'dashed', role: 'be', price });
-    out.push({ t: 'text', x: g.x2 - 4, y: y - 7, text: 'BE', cls: 'drw-be-l', anchor: 'end', role: 'be-label' });
+    // runda 2 pakietu 1.7-3 (przegląd wizualny P2-7): linia BE ma co najmniej BE_MIN_W px, więc przy trade'ach 1–2 świece też widać linię i podpis „BE”
+    const x2 = Math.max(g.x2, g.x1 + BE_MIN_W);
+    out.push({ t: 'line', x1: g.x1, y1: y, x2, y2: y, cls: 'drw-be', dash: 'dashed', role: 'be', price });
+    // runda 4 (R3-P3): przy pozycji węższej niż BE_MIN_W prawy koniec linii leży pod plakietką progu BE, więc podpis stoi przy lewym końcu (nad świecą wejścia)
+    const tiny = g.x2 - g.x1 < BE_MIN_W;
+    // zone: strefa pozycji, w której stoi podpis (kolor obrysu); poza strefą (próg za TP albo za SL) null
+    const d = (price - g.entry) * g.dir, zone = d > 0 && d <= g.profit ? 'profit' : d < 0 && -d <= g.stop ? 'loss' : null;
+    out.push({ t: 'text', x: tiny ? g.x1 + 3 : x2 - 4, y: y - 7, text: 'BE', cls: 'drw-be-l', anchor: tiny ? 'start' : 'end', role: 'be-label', zone });
   }
   // (3) P28 (28.10.2026), słowa użytkownika: «dopracuj i zrob te 3 pkt» (cena wyjścia przeciągana na wykresie): style.exitLevel = odległość
   //     wyjścia od wejścia w stronę zysku (ujemna po stronie straty). Jak w podglądzie z pól trade'a (levelsSvg): kropka wyjścia na prawej

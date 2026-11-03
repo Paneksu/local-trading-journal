@@ -1316,7 +1316,7 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 /* warstwa handlu nad wykresem: etykieta pozycji z X i procentami, przeciągane etykiety zleceń oczekujących */
 .bt-plot { position: relative; }
 .bt-tl { position: absolute; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; }
-.bt-tag { position: absolute; transform: translateY(-50%); display: flex; align-items: center; gap: 2px; max-width: calc(100% - 80px); padding: 0 2px 0 8px; height: 22px; border-radius: 4px; background: var(--popover); border: 1px solid var(--line); color: var(--fg); font-size: var(--t-xs); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: auto; box-shadow: 0 1px 4px color-mix(in srgb, var(--fg) 10%, transparent); }
+.bt-tag { position: absolute; transform: translateY(-50%); display: flex; align-items: center; gap: 2px; max-width: calc(100% - 80px); padding: 0 2px 0 8px; height: 24px; border-radius: 4px; background: var(--popover); border: 1px solid var(--line); color: var(--fg); font-size: var(--t-tag); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: auto; box-shadow: 0 1px 4px color-mix(in srgb, var(--fg) 10%, transparent); }
 .bt-tag[hidden] { display: none; }
 .bt-tag-t { overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
 .bt-tag-pos.pos { border-color: var(--profit); } .bt-tag-pos.pos .bt-tag-t { color: var(--profit); }
@@ -1327,8 +1327,7 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-tag-o.drag { cursor: ns-resize; touch-action: none; }
 .bt-tag-o.dragging { box-shadow: 0 0 0 2px var(--fg-2); }
 .bt-tag-o.drag:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
-.bt-tag .icon-btn.bt-tag-x { width: 20px; height: 20px; min-width: 20px; font-size: 14px; line-height: 1; }
-.bt-tag-m { position: absolute; top: calc(100% + 4px); right: 0; display: flex; gap: 4px; padding: 4px; background: var(--popover); border: 1px solid var(--line); border-radius: 6px; }
+.bt-tag .icon-btn.bt-tag-x { width: 24px; height: 24px; min-width: 24px; font-size: 14px; line-height: 1; }
 /* szuflada: Pozycje / Zlecenia / Historia */
 .bt-dock { max-height: 30vh; display: flex; flex-direction: column; overflow: hidden; }
 .bt-dk-h { display: flex; align-items: center; gap: 8px; padding: 6px 14px 4px; }
@@ -1362,7 +1361,7 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
   .bt-dock { max-height: 40vh; }
   .bt-dk-h, .bt-dk-b { padding-left: 10px; padding-right: 10px; }
   .bt-jw-f { grid-template-columns: minmax(0, 1fr); }
-  .bt-tag { font-size: 11px; }
+  .bt-tag { font-size: var(--t-tag); }
 }
 
 /* Backtest M (31.10.2026): funkcjonalny i dopracowany design replayu. Słowa użytkownika: «do pakietu M skup sie na funkcjonalnym designie ulatwiajacym korzyustanie
@@ -1383,6 +1382,8 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-ac b { font-size: var(--t-base); font-weight: 650; }
 .bt-ac[data-ac="eq"] b, .bt-ac[data-ac="open"] b { font-size: var(--t-md); font-weight: 700; }
 .bt-ac-x { font-size: var(--t-sm); color: var(--fg-2); }
+/* runda 3 (przegląd wyglądu R2-P3-2): dopisek podglądu przeszłości w kolorze ostrzeżenia, 12 px, własny wiersz */
+.bt-ac-past { display: block; font-size: 12px; font-weight: 600; color: var(--warn); }
 .bt-ac-x.pos { color: var(--profit); } .bt-ac-x.neg { color: var(--loss); }
 .bt-res { font-size: var(--t-sm); white-space: nowrap; }
 .bt-notion[data-n="0"] { color: var(--fg-2); }
@@ -1416,7 +1417,6 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 /* etykiety na wykresie: przy lewej krawędzi, SL/TP pozycji tylko do odczytu; stany najechania i fokusu */
 .bt-tag { box-shadow: var(--pill-shadow); transition: box-shadow .15s var(--ease), border-color .15s var(--ease); }
 .bt-tag-lv { pointer-events: none; padding-right: 8px; }
-.bt-tag-m { left: 0; right: auto; box-shadow: var(--pop-shadow); }
 @media (hover: hover) { .bt-tag-o.drag:hover { box-shadow: 0 0 0 1px var(--fg-2), var(--pill-shadow); } }
 
 /* sterowanie czasem: skok jako przycisk (powtarza wybrany) z menu skoków */
@@ -1543,8 +1543,9 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
   .bt-ord-side { flex-wrap: wrap; }
   .bt-ord-side .bt-draw { flex: 1 1 100%; margin-left: 0; height: 34px; }
   /* #15: szuflada przy 375: tylko kolumny potrzebne do decyzji, akcje przy danych */
-  .bt-dk-pos th:nth-child(n+3):nth-child(-n+6), .bt-dk-pos td:nth-child(n+3):nth-child(-n+6),
-  .bt-dk-pos th:nth-child(n+10):nth-child(-n+12), .bt-dk-pos td:nth-child(n+10):nth-child(-n+12) { display: none; }
+  /* 1.7-1: SL i TP zostają widoczne (edycja z szuflady także na telefonie); dochodzi kolumna Ryzyko (11), więc MAE/MFE i czas to 12 i 13 */
+  .bt-dk-pos th:nth-child(n+3):nth-child(-n+4), .bt-dk-pos td:nth-child(n+3):nth-child(-n+4),
+  .bt-dk-pos th:nth-child(n+10):nth-child(-n+13), .bt-dk-pos td:nth-child(n+10):nth-child(-n+13) { display: none; }
   .bt-dk-ord th:nth-child(3), .bt-dk-ord td:nth-child(3), .bt-dk-ord th:nth-child(4), .bt-dk-ord td:nth-child(4),
   .bt-dk-ord th:nth-child(6), .bt-dk-ord td:nth-child(6), .bt-dk-ord th:nth-child(7), .bt-dk-ord td:nth-child(7) { display: none; }
   .bt-dk-hist th:nth-child(1), .bt-dk-hist td:nth-child(1), .bt-dk-hist th:nth-child(n+4):nth-child(-n+6), .bt-dk-hist td:nth-child(n+4):nth-child(-n+6),
@@ -1835,9 +1836,9 @@ html.sv-open .tabbar { visibility: hidden; }
 .bt-ord-note[data-state="small"]::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
 @media (max-width: 640px) {
   /* P1-N1: krótka plakietka przy prawej krawędzi pola świec, półprzezroczysta, bez ucinania */
-  .bt-tag { max-width: none; padding-left: 6px; background: color-mix(in srgb, var(--popover) 72%, transparent); box-shadow: none; }
+  /* pełne tło także na telefonie: plakietki stoją w marginesie, a linia nie może przechodzić przez tekst */
+  .bt-tag { max-width: none; padding-left: 6px; background: var(--popover); box-shadow: none; }
   .bt-tag-lv { padding-right: 6px; }
-  .bt-tag-m { left: auto; right: 0; }
 }
 /* stan ładowania przycisku (kreator pierwszych kroków, Źródła danych): spinner .spin z .busy; czytelniejszy niż zwykły disabled */
 .btn.busy:disabled { opacity: .8; cursor: progress; }
@@ -1970,3 +1971,338 @@ html.sv-open .tabbar { visibility: hidden; }
 .lb-actions .lb-link { margin-top: 0; }
 /* stała szerokość „Usuń” / „Usuwanie…”: zmiana napisu w stanie „w trakcie” nie przesuwa kolumny akcji (przy 375 px przyklejonej) */
 .bt-dk-del { min-width: 13ch; }
+
+/* ---------- 1.7-1: pozycja na wykresie (linie, plakietki po prawej, przyciski +SL/+TP/BE/×, zamknięcie części, edycja w szufladzie) ---------- */
+/* [U] 1.11.2026 «… będą one po prawej, a nie po lewej.»: plakietki stoją przy osi ceny, w marginesie za ostatnią świecą (rightOffset liczy bt-wykres.js z ich szerokości) */
+.bt-tl-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.bt-tag-act[hidden], .bt-tag-note[hidden], .bt-tag-warn[hidden], .bt-tag[hidden] { display: none; }
+.bt-tag-pos { cursor: default; }
+.bt-tag-pos:focus-visible, .bt-tag-o.drag:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+/* status „bez SL”: tekst w kolorze uwagi z kropką, bez podkładki */
+.bt-tag-warn { color: var(--warn); font-weight: 600; padding-right: 6px; }
+.bt-tag-warn::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.bt-tag-act { position: absolute; top: calc(100% + 2px); right: 0; z-index: 3; display: flex; gap: 4px; padding-top: 2px; }
+.bt-tag-b { height: 24px; min-width: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--popover); color: var(--fg); font: inherit; font-size: var(--t-xs); line-height: 1; cursor: pointer; box-shadow: var(--pill-shadow); }
+.bt-tag-b:hover:not(:disabled) { border-color: var(--fg-2); }
+.bt-tag-b:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.bt-tag-b:disabled { opacity: .55; cursor: not-allowed; }
+/* notatka przy odczycie przeciągania: tekst z kropką, tło bez zaokrąglenia i bez obramowania (zasada: statusy jako tekst z kropką, bez zaokrąglonych podkładek) */
+.bt-tag-o .bt-tag-note { position: absolute; top: calc(100% + 2px); right: 0; padding: 1px 6px 1px 4px; border-radius: 0; background: var(--popover); color: var(--fg-2); font-size: var(--t-xs); white-space: nowrap; pointer-events: none; }
+.bt-tag-o .bt-tag-note::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.bt-tag-o .bt-tag-note:empty::before { display: none; }
+.bt-tag-o.bad { border-color: var(--loss); } .bt-tag-o.bad .bt-tag-note { color: var(--loss); }
+.bt-tag-o.sl.be { border-color: var(--be); }
+/* kreska łącząca plakietkę z jej linią przy kolizji poziomów ([U] 2.11.2026 «Sama cena (Recommended)») */
+.bt-lead { position: absolute; width: 2px; pointer-events: none; background: var(--fg-2); opacity: .8; }
+.bt-lead.sl { background: var(--loss); } .bt-lead.tp { background: var(--profit); } .bt-lead.sl.be { background: var(--be); } .bt-lead.hand { opacity: .5; }
+.bt-tag-o.hand { opacity: .8; border-style: dotted; pointer-events: none; }
+.bt-tag.flash { box-shadow: 0 0 0 2px var(--fg-2); }
+.bt-tag[data-edge="up"] .bt-tag-t::before { content: "↑ "; } .bt-tag[data-edge="down"] .bt-tag-t::before { content: "↓ "; }
+.bt-tag[data-edge] { cursor: pointer; }
+.bt-grab, .bt-grab * { cursor: ns-resize !important; }
+/* okno „Zamknij część”: pod plakietką wejścia, w marginesie i nad wykresem */
+.bt-part { position: absolute; z-index: 5; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; width: min(300px, calc(100% - 16px)); padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--popover); color: var(--fg); box-shadow: var(--pop-shadow); font-size: var(--t-xs); }
+.bt-part-h { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.bt-part-pcts { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.bt-part-pcts .btn { height: auto; min-height: 28px; padding: 4px 8px; white-space: normal; text-align: left; justify-content: flex-start; line-height: 1.25; border: 1px solid var(--line); }
+.bt-part-n { display: flex; align-items: center; gap: 8px; }
+.bt-part-n .sp-in { width: 72px; }
+.bt-part input[aria-invalid="true"] { border-color: var(--loss); }
+.bt-part-prev { margin: 0; color: var(--fg-2); }
+.bt-part-go { align-self: flex-end; background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+.bt-part-go:disabled { opacity: .5; }
+/* szuflada: komórki SL/TP jako przyciski, pole ceny w komórce, błąd pod polem (tekst z kropką, bez podkładki) */
+.bt-dk-lv { padding: 2px 4px; border: 0; background: none; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; min-height: 24px; }
+.bt-dk-lv:hover { text-decoration-style: solid; }
+.bt-dk-lv:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.bt-dk-in { width: 10ch; height: 26px; text-align: right; }
+.bt-dk-in[aria-invalid="true"] { border-color: var(--loss); }
+.bt-dk-err { display: block; margin-top: 2px; color: var(--loss); font-size: var(--t-xs); white-space: normal; max-width: 22ch; text-align: right; }
+.bt-dk-err::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.bt-dk-err[hidden] { display: none; }
+.bt-dk-t td.bt-dk-risk.warn { color: var(--warn); }
+@media (max-width: 640px) {
+  /* cele dotyku ≥ 44 px: przyciski pod plakietką wejścia, × na SL i TP (przezroczyste pole 44 px nad plakietką 22 px), przyciski okna części i pole ilości (16 px: bez powiększania w iOS) */
+  /* rząd przycisków jako kolumna 44 px pod plakietką wejścia: nie szerszy od plakietki, nie wchodzi nad świece */
+  .bt-tag-act { gap: 2px; flex-direction: column; align-items: flex-end; }
+  .bt-tag-act .bt-tag-b { min-width: 44px; height: 44px; }
+  .bt-tag .icon-btn.bt-tag-x { width: 44px; min-width: 44px; height: 44px; margin: -11px -12px -11px -4px; }
+  .bt-part { padding: 10px; font-size: var(--t-sm, 13px); }
+  .bt-part-pcts { grid-template-columns: 1fr 1fr; }
+  .bt-part .btn, .bt-part .seg button { min-height: 44px; }
+  .bt-part-n .sp-in { height: 44px; width: 96px; font-size: 16px; }
+  /* okno części mieści się w niskim polu wykresu: nagłówek z ilością ukryty, pole ilości i „Zamknij n” w jednym wierszu */
+  .bt-part { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; max-height: calc(100% - 8px); overflow: auto; }
+  .bt-part-h .note { display: none; }
+  .bt-part-h, .bt-part-base, .bt-part-pcts, .bt-part-prev { grid-column: 1 / -1; }
+  .bt-part-n { grid-column: 1; grid-row: 4; }
+  .bt-part-go { grid-column: 2; grid-row: 4; align-self: center; }
+  .bt-part-prev { grid-row: 5; }
+  .bt-dk-lv { min-height: 44px; min-width: 44px; }
+  .bt-dk-in { height: 44px; width: 11ch; font-size: 16px; }
+}
+/* plakietka wejścia z otwartym rzędem przycisków leży nad pozostałymi (własny kontekst warstw przez transform, więc sam z-index kolumny w środku nie wystarcza); plakietki pod kolumną chowają się */
+.bt-tag[data-open="true"] { z-index: 6; }
+.bt-part { z-index: 7; }
+.bt-tag.bt-under { visibility: hidden; }
+@media (max-width: 640px) {
+  .bt-tag-act[data-dir$="up"] { top: auto; bottom: calc(100% + 2px); padding-top: 0; padding-bottom: 2px; }
+  .bt-tag-act[data-dir^="grid"] { display: grid; grid-template-columns: 44px 44px; justify-content: end; }
+  /* odczyt przeciągania i linii „w ręku” w dwóch wierszach, żeby mieścił się w marginesie za ostatnią świecą */
+  .bt-tag.dragging, .bt-tag.hand { height: auto; min-height: 24px; padding-top: 2px; padding-bottom: 2px; }
+  .bt-tag.dragging .bt-tag-t, .bt-tag.hand .bt-tag-t { white-space: pre; line-height: 1.25; }
+}
+/* szybki panel journala po trade'zie: pasek (jeden wiersz) przy < 640 px, szeroko bez paska */
+.bt-jr-bar { display: none; }
+@media (max-width: 640px) {
+  .bt-jr[data-compact="collapsed"] > :not(.bt-jr-bar) { display: none; }
+  .bt-jr[data-compact="collapsed"] { top: auto; bottom: 8px; padding: 4px 6px 4px 10px; }
+  .bt-jr[data-compact="collapsed"] .bt-jr-bar { display: flex; align-items: center; gap: 6px; }
+  .bt-jr[data-compact="expanded"] .bt-jr-bar { display: none; }
+  .bt-jr-bt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .bt-jr-bar .btn { min-height: 44px; min-width: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .bt-tag.flash { transition: none; } }
+
+/* ===== 1.7-2 Dokładanie i odwracanie (P3 «Dokładanie + odwracanie») ===== */
+/* podpis trybu pod ceną na Kup/Sprzedaj przy otwartej pozycji: Dołóż / Zmniejsz / Zamknij / Odwróć; przyciski rosną do podpisu, bez łamania */
+.bt-ord-mode { font-size: 12px; font-weight: 500; line-height: 1.15; white-space: nowrap; opacity: .92; }
+.bt-ord-mode:empty { display: none; }
+.bt-ord .bt-buy[data-mode="add"], .bt-ord .bt-sell[data-mode="add"], .bt-ord .bt-buy[data-mode="reduce"], .bt-ord .bt-sell[data-mode="reduce"], .bt-ord .bt-buy[data-mode="close"], .bt-ord .bt-sell[data-mode="close"], .bt-ord .bt-buy[data-mode="reverse"], .bt-ord .bt-sell[data-mode="reverse"] { contain: none; height: auto; min-height: 34px; width: auto; min-width: 128px; padding-top: 3px; padding-bottom: 4px; }
+/* „Odwróć” w oknie części (pod przyciskami części) */
+.bt-part-rev { align-self: stretch; justify-content: flex-start; margin-top: 4px; border: 1px solid var(--line); background: transparent; color: var(--fg); text-align: left; white-space: normal; line-height: 1.25; height: auto; min-height: 28px; }
+.bt-part-rev:disabled { opacity: .5; }
+/* szuflada: rozwinięcie porcji i wyjść pozycji, odnośnik odwrócenia w Historii */
+.bt-dk-x { width: 20px; min-width: 20px; height: 20px; margin: 0 4px 0 -2px; vertical-align: middle; color: var(--fg-2); }
+.bt-dk-x::after { content: ""; display: block; width: 6px; height: 6px; margin: 0 auto; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateX(-1px) rotate(-45deg); transition: transform .15s var(--ease); }
+.bt-dk-x[aria-expanded="true"]::after { transform: translateY(-1px) rotate(45deg); }
+.bt-dk-det td { padding: 2px 10px 8px 24px; white-space: normal; border-top: 0; }
+.bt-dk-dl { display: flex; flex-wrap: wrap; gap: 4px 40px; }
+.bt-dk-dl ul { margin: 2px 0 0; padding: 0; list-style: none; }
+.bt-dk-dl li { display: flex; gap: 8px; align-items: baseline; white-space: nowrap; }
+.bt-dk-rev { white-space: nowrap; }
+@media (max-width: 640px) {
+  .bt-ord-mode { white-space: normal; text-align: center; }
+  .bt-part .bt-part-rev { grid-column: 2; grid-row: 5; align-self: center; min-height: 30px; height: 30px; padding-top: 0; padding-bottom: 0; }
+  .bt-part-prev { grid-column: 1; grid-row: 5; }
+  .bt-rv-l { display: none; }
+  .bt-dk-x { width: 44px; min-width: 44px; height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .bt-dk-x::after { transition: none; } }
+/* Journal: tabela wejść i wyjść trade'a z kilkoma porcjami */
+.bt-jw-pt:empty { display: none; }
+.bt-jw-ptt { width: 100%; margin: 6px 0 2px; font-size: var(--t-sm); font-variant-numeric: tabular-nums; border-collapse: collapse; }
+.bt-jw-ptt th { padding: 3px 10px 3px 0; text-align: left; font-size: var(--t-xs); font-weight: 500; letter-spacing: .13em; text-transform: uppercase; color: var(--fg-2); }
+.bt-jw-ptt td { padding: 3px 10px 3px 0; white-space: nowrap; }
+.bt-jw-ptt .num { text-align: right; }
+.bt-jw-ptt td.pos { color: var(--profit); } .bt-jw-ptt td.neg { color: var(--loss); }
+@media (max-width: 640px) { .bt-jw-pt { overflow-x: auto; } }
+
+/* ---- 1.7-3: auto BE i presety zleceń ---- */
+/* chipy presetów pod Kup/Sprzedaj: przyciski (nie statyczny tekst), aktywny z obrysem --fg */
+.bt-ord-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; }
+.bt-ord-pchips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.bt-psave-open { flex: none; }
+.bt-ord-pchips button { height: 24px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--fg-2); font: inherit; font-size: var(--t-xs); line-height: 1; cursor: pointer; max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-ord-pchips button[aria-pressed="true"] { border-color: var(--fg); color: var(--fg); }
+.bt-ord-pchips button:hover { border-color: var(--fg-2); }
+.bt-ord-pchips button:focus-visible, .bt-psave-open:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.bt-psave-open { height: 24px; font-size: var(--t-xs); }
+.bt-psave { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 8px; }
+.bt-psave[hidden], .bt-psave-open[hidden] { display: none; }
+.bt-psave .sp-in { width: 150px; height: 28px; }
+.bt-psave-err { margin: 0; color: var(--loss); }
+.bt-psave-err:empty { display: none; }
+.bt-ord-pnote { flex: 1 0 100%; margin: 0; font-size: var(--t-xs); color: var(--fg-2); }
+.bt-ord-pnote[data-state="dirty"] { color: var(--be); }
+/* auto BE w bilecie i na pozycji */
+.bt-ord-abe { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 10px; }
+.bt-ord-abe .check { height: 28px; }
+.bt-abe-unit button { min-width: 34px; }
+.bt-abe-unit button:disabled { opacity: .45; cursor: not-allowed; }
+.bt-ord-pabe { gap: 6px 10px; align-items: center; padding-top: 6px; }
+.bt-ord-pabe-t { font-size: var(--t-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.bt-ord-pabe-f { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 10px; flex-basis: 100%; }
+.bt-ord-pabe-f[hidden], .bt-ord-pabe [hidden] { display: none; }
+.bt-ord-pabe-f button:disabled { opacity: .45; cursor: not-allowed; }
+/* plakietka progu BE na wykresie: kreskowana w kolorze BE (jak SL i TP) */
+.bt-tag-o.abe { border-style: dashed; border-color: var(--be); padding-right: 8px; }
+.bt-tag-o.abe .bt-tag-t { color: var(--be); }
+.bt-lead.abe { background: var(--be); }
+/* runda 2 (1.7-5): własne znaczniki ceny na osi dla poziomów leżących bliżej siebie niż 16 px (natywne są wtedy ukryte), rozsunięte jak plakietki */
+.bt-axt { position: absolute; right: 0; transform: translateY(-50%); height: 16px; box-sizing: border-box; padding: 0 0 0 6px; border-radius: 2px; color: var(--primary-fg); font-family: inherit; font-weight: 600; font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; pointer-events: none; }
+.bt-axt.tp { background: var(--profit); } .bt-axt.sl { background: var(--loss); } .bt-axt.be { background: var(--be); }
+.bt-tag-o.abe.bad { border-color: var(--loss); }
+/* szuflada: kolumna „Auto BE” od 1280 px */
+.bt-dk-abec { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bt-dk-abex { width: 24px; height: 24px; min-width: 24px; vertical-align: middle; }
+.bt-dk-abex[hidden] { display: none; }
+@media (max-width: 1279px) { .bt-dk-abec { display: none; } }
+/* Ustawienia → Presety zleceń */
+.bt-pl { display: flex; flex-direction: column; gap: 4px; }
+.bt-pr { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.bt-pr[draggable="true"] { cursor: grab; }
+.bt-pr-n { font-weight: 600; min-width: 7em; }
+.bt-pr-s { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-ped { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+.bt-ped .bt-sa .bt-row { flex: 0 1 320px; }
+.bt-ped .sp-sel { flex: 0 0 11em; min-width: 11em; }
+.bt-perr { margin: -4px 0 0; color: var(--loss); font-size: var(--t-xs); }
+.bt-ped [aria-invalid="true"] { border-color: var(--loss); }
+.bt-peo { margin-top: 8px; }
+.bt-peo .sp-in { width: 80px; }
+@media (max-width: 640px) {
+  .bt-ord-l { min-width: 0; max-width: 100%; }
+  /* R2-P2-4 (runda 3): chipy presetów zawijają się do kilku wierszy na całą szerokość panelu (wcześniej siedziały w pasku szerokości jednego chipa obok notki), notka i „Zapisz” pod nimi */
+  .bt-ord-presets { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  .bt-ord-pchips { flex: 1 1 100%; flex-wrap: wrap; }
+  .bt-psave { flex: 1 1 100%; }
+  .bt-ord-pchips button { flex: none; }
+  .bt-ord-abe { gap: 6px; }
+  .bt-psave .sp-in { width: 120px; }
+  .bt-pr { flex-wrap: wrap; }
+  .bt-pr-s { flex: 1 0 100%; white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) { .bt-ord-pchips button { transition: none !important; } }
+
+/* 1.7-3: na telefonie presety i wiersz auto BE pozycji siedzą w zwiniętym "Więcej" (panel zleceń zostaje niski, wykres ma miejsce) */
+@media (max-width: 640px) {
+  .bt-ord[data-more="false"] .bt-ord-presets, .bt-ord[data-more="false"] .bt-ord-pabe { display: none; }
+}
+
+/* ---- 1.7-3, runda 2 (przegląd wizualny) ---- */
+/* chipy presetów: 11 px, aktywny wypełniony (jak aktywny segment), najechanie tylko rozjaśnia tło i tekst */
+.bt-ord-pchips button { height: 26px; padding: 0 12px; font-size: var(--t-tag); }
+.bt-ord-pchips button[aria-pressed="true"] { background: var(--fg); border-color: var(--fg); color: var(--on-fg); font-weight: 600; }
+.bt-ord-pchips button:not([aria-pressed="true"]):hover { background: var(--line); border-color: var(--line); color: var(--fg); }
+.bt-psave-open { height: 26px; font-size: var(--t-tag); }
+/* notka „z presetu …” w rzędzie chipów */
+.bt-ord-presets .bt-ord-pnote { flex: 1 1 auto; min-width: 0; margin: 0 0 0 4px; font-size: var(--t-tag); }
+@media (max-width: 640px) { .bt-ord-presets .bt-ord-pnote { flex: 1 1 100%; margin: 0; } }
+/* +BE (dodaje próg auto) różni się od BE (SL na BE teraz): kreskowana ramka i kolor BE oraz odstęp */
+.bt-tag-b[data-tl="abe+"] { border-style: dashed; border-color: var(--be); color: var(--be); margin-right: 6px; }
+/* odczyt i notka przeciąganego progu po stronie dalszej od wejścia */
+.bt-tag-o.note-up .bt-tag-note { top: auto; bottom: calc(100% + 2px); }
+/* edytor presetu w Ustawieniach: wspólne kolumny (podpis, pole 1, pole 2), podpisy pól Auto BE */
+.bt-ped .bt-sa { display: grid; grid-template-columns: 7em max-content; justify-content: start; column-gap: 12px; align-items: center; }
+.bt-ped .bt-sa .bt-row { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; gap: 8px; align-items: center; flex: none; }
+.bt-ped .bt-sa .sp-in { width: 7em; flex: none; }
+.bt-ped .bt-sa .sp-sel { width: 11em; min-width: 11em; flex: none; }
+.bt-ped .bt-sa > .sp-in[data-btp="name"] { width: calc(18em + 8px); }
+.bt-ped-f { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+@media (max-width: 640px) { .bt-ord-pos { flex-wrap: wrap; } }
+
+/* 1.7-4: prawy klik i nawigacja. Menu zleceń z wykresu (.bt-cm), wybór kroku (.bt-step-l), okna skoku do daty i ceny (.bt-dlg), status szukania ceny (.bt-find). Kolory tylko z tokenów. */
+.bt-cm-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.bt-cm { position: fixed; z-index: 60; display: flex; flex-direction: column; min-width: 260px; max-width: 360px; padding: 4px; background: var(--popover); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--pop-shadow); animation: bt-pop .14s var(--ease); }
+.bt-cm-i { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; font-size: var(--t-sm); text-align: left; cursor: pointer; transition: background-color .12s var(--ease); }
+/* runda 2 (przegląd wyglądu P2-1, P2-2): tekst jak pola biletu (12,5 px), opis 11 px; słowo kierunku w kolorze kierunku (zysk/strata), reszta etykiety bez zmian */
+.bt-cm-l { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.bt-cm-d { color: var(--fg-2); font-size: 11px; }
+.bt-cm-v[data-side="buy"] { color: var(--profit); }
+.bt-cm-v[data-side="sell"] { color: var(--loss); }
+.bt-cm-i:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+@media (hover: hover) { .bt-cm-i:not([aria-disabled="true"]):hover { background: rgb(var(--fg-rgb) / .08); } }
+.bt-cm-i:not([aria-disabled="true"]):active { background: rgb(var(--fg-rgb) / .12); }
+.bt-cm-i[aria-disabled="true"] { cursor: not-allowed; }
+.bt-cm-i[aria-disabled="true"] .bt-cm-l { color: var(--fg-2); }
+.bt-cm-i[aria-disabled="true"] .bt-cm-d { color: var(--warn); }
+.bt-stepw { position: relative; display: inline-flex; align-items: center; }
+.bt-step-b { gap: 4px; }
+.bt-step-k { color: var(--fg-2); }
+/* runda 2 (P3-2): zmiana kroku nie przesuwa reszty paska */
+.bt-step-n { display: inline-block; min-width: 5em; text-align: left; }
+.bt-step-b[aria-expanded="true"] svg { transform: rotate(180deg); }
+.bt-step-l { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 40; display: flex; flex-direction: column; min-width: 190px; padding: 4px; background: var(--popover); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--pop-shadow); animation: bt-pop .14s var(--ease); }
+.bt-step-l[hidden] { display: none; }
+.bt-step-l > button { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; font-size: var(--t-sm); text-align: left; cursor: pointer; transition: background-color .12s var(--ease); }
+.bt-step-l > button[aria-pressed="true"] { font-weight: 650; }
+.bt-step-l > button:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+@media (hover: hover) { .bt-step-l > button:hover { background: rgb(var(--fg-rgb) / .08); } }
+.bt-step-add { display: flex; gap: 6px; padding: 6px 6px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
+.bt-step-add .sp-in { flex: 1; min-width: 0; height: 28px; }
+.bt-step-msg { margin: 0; padding: 2px 8px 4px; font-size: var(--t-xs); }
+.bt-step-msg:empty { display: none; }
+/* runda 2 (przegląd wyglądu P2-6): status szukania i komunikaty skoku czytelne (kolor tekstu, 12 px), nie szare 10,5 px */
+.bt-find { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); font-size: 12px; }
+.bt-msg { color: var(--fg); font-size: 12px; }
+.bt-find[hidden], .bt-find [hidden] { display: none; }
+.bt-dlg { position: absolute; left: 14px; bottom: 56px; z-index: 45; display: flex; flex-direction: column; gap: 8px; width: 320px; max-width: calc(100% - 28px); padding: 12px; background: var(--popover); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--pop-shadow); animation: bt-pop .14s var(--ease); }
+.bt-dlg[hidden] { display: none; }
+.bt-dlg-t { margin: 0; font-weight: 650; font-size: 12.5px; }
+.bt-gp-dir { margin: 0; font-size: 11px; color: var(--fg-2); }
+.bt-gp-dir:empty { display: none; }
+.bt-gp-i { color: var(--fg-2); font-weight: 500; }
+.bt-dlg-f { display: flex; flex-direction: column; gap: 8px; }
+.bt-dlg-f .bt-f { display: flex; flex-direction: column; gap: 3px; }
+.bt-dlg-f .bt-gp-d { flex-direction: row; align-items: center; gap: 6px; font-size: var(--t-sm); }
+.bt-dlg-f .bt-gp-d .sp-in { width: 5em; flex: none; }
+.bt-dlg-err { margin: 0; color: var(--loss); font-size: var(--t-xs); }
+.bt-dlg-err:empty { display: none; }
+.bt-dlg-a { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 640px) {
+  .bt-cm { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: 100%; max-width: none; min-width: 0; padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); border-radius: 12px 12px 0 0; }
+  .bt-cm-i { padding: 12px 12px; min-height: 44px; }
+  .bt-step-l { min-width: 0; width: calc(100vw - 20px); max-width: 320px; }
+  .bt-stepw { display: none; }
+  .bt-step-l { left: 10px; }
+  .bt-dlg { left: 8px; right: 8px; width: auto; max-width: none; bottom: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .bt-cm, .bt-step-l, .bt-dlg { animation: none !important; } .bt-cm-i, .bt-step-l > button { transition: none !important; } }
+/* ===== 1.7-5 Kilka TP z procentem wielkości (drabinka) ===== */
+/* bilet: lista TP (wiersz: cena, procent poza ostatnim, „reszta”, ×), przycisk + TP */
+.bt-ord-tps { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; min-width: 0; }
+.bt-ord-tp { display: flex; align-items: flex-end; gap: 6px; }
+.bt-ord-tp[hidden], .bt-ord-tp .bt-tp-pct[hidden], .bt-tp-rest[hidden], .bt-tp-add[hidden] { display: none; }
+.bt-ord-tp .bt-tp-pct .sp-in { width: 56px; }
+.bt-ord-tp .sp-in[aria-invalid="true"] { border-color: var(--loss); }
+.bt-tp-rest { align-self: flex-end; display: flex; align-items: center; height: 28px; }
+.bt-tp-rm { align-self: center; width: 24px; height: 24px; min-width: 24px; font-size: 14px; line-height: 1; }
+.bt-tp-add { align-self: flex-end; height: 28px; }
+.bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="tp2"], .bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="tp3"], .bt-ord[data-unit="px"] .bt-ord-f .sp-in[name="tp4"] { width: 118px; }
+/* plakietka poziomu drabiny: klikalny procent, ilość 0 w kolorze ostrzeżenia */
+.bt-pct-v { text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.bt-pct-v:hover { text-decoration-style: solid; }
+.bt-tag-o.tp.warn { border-color: var(--warn); } .bt-tag-o.tp.warn .bt-tag-t { color: var(--warn); }
+/* edytor procentu (25 · 33 · 50 · 75 · [__] %) obok plakietki poziomu */
+.bt-pct { position: absolute; z-index: 8; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; width: 232px; max-width: calc(100% - 16px); padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--popover); color: var(--fg); box-shadow: var(--pop-shadow); font-size: var(--t-xs); }
+.bt-pct[hidden] { display: none; }
+.bt-pct-h { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.bt-pct-q { display: flex; gap: 4px; }
+.bt-pct-q .btn { min-width: 40px; border: 1px solid var(--line); }
+.bt-pct-n { display: flex; align-items: center; gap: 6px; margin: 0; }
+.bt-pct-n .sp-in { width: 64px; height: 28px; }
+.bt-pct input[aria-invalid="true"] { border-color: var(--loss); }
+.bt-pct-rest, .bt-pct-err { margin: 0; }
+.bt-pct-err:not(:empty) { color: var(--loss); }
+.bt-pct-err:not(:empty)::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.bt-pct [data-tl="pcts"] { align-self: flex-end; background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+/* szuflada: edytor listy TP w komórce */
+.bt-dk-tpe { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.bt-dk-tpe .bt-dk-in { width: 14ch; }
+.bt-dk-tpe .bt-dk-pct { width: 5ch; }
+.bt-dk-tpr { display: flex; align-items: center; gap: 4px; }
+.bt-dk-pct { width: 5ch; }
+.bt-dk-tpe .bt-dk-err { max-width: 28ch; }
+/* Journal: tabela poziomów drabiny */
+.bt-jw-lv:empty { display: none; }
+@media (max-width: 640px) {
+  .bt-ord-tps { flex: 1 1 100%; }
+  .bt-ord-tp .bt-tp-pct .sp-in { width: 64px; font-size: 16px; }
+  .bt-pct-n .sp-in { font-size: 16px; }
+}
+
+/* skrót strefy czasu przy godzinach (NY, UTC+1): mały, przygaszony, bez tła (3.11.2026, strefa.js) */
+.nws-tz { margin: 0 0 4px; color: var(--fg-2); font-size: var(--t-sm); }
+.tz-tag { color: var(--fg-2); font-size: max(11px, .85em); font-weight: 600; letter-spacing: .02em; white-space: nowrap; }
+.lbl .tz-tag { margin-left: 2px; }
+
+/* lista wpisów do poprawy strefy (Ustawienia → Kopie i diagnostyka): przewijana, nagłówek przyklejony */
+.sv-tz-list { max-height: 360px; overflow: auto; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; }
+.sv-tz-list table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+.sv-tz-list th, .sv-tz-list td { padding: 5px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.sv-tz-list thead th { position: sticky; top: 0; background: var(--popover); z-index: 1; }
+.sv-tz-list td.nw { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sv-tz-list .sp-sel { min-width: 11em; }
+.sv-tz-bulk { align-items: center; flex-wrap: wrap; gap: 6px; }
+.sv-tz-cnt { margin: 6px 0 !important; font-weight: 600; }

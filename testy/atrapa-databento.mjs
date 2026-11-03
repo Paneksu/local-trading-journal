@@ -52,6 +52,8 @@ function csv(form) {
 }
 
 http.createServer(async (req, res) => {
+  // znacznik własnego procesu: pomocniki testów odróżniają go od cudzego serwera na tym samym porcie
+  if (process.env.THQ_TEST_NONCE) res.setHeader('X-Test-Nonce', process.env.THQ_TEST_NONCE);
   const p = new URL(req.url, 'http://x').pathname;
   if (p === '/__test/log') return send(res, 200, { log, violations });
   if (p === '/__test/config') { const c = JSON.parse((await readBody(req)) || '{}'); if ('failRangeAfter' in c) { rangeOk = 0; rangeFailed = 0; } Object.assign(cfg, c); return send(res, 200, cfg); }

@@ -5,9 +5,11 @@ import { t as tr } from './i18n.js';
 import { overlay, trapTab, toast, guide } from './modal.js';
 import { bindShots, buttonHtml, statusHtml } from './shots.js';
 import { contractProblem } from './kontrakty.js';
+import { appTz, tzShort } from './strefa.js';
+import { todayKey } from './format.js';
 
 const ICON_CLOSE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
-const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; } catch { return 'Europe/Warsaw'; } })();
+// 3.11.2026: godziny wpisujesz w strefie aplikacji (domyślnie Nowy Jork, strefa.js), nie w strefie przeglądarki
 
 const parseNum = (s) => {
   const t = String(s ?? '').trim().replace(/\s/g, '').replace('−', '-').replace(',', '.');
@@ -26,10 +28,8 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
   const optsOf = (prop) => Object.keys(model().colors?.trades?.[prop] || {});
   const hasField = (prop) => !!model().fields?.trades?.[prop];
 
-  function todayLocal() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }
+  // dzisiejsza data na zegarze strefy aplikacji (wieczorem w Polsce w Nowym Jorku jest jeszcze ten sam dzień)
+  const todayLocal = () => todayKey();
 
   function initial(t) {
     if (!t) {
@@ -55,7 +55,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
 
   const fld = (id, label, inner, { hint = '', cls = '', labelFor = true } = {}) => `<div class="fld ${cls}" data-f="${id}">
       ${labelFor ? `<label class="lbl" for="f-${id}">${label}</label>` : `<span class="lbl" id="l-${id}">${label}</span>`}${inner}
-      <p class="ferr" id="e-${id}" hidden></p>${hint ? `<p class="fhint">${hint}</p>` : ''}</div>`;
+      <p class="ferr" id="e-${id}" hidden></p>${hint ? `<p class="fhint" id="h-${id}">${hint}</p>` : ''}</div>`;
 
   const select = (id, prop, val) => {
     const o = optsOf(prop);
@@ -73,6 +73,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
     const exitOk = hasField('exit');
     const title = trade ? tr('Edytuj trade') : tr('Dodaj trade');
     const L = (s) => esc(tr(s));
+    const tzTag = () => `<span class="tz-tag" title="${esc(tr('Strefa czasu z Ustawień'))}">${esc(tzShort())}</span>`;
     return `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="f-title" id="trade-form">
       <div class="mh"><h2 id="f-title">${esc(title)}</h2><button type="button" class="icon-btn" data-f-act="close" aria-label="${L('Zamknij formularz')}">${ICON_CLOSE}</button></div>
       <form class="mb" id="f-form" novalidate autocomplete="off">
@@ -80,10 +81,10 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
         <div class="fgrid">
           ${fld('typ', L('Typ'), seg('typ', typItems, v.typ), { cls: 'span4', labelFor: false })}
           ${fld('date', L('Data wejścia'), `<input id="f-date" name="date" type="text" data-wd="date" value="${esc(v.date)}" required aria-describedby="e-date">`, { cls: 'span1' })}
-          ${fld('time', L('Godzina wejścia'), `<input id="f-time" name="time" type="text" data-wd="time" data-wd-pusty value="${esc(v.time)}" aria-describedby="e-time">`, { cls: 'span1', hint: L('Puste, jeśli nie znasz godziny.') })}
+          ${fld('time', `${L('Godzina wejścia')} ${tzTag()}`, `<input id="f-time" name="time" type="text" data-wd="time" data-wd-pusty value="${esc(v.time)}" aria-describedby="e-time">`, { cls: 'span1', hint: L('Puste, jeśli nie znasz godziny.') })}
           ${exitOk
             ? `${fld('exitDate', L('Data wyjścia'), `<input id="f-exitDate" name="exitDate" type="text" data-wd="date" data-wd-pusty value="${esc(v.exitDate)}" aria-describedby="e-exitDate">`, { cls: 'span1', hint: L('Puste = ta sama data.') })}
-               ${fld('exitTime', L('Godzina wyjścia'), `<input id="f-exitTime" name="exitTime" type="text" data-wd="time" data-wd-pusty value="${esc(v.exitTime)}" aria-describedby="e-exitTime">`, { cls: 'span1', hint: L('Daje czas trwania trade\'a.') })}`
+               ${fld('exitTime', `${L('Godzina wyjścia')} ${tzTag()}`, `<input id="f-exitTime" name="exitTime" type="text" data-wd="time" data-wd-pusty value="${esc(v.exitTime)}" aria-describedby="e-exitTime">`, { cls: 'span1', hint: L('Daje czas trwania trade\'a.') })}`
             : `<div class="fld span2"><span class="lbl">${L('Wyjście')}</span><p class="fhint">${L('W bazie Trade\'y nie ma jeszcze pola „Wyjście”. Uruchom aktualizację (Aktualizuj.cmd albo update.sh), która je doda.')}</p></div>`}
           ${fld('instrument', L('Instrument'), select('instrument', 'instrument', v.instrument), { cls: 'span1' })}
           ${fld('setup', L('Setup'), select('setup', 'setup', v.setup), { cls: 'span1' })}
@@ -93,7 +94,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
           <div class="span1 only-pnl">${fld('pnl', 'P&amp;L $', `<input id="f-pnl" name="pnl" type="text" inputmode="decimal" value="${esc(v.pnl)}" placeholder="${L('np. 320 lub −150')}" aria-describedby="e-pnl">`)}</div>
           <div class="span1 only-reason">${fld('reason', L('Powód (paper)'), select('reason', 'reason', v.reason))}</div>
           <div class="span4 only-konta">${fld('konta', L('Konta'), konta.length ? pills('konta', konta.map((k) => [k.id, k.name]), v.konta) : `<p class="fhint">${L('Brak kont w bazie Konta.')}</p>`, { labelFor: false })}</div>
-          ${PRICES.filter(([k]) => hasField(k)).map(([k, label]) => fld(k, L(label), `<input id="f-${k}" name="${k}" type="text" inputmode="decimal" value="${esc(v[k])}" placeholder="${L('np. 5842,25')}" aria-describedby="e-${k}">`, { cls: 'span1' })).join('')}
+          ${PRICES.filter(([k]) => hasField(k)).map(([k, label]) => fld(k, L(label), `<input id="f-${k}" name="${k}" type="text" inputmode="decimal" value="${esc(v[k])}" placeholder="${L('np. 5842,25')}" aria-describedby="e-${k}${k === 'be' ? ' h-be' : ''}">`, { cls: 'span1', hint: k === 'be' ? L('Cena, przy której trade jest bez ryzyka') : '' })).join('')}
           ${hasField('contract') ? fld('contract', L('Kontrakt'), `<input id="f-contract" name="contract" type="text" maxlength="8" autocapitalize="characters" spellcheck="false" autocomplete="off" value="${esc(v.contract)}" placeholder="${L('np. ESZ6')}" aria-describedby="e-contract">`, { cls: 'span1', hint: L('Puste = kontrakt wg daty trade\'a.') }) : ''}
           ${fld('chart', L('Wykres (link)'), `<input id="f-chart" name="chart" type="url" inputmode="url" value="${esc(v.chart)}" placeholder="https://www.tradingview.com/x/…" aria-describedby="e-chart">`, { cls: 'span2' })}
           ${fld('name', L('Nazwa'), `<input id="f-name" name="name" type="text" maxlength="200" value="${esc(v.name)}" placeholder="${L('Opcjonalnie')}" aria-describedby="e-name">`, { cls: 'span2' })}
@@ -131,7 +132,7 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
   // Zbiera wartości z formularza. Pola ukryte dla danego typu nie są wysyłane, więc nic ich nie nadpisuje ani nie czyści.
   function collect() {
     const errs = {};
-    const p = { tz: TZ };
+    const p = { tz: appTz() };
     const g = (n) => (field(n)?.value ?? '').trim();
     p.name = g('name');
     p.typ = pressed('[data-seg="typ"]')[0] || '';
@@ -162,7 +163,17 @@ export function createForm({ getModel, types, getDefaults, reload, onSaved, onCl
     if (p.chart && !/^https?:\/\/\S+$/i.test(p.chart)) errs.chart = tr('Wklej pełny adres zaczynający się od https://, np. link do zrzutu z TradingView.');
     if (p.exitDate && !p.exitTime) errs.exitTime = tr('Podaj godzinę wyjścia albo wyczyść datę wyjścia.');
     if (p.exitTime && p.time && `${p.exitDate || p.date}T${p.exitTime}` < `${p.date}T${p.time}`) errs.exitTime = tr('Wyjście jest przed wejściem. Jeśli trade trwał przez północ, ustaw datę wyjścia na następny dzień.');
-    if (trade) p.edited = trade.edited;
+    if (trade) {
+      p.edited = trade.edited;
+      // Decyzja sesji głównej 3.11.2026 (odbiór r2, P1-3): edycja starego wpisu NIE wysyła daty i godziny, jeśli ich nie zmieniono. Inaczej zapis utrwaliłby w Notion
+      // zegar z dashboardu (np. 04:30 NY ze starego 10:30 Europe/Warsaw) z etykietą NY, a poprawa strefy uznałaby wpis za poprawny.
+      const init = initial(trade);
+      if (p.date === init.date && p.time === init.time) { delete p.date; delete p.time; }
+      if ('exitTime' in p) {
+        if (p.exitDate === init.exitDate && p.exitTime === init.exitTime) { delete p.exitDate; delete p.exitTime; }
+        else if (!p.exitDate && p.exitTime) p.exitDate = p.date || init.date;
+      }
+    }
     return { payload: p, errs };
   }
 

@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: kilka TP z procentem wielkości 1.7-5 (strona robocza)</title>
+<!-- Strona robocza testów backtest-175 (testy/backtest-175-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: bilet z listą TP (+ TP, podział procentów, walidacja kolejności i procentów, podgląd celu i R:R), plakietki TP1..TP4 z ilością i procentem,
+     edytor procentu, przeciąganie ze zmianą numeracji, × z Cofnij, trafienie TP1 (komunikat, szuflada, Journal), + TP po wejściu do 4 i prawy klik „Dodaj TP tutaj”, preset z drabinką,
+     rozsuwanie plakietek (SL, 4 TP, BE, wejście; także przyklejonych do krawędzi) z elementFromPoint środka każdego ×, układ 375 px (tylko brak poziomego przewijania i przykrytych przycisków).
+     Parametry: ?w=375, ?theme=platinum, ?shots=1 (zrzuty przez most CDP window.__shot). Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }.
+     Zasada tej strony: każda asercja może zawieść (żadnych gałęzi „pominięte = zdane”, OR-ów zawsze prawdziwych ani szukania po textContent z ukrytymi spanami). -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const shots = qs.get('shots') === '1';
+const wide = !narrow || shots;
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  const tz = document.getElementById('toast');
+  if (tz) tz.hidden = true;
+  // runda 2: okno „Setup” (panel Journal trade'a) zasłaniało lewy dół wykresu na zrzutach; na czas zrzutu jest ukryte (tylko zrzut, test go nie dotyka), potem wraca
+  const jr = [...document.querySelectorAll('.bt-jr')], jrVis = jr.map((e) => e.style.visibility);
+  for (const e of jr) e.style.visibility = 'hidden';
+  await sleep(150);
+  window.__shot(JSON.stringify({ id, name: `${name}-${qs.get('theme') === 'platinum' ? 'platinum' : 'onyx'}-${narrow ? 375 : 1920}` }));
+  await until(() => window.__done?.[id], 10000);
+  jr.forEach((e, i) => { e.style.visibility = jrVis[i]; });
+};
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
+  const { fmtMoney, fmtR } = await import('/js/format.js');
+  const { visibleCount } = await import('/js/bt-swieca.js');
+  const { pxText } = await import('/js/bt-journal.js');
+  const { tpPlan } = await import('/js/bt-wypelnienia.js');
+  const client = createSessionClient();
+  const mkDef = () => ({ instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] });
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja 175', def: mkDef(), now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  let btSet = sanitizeBt(null);
+  const savedPatches = [];
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0, getSettings: () => btSet, onPresets: (patch) => { savedPatches.push(patch); btSet = sanitizeBt({ ...btSet, ...patch }); } });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const trades = () => RP.doc().trades;
+  const ch = () => RP.chart();
+  const host = () => scr().querySelector('.bt-plot');
+  const layer = () => ch().tradeLayer();
+  const tag = (k) => layer().querySelector(`[data-k="${k}"]`);
+  const mainText = (k) => tag(k)?.querySelector('.bt-tag-t')?.textContent ?? '';
+  const live = () => layer().querySelector('.bt-tl-live')?.textContent ?? '';
+  const focusTag = (k) => { const el = tag(k); el.focus(); el.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); };
+  const acts = () => layer().querySelector('[data-k="pos"] .bt-tag-act');
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const num = (s) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+  const center = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const pe = (type, el, x, y, extra = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true, ...extra }));
+  const yPx = (px) => host().getBoundingClientRect().top + ch().series.priceToCoordinate(px);
+  const note = () => P('.bt-ord-note').textContent;
+  const prev = () => { const e = P('.bt-ord-prev'); return e.hidden ? '' : e.textContent; };
+  const btn = (side) => P(`[data-o="${side}"]`);
+  const money = (x) => norm(fmtMoney(x));
+  const rstr = (x) => norm(fmtR(x));
+  const hits = (els) => {
+    const bad = [];
+    let n = 0;
+    for (const b of els) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || getComputedStyle(b).visibility === 'hidden') continue;
+      n++;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!(hit === b || b.contains(hit))) bad.push(`${b.dataset.tl || b.dataset.o || b.name || b.className} → ${hit?.dataset?.tl || hit?.className || hit?.tagName}`);
+    }
+    return { n, bad };
+  };
+  const overlaps = (els) => {
+    const r = els.filter((e) => !e.hidden).map((e) => e.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) if (r[i].left < r[j].right && r[j].left < r[i].right && r[i].top < r[j].bottom - 1 && r[j].top < r[i].bottom - 1) n++;
+    return n;
+  };
+  const closeAllNow = async () => { RP.orders().closeAll(); await sleep(80); for (const o of [...RP.book().orders]) RP.orders().cancel(o.id); await sleep(40); };
+  const abeOff = () => { const c = P('[name="abeOn"]'); if (c.checked) c.click(); };
+  const moreOpen = () => { const m = scr().querySelector('.bt-ord-more'); if (m && getComputedStyle(m).display !== 'none' && m.getAttribute('aria-expanded') !== 'true') m.click(); };
+  const tpRows = () => [...P('.bt-ord-tps').querySelectorAll('.bt-ord-tp')].filter((r) => !r.hidden);
+  const addBtn = () => P('.bt-tp-add');
+  const clearTpRows = async () => {
+    for (let i = 0; i < 4 && tpRows().length > 1; i++) { tpRows().at(-1).querySelector('.bt-tp-rm').click(); await sleep(20); }
+    setF('tp', '');
+  };
+  // wejście z biletu: SL (pkt), lista TP w pkt (ceny od wejścia, procenty nie-ostatnich z podziału po równo), ilość ręczna
+  const openLadder = async ({ side = 'buy', sl = 10, tps = [20, 40], qty = 10 } = {}) => {
+    await closeAllNow(); abeOff(); await clearTpRows();
+    setF('sl', sl);
+    setF('tp', tps[0] ?? '');
+    for (let i = 1; i < tps.length; i++) { addBtn().click(); await sleep(20); setF(i === 1 ? 'tp2' : i === 2 ? 'tp3' : 'tp4', tps[i]); }
+    setF('qty', qty);
+    RP.orders().submit(side); await sleep(120);
+  };
+  // krok o 1 s kursora (jedna świeca bazowa 1s w oknie prawdziwych sekund), żeby jeden krok nie obejmował dwóch poziomów
+  const stepsUntil = async (fn, n = 420) => { for (let i = 0; i < n && !fn(); i++) { await RP.goTo(RP.cursor() + 1); await sleep(8); } return fn(); };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(100);
+  document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  if (wide) moreOpen();
+
+  // ---------- bilet: + TP, podział procentów, walidacja kolejności i procentów, podgląd celu i R:R ----------
+  if (wide) await section('bilet', async () => {
+    await closeAllNow(); abeOff();
+    setF('sl', 10); setF('tp', 20); setF('qty', 10); await sleep(40);
+    rec('bilet', tpRows().length === 1 && !addBtn().hidden && P('[name="tpPct1"]').closest('label').hidden, 'jeden wiersz TP: bez pola procentu, przycisk + TP widoczny');
+    rec('bilet', norm(P('.bt-tp-l').textContent) === 'TP (pkt)', `etykieta jednego wiersza: «${P('.bt-tp-l').textContent}»`);
+    addBtn().click(); await sleep(40);
+    rec('bilet', tpRows().length === 2 && P('[name="tpPct1"]').value === '50' && !tpRows()[0].querySelector('.bt-tp-pct').hidden && !tpRows()[1].querySelector('.bt-tp-rest').hidden && norm(tpRows()[1].querySelector('.bt-tp-rest').textContent) === 'reszta', `dodanie wiersza dzieli po równo: pole TP1 ${P('[name="tpPct1"]').value}%, ostatni «reszta»`);
+    rec('bilet', norm(tpRows()[0].querySelector('.bt-tp-l').textContent) === 'TP1 (pkt)' && norm(tpRows()[1].querySelector('.bt-tp-l').textContent) === 'TP2 (pkt)', 'etykiety TP1 (pkt) i TP2 (pkt)');
+    setF('tp2', 40); await sleep(40);
+    // 10 kontraktów 50/50: TP1 5 · 20 pkt · 20 $ = 2 000, TP2 5 · 40 pkt · 20 $ = 4 000, razem 6 000; ryzyko 10 · 10 pkt · 20 $ = 2 000 → R:R 3
+    rec('bilet', norm(prev()).includes(`Cel ${money(6000)} (TP1 +2 000 · TP2 +4 000) · R:R 3`), `podgląd celu i R:R ważony udziałami: «${norm(prev())}»`);
+    addBtn().click(); await sleep(40);
+    rec('bilet', tpRows().length === 3 && P('[name="tpPct1"]').value === '33' && P('[name="tpPct2"]').value === '33', `trzeci wiersz: podział 33/33/reszta (${P('[name="tpPct1"]').value}/${P('[name="tpPct2"]').value})`);
+    setF('tp3', 60); await sleep(40);
+    // 33/33/34 przy 10 kontraktach: 3, 3, 4 → 1 200 + 2 400 + 4 800 = 8 400, R:R 4,2
+    rec('bilet', norm(prev()).includes(`Cel ${money(8400)} (TP1 +1 200 · TP2 +2 400 · TP3 +4 800) · R:R 4,2`), `podgląd trzech poziomów: «${norm(prev())}»`);
+    // TP poza kolejnością: wiersz podświetlony i powód
+    setF('tp2', 15); await sleep(40);
+    rec('bilet', btn('buy').disabled && note() === 'TP2 bliżej niż TP1.' && P('[name="tp2"]').getAttribute('aria-invalid') === 'true', `TP2 bliżej niż TP1: Kup nieaktywne, pole zaznaczone («${note()}»)`);
+    setF('tp2', 40); await sleep(30);
+    rec('bilet', !btn('buy').disabled && P('[name="tp2"]').getAttribute('aria-invalid') !== 'true', 'po poprawce Kup działa, pole bez zaznaczenia');
+    // suma procentów poza ostatnim ≥ 100
+    setF('tpPct1', 70); setF('tpPct2', 40); await sleep(40);
+    rec('bilet', btn('buy').disabled && /^Procenty TP/.test(note()), `suma 110%: «${note()}»`);
+    setF('tpPct1', 33); setF('tpPct2', 33); await sleep(30);
+    // usunięcie środkowego wiersza oddaje jego procent ostatniemu: TP2 = 60, TP1 33%, ostatni 67%
+    tpRows()[1].querySelector('.bt-tp-rm').click(); await sleep(40);
+    rec('bilet', tpRows().length === 2 && P('[name="tp"]').value === '20' && P('[name="tp2"]').value === '60' && P('[name="tpPct1"]').value === '33', `po usunięciu TP2: wiersze ${P('[name="tp"]').value}/${P('[name="tp2"]').value}, TP1 ${P('[name="tpPct1"]').value}%, ostatni = 67%`);
+    // limit 4
+    addBtn().click(); await sleep(20); setF('tp3', 80); addBtn().click(); await sleep(20); setF('tp4', 100); await sleep(40);
+    rec('bilet', tpRows().length === 4 && (addBtn().hidden || addBtn().disabled), `cztery wiersze: przycisk + TP ukryty albo nieaktywny (hidden ${addBtn().hidden})`);
+    // pamięć panelu: lista TP
+    const mem = JSON.parse(localStorage.getItem('thq.bt.ord.v1') || '{}').NQ;
+    rec('bilet', mem?.tp === '20' && Array.isArray(mem.tps) && mem.tps.length === 4 && mem.tps[3].v === '100', `pamięć panelu niesie listę TP: ${JSON.stringify(mem?.tps)}`);
+    await shot('bilet-lista-tp');
+    // zlecenie: dwa poziomy z procentami, pozycja ma drabinę
+    await clearTpRows();
+    setF('tp', 20); addBtn().click(); await sleep(20); setF('tp2', 40); setF('qty', 10); await sleep(40);
+    RP.orders().submit('buy'); await sleep(120);
+    const p = pos();
+    rec('bilet', !!p && p.tps.length === 2 && p.tps[0].price === q(p.avg + 20) && p.tps[1].price === q(p.avg + 40) && p.tps[0].pct === 50 && p.tps[1].pct === 50 && p.tp === q(p.avg + 40), `pozycja: ${JSON.stringify(p?.tps?.map((x) => [x.id, x.price, x.pct]))}, tp ${p?.tp}`);
+    const pl = tpPlan(p);
+    rec('bilet', pl.length === 2 && pl[0].qty === 5 && pl[1].qty === 5, `plan ilości 5/5 (${pl.map((x) => x.qty)})`);
+    await closeAllNow(); await clearTpRows();
+  });
+
+  // ---------- wykres: plakietki TP1/TP2, edytor procentu, przeciąganie z numeracją, × z Cofnij ----------
+  if (wide) await section('wykres', async () => {
+    await openLadder({ tps: [20, 40], qty: 10 });
+    const avg = pos().avg;
+    rec('wykres', pos().tps.length === 2 && !!tag('ptp') && !!tag('ptp2') && !tag('ptp3'), 'dwie plakietki: TP1 (ptp) i TP2 (ptp2)');
+    // SL 10 pkt, 10 kontraktów: rUsd = 2 000 $; TP1 5 · 20 pkt = 2 000 $ (1,00R), TP2 5 · 40 pkt = 4 000 $ (2,00R)
+    rec('wykres', norm(mainText('ptp')) === `TP1 50% · 5 · ${money(2000)} · ${rstr(1)}`, `TP1: «${mainText('ptp')}»`);
+    rec('wykres', norm(mainText('ptp2')) === `TP2 reszta · 5 · ${money(4000)} · ${rstr(2)}`, `TP2: «${mainText('ptp2')}»`);
+    const marks = ch().positionMarks();
+    rec('wykres', marks.some((m) => m.price === q(avg + 20)) && marks.some((m) => m.price === q(avg + 40)), `znaczniki osi dla obu poziomów (${marks.map((m) => m.price).join(', ')})`);
+    rec('wykres', tag('ptp').dataset.id === 'tp1' && tag('ptp2').dataset.id === 'tp2', 'plakietki niosą id poziomu');
+    // edytor procentu: klik w procent otwiera okno 25 · 33 · 50 · 75 · [__] %
+    tag('ptp').querySelector('.bt-pct-v').click(); await sleep(60);
+    const ed = layer().querySelector('.bt-pct');
+    rec('wykres', !!ed && [...ed.querySelectorAll('[data-tl="pctq"]')].map((b) => b.dataset.pct).join() === '25,33,50,75' && !!ed.querySelector('[name="pct"]'), `okno procentu: szybkie ${[...(ed?.querySelectorAll('[data-tl="pctq"]') || [])].map((b) => b.dataset.pct)}`);
+    await shot('edytor-procentu');
+    ed.querySelector('[data-pct="25"]').click(); await sleep(120);
+    // 25% z 10 = 2,5 → 3 (połówka w górę), TP2 resztą 7
+    rec('wykres', pos().tps[0].pct === 25 && pos().tps[1].pct === 75 && !layer().querySelector('.bt-pct'), `25%: ${JSON.stringify(pos().tps.map((x) => [x.id, x.pct]))}, okno zamknięte`);
+    rec('wykres', norm(mainText('ptp')).startsWith('TP1 25% · 3 · ') && norm(mainText('ptp2')).startsWith('TP2 reszta · 7 · '), `ilości na plakietkach 3 i 7: «${mainText('ptp')}» / «${mainText('ptp2')}»`);
+    rec('wykres', pos().log.at(-1).k === 'tps' && Number.isFinite(pos().log.at(-1).at), 'zmiana procentu ma wpis w log z at');
+    // Enter na fokusie plakietki otwiera edytor, wpisany procent + Enter zapisuje, Esc zamyka bez zmian
+    focusTag('ptp'); key('Enter', {}, tag('ptp')); await sleep(60);
+    rec('wykres', !!layer().querySelector('.bt-pct'), 'Enter na plakietce otwiera edytor');
+    const inp = layer().querySelector('.bt-pct [name="pct"]');
+    inp.value = '40'; inp.dispatchEvent(new Event('input', { bubbles: true })); key('Enter', {}, inp); await sleep(120);
+    rec('wykres', pos().tps[0].pct === 40 && pos().tps[1].pct === 60, `wpisane 40%: ${JSON.stringify(pos().tps.map((x) => x.pct))}`);
+    focusTag('ptp'); key('Enter', {}, tag('ptp')); await sleep(40); key('Escape'); await sleep(40);
+    rec('wykres', !layer().querySelector('.bt-pct') && pos().tps[0].pct === 40, 'Esc zamyka edytor bez zmian');
+    // zły procent: 0 i 100 odrzucone, okno zostaje z komunikatem
+    focusTag('ptp'); key('Enter', {}, tag('ptp')); await sleep(40);
+    const inp2 = layer().querySelector('.bt-pct [name="pct"]');
+    inp2.value = '100'; inp2.dispatchEvent(new Event('input', { bubbles: true })); key('Enter', {}, inp2); await sleep(100);
+    rec('wykres', !!layer().querySelector('.bt-pct') && pos().tps[0].pct === 40, `procent 100 odrzucony (silnik: ${pos().tps[0].pct}), okno zostaje`);
+    key('Escape'); await sleep(40);
+    // ostatni poziom: tylko informacja „reszta”
+    focusTag('ptp2'); key('Enter', {}, tag('ptp2')); await sleep(40);
+    const ed2 = layer().querySelector('.bt-pct');
+    rec('wykres', !!ed2 && !ed2.querySelector('[name="pct"]') && /reszta/.test(ed2.textContent), `ostatni poziom: informacja bez pola («${norm(ed2?.textContent || '')}»)`);
+    key('Escape'); await sleep(40);
+    // ustaw 25/75 do dalszych kroków
+    RP.orders().setTpPct('NQ', 'tp1', 25); await sleep(80);
+    // przeciąganie TP1 za TP2: numeracja się zamienia, procent idzie za id (tp1 25%, tp2 75%)
+    const el = tag('ptp'), [x, y] = center(el), target = q(avg + 50);
+    pe('pointerdown', el, x, y); pe('pointermove', el, x, yPx(target)); await sleep(60);
+    rec('wykres', /^TP/.test(norm(el.querySelector('.bt-tag-t').textContent)) && /pkt/.test(el.querySelector('.bt-tag-t').textContent), `odczyt w trakcie przeciągania: «${el.querySelector('.bt-tag-t').textContent}»`);
+    await shot('przeciaganie-tp');
+    pe('pointerup', el, x, yPx(target)); await sleep(140);
+    rec('wykres', pos().tps.map((t) => t.id).join() === 'tp2,tp1' && pos().tps.map((t) => t.price).join() === `${q(avg + 40)},${target}`, `kolejność po przeciągnięciu: ${JSON.stringify(pos().tps.map((t) => [t.id, t.price, t.pct]))}`);
+    rec('wykres', pos().tps[0].pct === 75 && pos().tps[1].pct === 25 && tag('ptp').dataset.id === 'tp2' && tag('ptp2').dataset.id === 'tp1', 'procent poszedł za id, numeracja od najbliższego (ptp = tp2)');
+    rec('wykres', norm(mainText('ptp')).startsWith('TP1 75% · ') && norm(mainText('ptp2')).startsWith('TP2 reszta · '), `plakietki po zamianie: «${mainText('ptp')}» / «${mainText('ptp2')}»`);
+    // przeciągnięcie przez cenę bieżącą: odrzucone, linia wraca
+    const el3 = tag('ptp2'), [x3, y3] = center(el3), before = JSON.stringify(pos().tps);
+    pe('pointerdown', el3, x3, y3); pe('pointermove', el3, x3, yPx(avg - 4)); await sleep(60);
+    pe('pointerup', el3, x3, yPx(avg - 4)); await sleep(120);
+    rec('wykres', JSON.stringify(pos().tps) === before && /TP/.test(note()), `poziom pod ceną odrzucony, drabina bez zmian («${note()}»)`);
+    // × na plakietce: usuwa poziom, procent przechodzi na ostatni; Cofnij przywraca drabinę
+    const snap = JSON.stringify(pos().tps.map((t) => [t.id, t.price, t.pct]));
+    tag('ptp').querySelector('[data-tl="rm"]').click(); await sleep(120);
+    rec('wykres', pos().tps.length === 1 && pos().tps[0].id === 'tp1' && pos().tps[0].pct === 100, `× usuwa poziom, ostatni dostaje 100%: ${JSON.stringify(pos().tps.map((t) => [t.id, t.pct]))}`);
+    const act = document.querySelector('#toast .toast-act');
+    rec('wykres', !!act && /Cofnij/.test(act.textContent) && /TP usunięty/.test(live()), `komunikat «${live()}» z przyciskiem Cofnij`);
+    act.click(); await sleep(140);
+    rec('wykres', JSON.stringify(pos().tps.map((t) => [t.id, t.price, t.pct])) === snap, `Cofnij przywraca drabinę dokładnie: ${JSON.stringify(pos().tps.map((t) => [t.id, t.price, t.pct]))}`);
+    // chwyt samej linii TP1 (pas ±4 px)
+    const hr = host().getBoundingClientRect(), tp1 = pos().tps[0].price, tgt = q(tp1 + 3);
+    pe('pointerdown', host(), hr.left + 120, yPx(tp1) + 2); pe('pointermove', host(), hr.left + 120, yPx(tgt)); pe('pointerup', host(), hr.left + 120, yPx(tgt)); await sleep(140);
+    rec('wykres', pos().tps[0].price === tgt, `chwyt linii TP1 w pasie ±4 px: ${tp1} → ${pos().tps[0].price}`);
+    // strzałka ↑ o tick na plakietce poziomu
+    focusTag('ptp'); key('ArrowUp', {}, tag('ptp')); await sleep(100);
+    rec('wykres', pos().tps[0].price === q(tgt + 0.25), `strzałka ↑ o tick (${pos().tps[0].price})`);
+    await shot('dwa-poziomy');
+  });
+
+  // ---------- rozstaw: SL, 4 TP, BE i wejście bez nakładania; środki × trafiają w siebie, także przy krawędzi ----------
+  if (wide) await section('rozstaw', async () => {
+    await openLadder({ tps: [20, 40], qty: 12 });
+    const avg = pos().avg;
+    // dwa kolejne poziomy tuż obok siebie (1 tick) i próg BE tuż pod SL
+    RP.orders().setLevel('NQ', 'tp', q(avg + 40.25)); await sleep(80);
+    RP.orders().setLevel('NQ', 'tp', q(avg + 40.5)); await sleep(80);
+    RP.orders().setLevel('NQ', 'abe', q(avg + 0.5)); await sleep(150);
+    rec('rozstaw', pos().tps.length === 4, `cztery poziomy (${pos().tps.length}): ${pos().tps.map((t) => t.price).join(', ')}`);
+    const tags = [...layer().querySelectorAll('.bt-tag')];
+    rec('rozstaw', tags.length >= 7, `plakietki: wejście, SL, 4 TP, BE (${tags.length})`);
+    rec('rozstaw', overlaps(tags) === 0, `plakietki bez nakładania (${overlaps(tags)} nakładek)`);
+    let h = hits(layer().querySelectorAll('.bt-tag-x'));
+    rec('rozstaw', h.n >= 6 && h.bad.length === 0, `środki wszystkich × trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    // runda 2: znaczniki osi poziomów leżących bliżej siebie niż 16 px są własne i rozsunięte, a natywne dla nich ukryte
+    const ax = [...layer().querySelectorAll('.bt-axt')];
+    rec('rozstaw', ax.length >= 3 && overlaps(ax) === 0, `znaczniki osi bliskich poziomów rozsunięte (${ax.length} własnych, ${overlaps(ax)} nakładek: ${ax.map((e) => norm(e.textContent)).join(', ')})`);
+    const marks = ch().positionMarks();
+    rec('rozstaw', marks.filter((m) => m.axis).length === marks.length - ax.length, `natywne znaczniki ukryte dla poziomów z własnym (natywnych widocznych ${marks.filter((m) => m.axis).length} z ${marks.length}, własnych ${ax.length})`);
+    await shot('rozstaw-4tp');
+    // poziomy poza polem ceny: przyklejone do górnej krawędzi i rozsunięte
+    RP.orders().setTps('NQ', [{ id: 'tp1', price: q(avg + 600), pct: 25 }, { id: 'tp2', price: q(avg + 610), pct: 25 }, { id: 'tp3', price: q(avg + 620), pct: 25 }, { id: 'tp4', price: q(avg + 630) }]); await sleep(200);
+    const stuck = [...layer().querySelectorAll('.bt-tag[data-edge="up"]')];
+    rec('rozstaw', stuck.length >= 3, `poziomy poza polem ceny przyklejone do górnej krawędzi (${stuck.length})`);
+    const all = [...layer().querySelectorAll('.bt-tag')];
+    rec('rozstaw', overlaps(all) === 0, `przyklejone plakietki bez nakładania (${overlaps(all)})`);
+    h = hits(layer().querySelectorAll('.bt-tag-x'));
+    rec('rozstaw', h.n >= 5 && h.bad.length === 0, `środki × (także przyklejonych) trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    await shot('rozstaw-krawedz');
+    await closeAllNow(); await clearTpRows();
+  });
+
+  // ---------- trafienie TP1: linia znika, komunikat, szuflada i Journal ----------
+  if (wide) await section('trafienie', async () => {
+    await closeAllNow(); abeOff(); await clearTpRows();
+    // kierunek wybrany po świecach, które jeszcze nie były pokazane: TP1 = 1 pkt osiągnięty w innej świecy bazowej niż TP2 = 3 pkt (SL 300 pkt nie sięgnie)
+    const st = RP.data().stream('NQ');
+    const n0 = visibleCount(st, RP.cursor());
+    const entry = st.bars[n0 - 1][4];
+    let dir = null;
+    for (const d of ['buy', 'sell']) {
+      const sg = d === 'buy' ? 1 : -1;
+      let i1 = -1, i3 = -1;
+      for (let i = n0; i < Math.min(st.bars.length, n0 + 300); i++) {
+        const ex = sg > 0 ? st.bars[i][2] - entry : entry - st.bars[i][3];
+        if (i1 < 0 && ex >= 1) i1 = i;
+        if (ex >= 3) { i3 = i; break; }
+      }
+      if (i1 >= 0 && i3 > i1) { dir = d; break; }
+    }
+    rec('trafienie', dir !== null, `dane syntetyczne dają ruch ≥ 3 pkt po osiągnięciu 1 pkt w ciągu 300 świec (kierunek ${dir})`);
+    setF('sl', 300); setF('tp', 1); addBtn().click(); await sleep(20); setF('tp2', 3); setF('qty', 4); await sleep(40);
+    RP.orders().submit(dir); await sleep(120);
+    const sgn = dir === 'buy' ? 1 : -1, p0 = pos();
+    rec('trafienie', p0.tps.length === 2 && p0.openQty === 4 && !!tag('ptp') && !!tag('ptp2'), `pozycja ${p0.dir} 4 z dwoma poziomami (${p0.tps.map((t) => t.price)})`);
+    const tp1px = p0.tps[0].price;
+    await shot('przed-trafieniem');
+    await stepsUntil(() => !pos() || pos().openQty < 4);
+    const p1 = pos();
+    if (p1) {
+      rec('trafienie', p1.tps[0].hit && p1.tps[0].hit.qty === 2 && p1.openQty === 2 && p1.exits.length === 1 && p1.exits[0].tpId === 'tp1' && p1.exits[0].reason === 'tp', `TP1 trafiony: ${JSON.stringify(p1.tps[0].hit)}, wyjście ${JSON.stringify(p1.exits.map((e) => [e.qty, e.price, e.tpId]))}`);
+      rec('trafienie', !tag('ptp') && !!tag('ptp2') && norm(mainText('ptp2')).startsWith('TP2 reszta · 2 · '), `linia i plakietka TP1 zniknęły, TP2 zostaje («${mainText('ptp2')}»)`);
+      const lv = norm(live());
+      const usd = Math.round(sgn * (p1.exits[0].price - p0.avg) * 2 * 20);
+      rec('trafienie', /^TP1 \d\d:\d\d:\d\d NY · 2 @ [\d\s]+,\d\d · /.test(lv) && lv.includes(norm(pxText(tp1px))) && lv.endsWith(money(usd)), `komunikat aria-live «${lv}» (oczekiwane ${money(usd)})`);
+      rec('trafienie', /TP1/.test(document.getElementById('toast')?.textContent || ''), 'toast z tym samym komunikatem');
+      RP.dock().setTab('pos'); await sleep(120);
+      const cell = RP.dock().el.querySelector('tbody td[data-c="tp"]');
+      rec('trafienie', norm(cell.textContent) === norm(pxText(p1.tps[1].price)), `szuflada: kolumna TP pokazuje tylko nietrafiony poziom («${norm(cell.textContent)}»)`);
+      RP.dock().el.querySelector('[data-dka="expand"]').click(); await sleep(80);
+      const det = norm(RP.dock().el.querySelector('.bt-dk-det')?.textContent || '');
+      rec('trafienie', /TP1/.test(det) && det.includes(norm(pxText(tp1px))), `szuflada: lista wyjść zawiera TP1 po cenie ${pxText(tp1px)} («${det.slice(0, 120)}»)`);
+      await shot('po-trafieniu-tp1');
+    } else rec('trafienie', false, 'pozycja zamknięta przed sprawdzeniem TP1 (obie ceny w jednej świecy)');
+    await stepsUntil(() => !pos());
+    const tr = trades().at(-1);
+    rec('trafienie', !pos() && tr && tr.exits.length === 2 && tr.exits.map((e) => e.tpId).join() === 'tp1,tp2' && tr.qty === 4, `trade ${tr?.id}: wyjścia ${JSON.stringify(tr?.exits?.map((e) => [e.qty, e.price, e.tpId]))}`);
+    const wsum = tr.exits.reduce((a, e) => a + e.qty * e.price, 0) / 4;
+    rec('trafienie', Math.abs(tr.exitPrice - wsum) < 1e-6 && tr.tp === tr.tps[1].price && tr.tps.every((t) => t.hit && Number.isFinite(t.hit.at)), `exitPrice ${tr.exitPrice} = średnia ${wsum}, tp = ostatni cel ${tr.tp}, oba poziomy z hit.at`);
+    // Journal: tabela poziomów obok tabeli wejść i wyjść
+    RP.openJournalWindow(tr.id); await sleep(500);
+    const lvRows = [...document.querySelectorAll('.bt-jw .bt-jw-lv tbody tr')].map((r) => [...r.children].map((c) => norm(c.textContent)));
+    rec('trafienie', lvRows.length === 2 && lvRows[0][0] === 'TP1' && lvRows[1][0] === 'TP2' && lvRows[0].includes('50%') && /\d\d:\d\d:\d\d/.test(lvRows[0].join(' ')) && lvRows[0].join(' ').includes(norm(pxText(tr.tps[0].price))), `tabela poziomów w Journalu: ${JSON.stringify(lvRows)}`);
+    await shot('journal-poziomy');
+    document.querySelector('.bt-jw [data-jw="close"]')?.click(); await sleep(150);
+  });
+
+  // ---------- + TP po wejściu do 4 poziomów, prawy klik „Dodaj TP tutaj” ----------
+  if (wide) await section('dodaj', async () => {
+    await openLadder({ tps: [30], qty: 8 });
+    const avg = pos().avg;
+    rec('dodaj', pos().tps.length === 1 && pos().tps[0].pct === 100, 'jeden poziom 100%');
+    focusTag('pos'); await sleep(50);
+    let plus = acts().querySelector('[data-tl="tp+"]');
+    rec('dodaj', !!plus && plus.textContent === '+TP', 'przy jednym poziomie + TP jest widoczne');
+    // Enter: nowy poziom za najdalszym, odległość = odstęp TP1 od wejścia (30 pkt) → avg + 60; procenty po równo 50/50
+    key('Enter', {}, plus); await sleep(120);
+    rec('dodaj', pos().tps.length === 2 && pos().tps[1].price === q(avg + 60) && pos().tps.map((x) => x.pct).join() === '50,50', `+TP: ${JSON.stringify(pos().tps.map((x) => [x.price, x.pct]))} (oczekiwane ${q(avg + 60)})`);
+    focusTag('pos'); await sleep(50);
+    key('Enter', {}, acts().querySelector('[data-tl="tp+"]')); await sleep(120);
+    rec('dodaj', pos().tps.length === 3 && pos().tps.map((x) => x.pct).join() === '33,33,34' && pos().tps[2].price === q(avg + 90), `trzeci: ${JSON.stringify(pos().tps.map((x) => [x.price, x.pct]))}`);
+    // odrzucenie silnika w edytorze procentu: 98% przy TP2 33% daje sumę 131 (klient przepuszcza 1..98), okno zostaje z komunikatem, procenty bez zmian
+    focusTag('ptp'); key('Enter', {}, tag('ptp')); await sleep(50);
+    const pin = layer().querySelector('.bt-pct [name="pct"]');
+    pin.value = '98'; pin.dispatchEvent(new Event('input', { bubbles: true })); key('Enter', {}, pin); await sleep(100);
+    rec('dodaj', !!layer().querySelector('.bt-pct') && norm(layer().querySelector('.bt-pct-err')?.textContent || '').startsWith('Procenty TP') && pos().tps.map((x) => x.pct).join() === '33,33,34', `silnik odrzucił sumę 131: okno zostaje z komunikatem «${norm(layer().querySelector('.bt-pct-err')?.textContent || '')}», procenty ${pos().tps.map((x) => x.pct)}`);
+    key('Escape'); await sleep(40);
+    focusTag('pos'); await sleep(50);
+    key('Enter', {}, acts().querySelector('[data-tl="tp+"]')); await sleep(120);
+    rec('dodaj', pos().tps.length === 4 && pos().tps.map((x) => x.pct).join() === '25,25,25,25', `czwarty: ${pos().tps.map((x) => x.pct)}`);
+    focusTag('pos'); await sleep(50);
+    rec('dodaj', !acts().querySelector('[data-tl="tp+"]'), 'przy czterech poziomach + TP znika');
+    // prawy klik nad ceną bieżącą: „Dodaj TP tutaj” nieaktywne z powodem
+    const rightClick = async (px) => {
+      const r = host().getBoundingClientRect(), cx = r.left + 140, cy = yPx(px);
+      const el = document.elementFromPoint(cx, cy) || host();
+      el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, view: window }));
+      await sleep(80);
+      return scr().querySelector('.bt-cm');
+    };
+    const lastPx = (() => { const st = RP.data().stream('NQ'); return st.bars[visibleCount(st, RP.cursor()) - 1][4]; })();
+    let m = await rightClick(q(lastPx + 8));
+    let it = m?.querySelector('[data-mi="tp-here"]');
+    rec('dodaj', !!it && it.getAttribute('aria-disabled') === 'true' && it.title === 'Najwyżej 4 TP.' && /^Dodaj TP tutaj/.test(norm(it.querySelector('.bt-cm-l').textContent)), `4 poziomy: «${norm(it?.querySelector('.bt-cm-l')?.textContent || '')}» nieaktywne z powodem «${it?.title}»`);
+    key('Escape', {}, m); await sleep(50);
+    // po usunięciu jednego poziomu pozycja przyjmuje nowy z menu: ten sam procent po równo (3 poziomy → 4)
+    RP.orders().setLevel('NQ', 'tp', null, pos().tps[3].id); await sleep(100);
+    rec('dodaj', pos().tps.length === 3, `po usunięciu: ${pos().tps.length} poziomy`);
+    const want = q(lastPx + 8);
+    m = await rightClick(want);
+    it = m?.querySelector('[data-mi="tp-here"]');
+    rec('dodaj', !!it && it.getAttribute('aria-disabled') === 'false', 'przy trzech poziomach „Dodaj TP tutaj” aktywne');
+    it.click(); await sleep(140);
+    rec('dodaj', pos().tps.length === 4 && pos().tps.some((x) => x.price === Number(m.dataset.price)), `menu dodało poziom na cenie kliknięcia ${m.dataset.price}: ${pos().tps.map((x) => x.price)}`);
+    rec('dodaj', pos().log.some((x) => x.k === 'tps' && Number.isFinite(x.at)), 'zmiana ma wpis w log z at');
+    // runda 2 (P3-2): poziom za ceną w edycji listy: komunikat nazywa poziom (numer, cena) i cenę odniesienia
+    const lng = pos().dir === 'Long', behind = q(lastPx + (lng ? -4 : 4));
+    const okBad = RP.orders().setTps('NQ', pos().tps.map((x, i) => ({ id: x.id, price: i === 0 ? behind : x.price, pct: x.pct }))); await sleep(60);
+    const fl = norm(RP.orders().lastFlash());
+    rec('dodaj', okBad === false && fl.startsWith(`TP1 (${norm(pxText(behind))}) leży za ceną `) && fl.includes('TP musi leżeć po stronie zysku') && fl.includes('w świecy wejścia lub dokładki'), `komunikat o poziomie za ceną: «${fl}»`);
+    await closeAllNow(); await clearTpRows();
+  });
+
+  // ---------- preset z drabiną: Kup jednym kliknięciem daje 2 poziomy; zapis presetu z listy TP ----------
+  if (wide) await section('preset', async () => {
+    await closeAllNow(); abeOff(); await clearTpRows();
+    btSet = sanitizeBt({ ...btSet, presets: [{ id: 'lad1', name: 'Drabina', sl: { unit: 'pts', value: 10 }, tps: [{ unit: 'rr', value: 1, pct: 50 }, { unit: 'rr', value: 3, pct: 50 }], size: { mode: 'qty', value: 10 }, autoBe: { kind: 'r', value: 1, offsetTicks: 0 } }], activePreset: 'lad1' });
+    RP.orders().refresh(); await sleep(120);
+    const chip = P('.bt-ord-pchips [data-pr="lad1"]');
+    rec('preset', !!chip && /TP 1R 50% \/ 3R/.test(chip.title), `opis presetu na chipie: «${chip?.title}»`);
+    rec('preset', tpRows().length === 2 && P('[name="tp"]').value === '10' && P('[name="tp2"]').value === '30' && P('[name="tpPct1"]').value === '50', `preset wypełnia listę TP: ${P('[name="tp"]').value}/${P('[name="tp2"]').value} (${P('[name="tpPct1"]').value}%)`);
+    await shot('preset-drabina');
+    // prawy klik z aktywnym presetem z drabiną: zlecenie dostaje całą drabinę liczoną od ceny kliknięcia (Sprzedaj limit nad rynkiem: poziomy 10 i 30 pkt poniżej ceny kliknięcia)
+    {
+      const st0 = RP.data().stream('NQ'), L0 = st0.bars[visibleCount(st0, RP.cursor()) - 1][4];
+      const r0 = host().getBoundingClientRect(), cy = yPx(q(L0 + 6)), cx = r0.left + 140;
+      (document.elementFromPoint(cx, cy) || host()).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, view: window }));
+      await sleep(90);
+      const m0 = scr().querySelector('.bt-cm'), it0 = m0?.querySelector('[data-mi="order-sell-limit"]'), px0 = Number(m0?.dataset.price);
+      rec('preset', !!it0 && it0.getAttribute('aria-disabled') === 'false', `menu prawego kliku z presetem: Sprzedaj limit aktywne («${norm(it0?.querySelector('.bt-cm-l')?.textContent || '')}»)`);
+      it0?.click(); await sleep(140);
+      const o0 = RP.book().orders[0];
+      rec('preset', !!o0 && o0.side === 'sell' && o0.price === px0 && o0.tps?.length === 2 && o0.tps[0].price === q(px0 - 10) && o0.tps[1].price === q(px0 - 30) && o0.tps.map((x) => x.pct).join() === '50,50', `zlecenie z menu niesie drabinę od ceny kliknięcia ${px0}: ${JSON.stringify(o0?.tps?.map((x) => [x.price, x.pct]))}`);
+      await closeAllNow();
+    }
+    RP.orders().submit('buy'); await sleep(140);
+    const p = pos();
+    rec('preset', !!p && p.qty === 10 && p.tps.length === 2 && p.tps[0].price === q(p.avg + 10) && p.tps[1].price === q(p.avg + 30) && p.tps.map((x) => x.pct).join() === '50,50' && p.autoBe?.kind === 'r', `Kup daje 2 poziomy: ${JSON.stringify(p?.tps?.map((x) => [x.price, x.pct]))}`);
+    await shot('preset-drabina-otwarta');
+    await closeAllNow();
+    // zapis presetu z listy TP bilet → preset: 3 poziomy 40/30/reszta
+    btSet = sanitizeBt({ ...btSet, activePreset: null }); RP.orders().choosePreset(null); await sleep(80);
+    await clearTpRows();
+    setF('sl', 10); setF('tp', 5); addBtn().click(); await sleep(20); setF('tp2', 10); addBtn().click(); await sleep(20); setF('tp3', 20); setF('tpPct1', 40); setF('tpPct2', 30); setF('qty', 3); await sleep(40);
+    P('[data-o="psave"]').click(); await sleep(40);
+    P('.bt-psave [name="pname"]').value = 'Trzy cele'; P('.bt-psave').requestSubmit(); await sleep(120);
+    const saved = btSet.presets.find((x) => x.name === 'Trzy cele');
+    rec('preset', !!saved && saved.tps.length === 3 && saved.tps.map((x) => x.pct).join() === '40,30,30' && saved.tps.map((x) => x.value).join() === '5,10,20' && saved.tps.every((x) => x.unit === 'pts'), `zapisany preset: ${JSON.stringify(saved?.tps)}`);
+    btSet = sanitizeBt({ ...btSet, presets: [], activePreset: null }); RP.orders().choosePreset(null); await sleep(60);
+    await clearTpRows();
+  });
+
+  // ---------- szuflada: kolumna TP „cena (procent) · cena” i edytor listy ----------
+  if (wide) await section('szuflada', async () => {
+    await openLadder({ tps: [20, 40], qty: 10 });
+    RP.dock().setTab('pos'); await sleep(120);
+    const dk = RP.dock().el, cellOf = () => dk.querySelector('tbody td[data-c="tp"]');
+    const p = pos();
+    rec('szuflada', norm(cellOf().textContent) === `${norm(pxText(p.tps[0].price))} (50%) · ${norm(pxText(p.tps[1].price))}`, `komórka TP: «${norm(cellOf().textContent)}»`);
+    cellOf().querySelector('button').click(); await sleep(80);
+    const ed = dk.querySelector('.bt-dk-tpe');
+    const rows = [...(ed?.querySelectorAll('.bt-dk-tpr') || [])];
+    rec('szuflada', !!ed && rows.length === 3 && !!rows[0].querySelector('[name="tpp"]') && !rows[1].querySelector('[name="tpp"]') && !!rows[2].querySelector('[name="tpr"]'), `edytor listy: ${rows.length} wiersze (dwa poziomy i pusty na nowy), ostatni poziom bez pola procentu`);
+    // runda 2: podpis pola nowego poziomu mieści się w polu (wcześniej ucięty do „nowy po”)
+    const phIn = rows[2].querySelector('[name="tpr"]'), phCs = getComputedStyle(phIn), phCv = document.createElement('canvas').getContext('2d');
+    phCv.font = `${phCs.fontWeight} ${phCs.fontSize} ${phCs.fontFamily}`;
+    const phNeed = phCv.measureText(phIn.placeholder).width, phHave = phIn.clientWidth - parseFloat(phCs.paddingLeft) - parseFloat(phCs.paddingRight);
+    rec('szuflada', phNeed <= phHave, `podpis «${phIn.placeholder}» mieści się w polu (${Math.round(phNeed)} px z ${Math.round(phHave)} px)`);
+    await shot('szuflada-edytor-tp');
+    // zmiana ceny TP2 + Enter
+    const tp2in = rows[1].querySelector('[name="tpr"]'), np = q(p.tps[1].price + 5);
+    tp2in.value = String(np); key('Enter', {}, tp2in); await sleep(120);
+    rec('szuflada', pos().tps[1].price === np && !dk.querySelector('.bt-dk-tpe'), `Enter zapisuje cenę TP2: ${pos().tps[1].price} = ${np}, edytor zamknięty`);
+    // nowy poziom z pustego wiersza (bez procentu: podział po równo 3 poziomy)
+    cellOf().querySelector('button').click(); await sleep(60);
+    const nin = dk.querySelectorAll('.bt-dk-tpe .bt-dk-tpr')[2].querySelector('[name="tpr"]'), np3 = q(pos().avg + 70);
+    nin.value = String(np3); key('Enter', {}, nin); await sleep(120);
+    rec('szuflada', pos().tps.length === 3 && pos().tps[2].price === np3 && pos().tps.map((x) => x.pct).join() === '33,33,34', `nowy poziom: ${JSON.stringify(pos().tps.map((x) => [x.price, x.pct]))}`);
+    // błąd silnika (cena pod ceną bieżącą) zostaje pod polem, edytor otwarty
+    cellOf().querySelector('button').click(); await sleep(60);
+    const bad = dk.querySelectorAll('.bt-dk-tpe .bt-dk-tpr')[0].querySelector('[name="tpr"]');
+    bad.value = String(q(pos().avg - 50)); key('Enter', {}, bad); await sleep(100);
+    const er = dk.querySelector('.bt-dk-tpe .bt-dk-err');
+    rec('szuflada', !!dk.querySelector('.bt-dk-tpe') && er && !er.hidden && /^TP1 \(.+\) leży za ceną .+: TP musi leżeć po stronie zysku\./.test(norm(er.textContent)) && bad.getAttribute('aria-invalid') === 'true', `błąd pod polem: «${norm(er?.textContent || '')}»`);
+    // pusta cena usuwa poziom
+    bad.value = ''; key('Enter', {}, bad); await sleep(120);
+    rec('szuflada', pos().tps.length === 2 && !dk.querySelector('.bt-dk-tpe'), `pusta cena usuwa poziom (${pos().tps.length} poziomy)`);
+    // Esc zamyka bez zmian
+    cellOf().querySelector('button').click(); await sleep(60);
+    key('Escape', {}, dk.querySelector('.bt-dk-tpe input')); await sleep(60);
+    rec('szuflada', !dk.querySelector('.bt-dk-tpe') && pos().tps.length === 2, 'Esc zamyka edytor bez zmian');
+    await closeAllNow(); await clearTpRows();
+  });
+
+  // ---------- tryb przeglądania przeszłości i dokładka: plakietki TP nie rysują się po kursorze, plan liczy się od otwartej ilości ----------
+  if (wide) await section('przeszlosc', async () => {
+    await openLadder({ tps: [20, 40], qty: 10 });
+    // dokładka 5: plan 15 → 8/7
+    RP.orders().setLevel('NQ', 'sl', pos().avg - 30); await sleep(60);
+    setF('qty', 5); await sleep(40);
+    RP.orders().submit('buy'); await sleep(120);
+    rec('przeszlosc', pos().openQty === 15 && tpPlan(pos()).map((x) => x.qty).join() === '8,7', `po dokładce plan 8/7 (${tpPlan(pos()).map((x) => x.qty)})`);
+    rec('przeszlosc', norm(mainText('ptp')).includes(' · 8 · ') && norm(mainText('ptp2')).includes(' · 7 · '), `plakietki 8 i 7: «${mainText('ptp')}» / «${mainText('ptp2')}»`);
+    // częściowe zamknięcie 6: zostaje 9 → 5/4 (round(4,5) = 5)
+    RP.orders().closeQty('NQ', 6); await sleep(120);
+    rec('przeszlosc', pos().openQty === 9 && tpPlan(pos()).map((x) => x.qty).join() === '5,4' && norm(mainText('ptp')).includes(' · 5 · '), `po ręcznym wyjściu 6 plan 5/4 («${mainText('ptp')}»)`);
+    // cofnięty kursor: plakietki pozycji z czasem po kursorze nie są rysowane
+    await RP.goTo(RP.cursor() - 600); await sleep(250);
+    rec('przeszlosc', !tag('ptp') && !tag('ptp2'), 'przy przeglądaniu przeszłości plakietek TP nie ma');
+    RP.orders().refresh(); scr().querySelector('[data-o="back"]')?.click();
+    await RP.goTo(RP.book().hw); await sleep(250);
+    rec('przeszlosc', !!tag('ptp') && !!tag('ptp2'), 'po powrocie do teraz plakietki wracają');
+    await closeAllNow(); await clearTpRows();
+  });
+
+  // ---------- 375: krótkie plakietki poziomów, bez poziomego przewijania, × nie przykryte ----------
+  if (narrow) await section('telefon', async () => {
+    moreOpen(); await sleep(80);
+    await closeAllNow(); abeOff();
+    setF('sl', 10); setF('tp', 20); addBtn().click(); await sleep(20); setF('tp2', 40); setF('qty', 10); await sleep(60);
+    RP.orders().submit('buy'); await sleep(140);
+    const avg = pos().avg;
+    host().scrollIntoView({ block: 'start' }); await sleep(80);
+    rec('telefon', pos().tps.length === 2 && !!tag('ptp') && !!tag('ptp2'), 'dwa poziomy na wykresie');
+    rec('telefon', norm(mainText('ptp')) === `TP1 ${money(2000)}` && norm(mainText('ptp2')) === `TP2 ${money(4000)}`, `krótkie plakietki: «${mainText('ptp')}» / «${mainText('ptp2')}»`);
+    RP.orders().setLevel('NQ', 'tp', q(avg + 40.25)); await sleep(80);
+    RP.orders().setLevel('NQ', 'tp', q(avg + 40.5)); await sleep(150);
+    const tags = [...layer().querySelectorAll('.bt-tag')];
+    rec('telefon', overlaps(tags) === 0, `plakietki rozsunięte bez nakładania (${overlaps(tags)})`);
+    const h = hits(layer().querySelectorAll('.bt-tag-x'));
+    rec('telefon', h.n >= 4 && h.bad.length === 0, `środki × trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    rec('telefon', document.documentElement.scrollWidth <= innerWidth && scr().scrollWidth <= scr().clientWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth} ≤ ${innerWidth})`);
+    await shot('telefon');
+    await closeAllNow();
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

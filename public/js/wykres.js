@@ -16,9 +16,10 @@ import { createRysunki, NO_STATS, NO_ACCOUNT, adoptEdited, planTradeSave, tickOf
 import { positionStats, statsText, statsOf, statBoxes } from './pozycja-staty.js';
 
 // P28: daty trade'a zapisujemy w strefie przeglądarki, jak formularz trade'a (form.js), więc chwila w Notion zgadza się z resztą aplikacji
-const BROWSER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; } catch { return 'Europe/Warsaw'; } })();
+// 3.11.2026: strefa zapisu dat edytowanej pozycji to strefa aplikacji (domyślnie Nowy Jork), nie strefa przeglądarki
 import { confirmDialog } from './modal.js';
 import { parseTf } from './swiece.js';
+import { appTz, tzShort } from './strefa.js';
 
 export const LWC_URL = '/vendor/lightweight-charts/lightweight-charts.standalone.production.mjs';
 export const DRAW_URL = '/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js';
@@ -85,7 +86,8 @@ export function tradeLevels(trade, c, cfg = chartSettings()) {
 export function positionDrawing(trade, D, c, lastTime) {
   const { entryPrice: ep, sl, tp } = trade;
   if (!Number.isFinite(ep) || !(Number.isFinite(sl) || Number.isFinite(tp))) return null;
-  const long = Number.isFinite(tp) ? tp >= ep : sl <= ep;
+  // 1.7-1: pozycja replayu niesie kierunek (SL po stronie zysku albo brak TP nie mogą odwrócić rysunku)
+  const long = trade.dir ? trade.dir !== 'Short' : Number.isFinite(tp) ? tp >= ep : sl <= ep;
   const kind = long ? 'long-position' : 'short-position';
   const t0 = Math.floor(trade.at / 1000), t1 = trade.exitAt != null ? Math.floor(trade.exitAt / 1000) : Math.max(t0 + 60, lastTime || 0);
   // P27 (28.10.2026), słowa użytkownika: «mi chodzi zeby na niej widoczny byl punkt be»: BE z pola trade'a jako poziom pozycji (linia i podpis rysuje extrasPrimitive)
@@ -178,9 +180,12 @@ export function extrasPrimitive({ chart, series, getDrawings, getCandles, getSte
           ctx.beginPath(); ctx.moveTo(Math.round(p.x1 * hr), y); ctx.lineTo(Math.round(p.x2 * hr), y); ctx.stroke();
           ctx.setLineDash([]);
         } else if (p.role === 'be-label' || p.role === 'rr') {
-          ctx.fillStyle = p.role === 'rr' ? col.fg : col.be;
+          ctx.fillStyle = p.role === 'rr' ? col.fg : beInk(col);
           ctx.textAlign = p.anchor === 'end' ? 'right' : p.anchor === 'middle' ? 'center' : 'left';
           ctx.textBaseline = 'middle';
+          // podpis „BE” z cienkim obrysem (1,5 px, runda 3 R2-P2-1: wcześniejsze 3 px wyglądało w Platinum jak jasna podkładka) w kolorze tła wykresu: czytelny także na zielonym albo czerwonym polu pozycji (kontrast ≥ 4,5:1 w Platinum, mierzony pikselami ze zrzutu)
+          // R3-P3 (runda 4): obrys w kolorze pola, na którym stoi podpis (strefa zysku albo straty, p.zone z geometrii), zamiast koloru tła wykresu, który w Platinum wyglądał jak jasna ramka
+          if (p.role === 'be-label') { ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1, 1.5 * hr); ctx.strokeStyle = fieldColor(col, p.zone); ctx.strokeText(p.text, Math.round(p.x * hr), Math.round(p.y * vr)); ctx.restore(); }
           ctx.fillText(p.text, Math.round(p.x * hr), Math.round(p.y * vr));
         } else if (p.role === 'exit-path') {
           // P28: jak .lvl.path w podglądzie: --fg przy 55%, kreska 2/3
@@ -250,6 +255,36 @@ export function probe(value) {
   const hex = (n) => n.toString(16).padStart(2, '0');
   return a === 255 ? `#${hex(r)}${hex(g)}${hex(b)}` : `rgba(${r}, ${g}, ${b}, ${Math.round((a / 255) * 1000) / 1000})`;
 }
+// Kolor pola pod podpisem „BE”: tło wykresu zmieszane z kolorem strefy pozycji (zysk albo strata) przy przezroczystości 87% jak w positionDrawing (stopTransparency/targetTransparency);
+// poza strefą samo tło. Strefa pozycji jest rysowana przez paczkę na osobnej warstwie, więc nie da się jej odczytać z płótna (próba getImageData zwracała przezroczysty piksel).
+const ZONE_ALPHA = 0.13;
+function fieldColor(col, zone) {
+  try {
+    const z = zone === 'profit' ? col.profit : zone === 'loss' ? col.loss : null;
+    if (!z) return col.bg;
+    const b = rgbOf(col.bg), f = rgbOf(z), c = b.map((v, i) => Math.round(v * (1 - ZONE_ALPHA) + f[i] * ZONE_ALPHA));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  } catch { return col.bg; }
+}
+// R2-P2-1 (runda 3): kolor podpisu „BE” na polu pozycji. W jasnym motywie (tło wykresu jasne) --be przyciemniony o 35% w stronę czerni, bo pole zysku (zielony półprzezroczysty)
+// daje przy samym --be kontrast 4,16:1 (zmierzony na zrzucie), a z przyciemnieniem ≥ 4,5:1; w ciemnym motywie --be bez zmian.
+let inkCtx = null;
+function rgbOf(s) {
+  inkCtx ||= document.createElement('canvas').getContext('2d');
+  inkCtx.fillStyle = 'black'; inkCtx.fillStyle = s;
+  const h = String(inkCtx.fillStyle);
+  if (h[0] === '#') return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  return (h.match(/[\d.]+/g) || [0, 0, 0]).slice(0, 3).map(Number);
+}
+const lumOf = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+export function beInk(col) {
+  try {
+    if (lumOf(rgbOf(col.bg)) <= 0.4) return col.be;
+    const c = rgbOf(col.be).map((v) => Math.round(v * 0.65));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  } catch { return col.be; }
+}
+
 export function readColors(el) {
   const cs = getComputedStyle(el);
   const v = (n) => cs.getPropertyValue(n).trim();
@@ -457,7 +492,8 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
       const d = new Date(time * 1000), f = F();
       return type === 0 ? f.YEAR.format(d) : type === 1 ? f.MONTH.format(d) : type === 2 ? f.DAY.format(d) : f.HM.format(d);
     } },
-    localization: { timeFormatter: (time) => F().FULL.format(new Date(time * 1000)) + (candles[G.timeToIndex(candles, time, step)]?.[6] === 1 ? ' · ' + t('z 1m') : ''), priceFormatter: fmtPrice }, // P55: dopisek „z 1m” w etykiecie czasu kursora
+    localization: { timeFormatter: (time) => F().FULL.format(new Date(time * 1000)) + '\u00a0' + tzShort(chartTz(), time * 1000) + (candles[G.timeToIndex(candles, time, step)]?.[6] === 1 ? ' · ' + t('z 1m') : ''), priceFormatter: fmtPrice },
+    // P55: dopisek „z 1m” w etykiecie czasu kursora
   });
   let autoY = loadAutoScale();
   const chart = LWC.createChart(plot, {
@@ -580,7 +616,7 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
     onTradeDraft: (p) => { draft = p; buildLevels(); },
     // P28: plan zapisu z listą zmian (daty w strefie przeglądarki, jak formularz trade'a; opis zmian w strefie osi wykresu)
     planTrade: (d) => planTradeSave(trade, d, {
-      candles, step, tick: tickOf(instrument), tz: BROWSER_TZ,
+      candles, step, tick: tickOf(instrument), tz: appTz(),
       fmt: { price: (v) => F_PRICE.format(v), time: (ms) => { const f = F(), dt = new Date(ms); return `${f.DAY.format(dt)} ${f.HM.format(dt)}`; }, r: (v) => fmtR(v) },
     }),
     exitPoint: (d) => extras.exitPoint(d),

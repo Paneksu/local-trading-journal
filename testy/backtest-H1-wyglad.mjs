@@ -32,9 +32,11 @@ export default ({ test, H, assert, ROOT }) => {
   test('backtest-H1: data na liście sesji w języku aplikacji', async () => {
     const F = await imp('public/js/format.js');
     assert.equal(typeof F.dateTimeShort, 'function');
-    const now = new Date(2026, 9, 30, 18, 0);
-    assert.match(F.dateTimeShort(new Date(2026, 9, 30, 15, 24), now), /^30\spaź, 15:24$/u);
-    assert.match(F.dateTimeShort(new Date(2025, 0, 5, 9, 7), now), /^5\ssty 2025, 09:07$/u);
+    // [U] 3.11.2026 «mala poprawka do notion i do journalingu, ja wpisuje godziny wedle nowojorskiego czasu nie polskiego»: dzień i godzina na zegarze strefy aplikacji (domyślnie NY), z opcjonalnym podpisem
+    const now = new Date(Date.UTC(2026, 9, 30, 22, 0));
+    assert.match(F.dateTimeShort(new Date(Date.UTC(2026, 9, 30, 14, 24)), now), /^30\spaź, 10:24$/u);
+    assert.match(F.dateTimeShort(new Date(Date.UTC(2025, 0, 5, 14, 7)), now), /^5\ssty 2025, 09:07$/u);
+    assert.match(F.dateTimeShort(new Date(Date.UTC(2026, 9, 30, 14, 24)), now, { withTz: true }), /^30\spaź, 10:24[\s\u00a0]NY$/u);
     const src = readFileSync(path.join(ROOT, 'public/js/bt-widok.js'), 'utf8');
     assert.ok(/dateTimeShort\(/.test(src) && !/Intl\.DateTimeFormat\(undefined/.test(src), 'lista sesji bez języka przeglądarki');
     // ta sama klasa błędu w całym module (pasek replayu pisał „Tue, 12 Mar 2024”)

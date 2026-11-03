@@ -119,8 +119,13 @@ try {
   } else {
     await section('zegar', async () => {
       const ny = scr().querySelector('.bt-clock-ny');
-      rec('zegar', ny && /09:31(:00)? NY/.test(ny.textContent), `godzina NY przy zegarze («${ny?.textContent}»)`);
+      // [U] 3.11.2026 «mala poprawka do notion i do journalingu, ja wpisuje godziny wedle nowojorskiego czasu nie polskiego»: domyślnie zegar jest w NY i ma podpis „NY”; w innej strefie z Ustawień obok stoi godzina NY
+      rec('zegar', ny && ny.textContent === 'NY', `podpis strefy przy zegarze w NY («${ny?.textContent}»)`);
+      const PG = await import('/js/podglad.js');
+      PG.setChartTzDefault('Europe/Warsaw'); await RP.goTo(RP.cursor() + 1); await sleep(400);
+      rec('zegar', ny && /09:31(:0\d)? NY/.test(ny.textContent), `godzina NY przy zegarze w innej strefie («${ny?.textContent}»)`);
       rec('zegar', /Warszawa|UTC/.test(scr().querySelector('.bt-clock')?.title || ''), `strefa zegara w podpowiedzi («${scr().querySelector('.bt-clock')?.title}»)`);
+      PG.setChartTzDefault('');
       rec('notion', scr().querySelector('[data-bt="notion"]').hidden && /Notion/.test(scr().querySelector('.bt-notion').textContent), `bez zaległości: sam stan Notion, bez przycisku («${scr().querySelector('.bt-notion').textContent}»)`);
     });
 
@@ -148,15 +153,17 @@ try {
       const ch = RP.chart(), plot = scr().querySelector('.bt-plot').getBoundingClientRect();
       const tag = ch.tradeLayer().querySelector('[data-k="pos"]'), tr = tag.getBoundingClientRect();
       const bs = ch.bars(), lastX = ch.chart.timeScale().timeToCoordinate(bs[bs.length - 1][0]);
-      rec('etykiety', tr.left - plot.left <= 24, `etykieta pozycji przy lewej krawędzi (${Math.round(tr.left - plot.left)} px)`);
-      rec('etykiety', tr.right < plot.left + lastX - 40, `etykieta nie sięga świec przy kursorze (prawa krawędź ${Math.round(tr.right - plot.left)}, świeca ${Math.round(lastX)})`);
+      // 1.7-1 [U] 1.11.2026 «… będą one po prawej, a nie po lewej.»: plakietka przy osi ceny, w marginesie za ostatnią świecą (zastępuje „przy lewej krawędzi”)
+      const axisLeft = plot.left + plot.width - (ch.series.priceScale().width() || 0);
+      rec('etykiety', Math.abs(tr.right - (axisLeft - 4)) <= 1.5, `etykieta pozycji przy osi ceny (prawa krawędź ${Math.round(tr.right)}, oś − 4 = ${Math.round(axisLeft - 4)})`);
+      rec('etykiety', tr.left > plot.left + lastX + 8, `etykieta stoi za ostatnią świecą (lewa krawędź ${Math.round(tr.left - plot.left)}, świeca ${Math.round(lastX)})`);
       const p = pos(), slT = ch.tradeLayer().querySelector('[data-k="psl"] .bt-tag-t')?.textContent || '', tpT = ch.tradeLayer().querySelector('[data-k="ptp"] .bt-tag-t')?.textContent || '';
       rec('etykiety', /^SL /.test(slT) && slT.includes(fmtMoney(-12 * 20 * p.qty)), `SL pozycji z kwotą («${slT}»)`);
       rec('etykiety', /^TP /.test(tpT) && tpT.includes(fmtMoney(24 * 20 * p.qty)), `TP pozycji z kwotą («${tpT}»)`);
       tag.querySelector('[data-tl="x"]').click(); await sleep(30);
-      const m = ch.tradeLayer().querySelector('.bt-tag-m'), mr = m?.getBoundingClientRect();
-      rec('etykiety', m && mr.left >= plot.left && mr.right < plot.left + lastX, 'menu procentów pod etykietą, w polu wykresu');
-      tag.querySelector('[data-tl="x"]').click(); await sleep(30);
+      const m = ch.tradeLayer().querySelector('.bt-part'), mr = m?.getBoundingClientRect();
+      rec('etykiety', m && mr.left >= plot.left && mr.right <= plot.right + 0.5, 'okno zamknięcia części pod plakietką, w polu wykresu');
+      ch.tradeLayer().querySelector('[data-tl="x"]').click(); await sleep(30);
     });
 
     await section('skroty', async () => {

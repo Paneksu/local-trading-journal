@@ -207,9 +207,12 @@ try {
       rec('zlecenie', pp(cs[0]) && pp(cs[2]) && pp(cs[0]).entryPrice === bk().positions.NQ.entryPrice && pp(cs[2]).entryPrice === pp(cs[0]).entryPrice, 'ten sam instrument na dwóch wykresach: ta sama pozycja NQ');
       rec('zlecenie', pp(cs[1]).entryPrice === bk().positions.ES.entryPrice, 'ES nadal ma swoją pozycję po otwarciu NQ');
       // przeciągnięcie SL na wykresie ES (nieaktywny instrument) zmienia pozycję ES
-      const m1 = cs[1].manager(), d1 = cs[1].tradingState().position;
+      // 1.7-1: SL przeciąga się plakietką na wykresie tego instrumentu (rysunek pozycji jest zablokowany)
+      const lay1 = cs[1].tradeLayer(), hr1 = lay1.parentElement.getBoundingClientRect(), el1 = lay1.querySelector('[data-k="psl"]'), er1 = el1.getBoundingClientRect();
       const sl0 = bk().positions.ES.sl;
-      m1.update({ ...d1, style: { ...d1.style, stopLevel: 7 } });
+      const pev1 = (type, y) => el1.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: er1.left + 8, clientY: y, pointerId: 5, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true }));
+      const y1 = hr1.top + cs[1].series.priceToCoordinate(bk().positions.ES.entryPrice - 7);
+      pev1('pointerdown', er1.top + er1.height / 2); pev1('pointermove', y1); pev1('pointerup', y1);
       await sleep(400);
       rec('zlecenie', bk().positions.ES.sl === bk().positions.ES.entryPrice - 7 && sl0 !== bk().positions.ES.sl, `SL przeciągnięty na wykresie nieaktywnego instrumentu: ${sl0} -> ${bk().positions.ES.sl}`);
       activate(R4, 1);

@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: pozycja na wykresie 1.7-1 (strona robocza)</title>
+<!-- Strona robocza testów backtest-171 (testy/backtest-171-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: pozycja obsługiwana liniami (wejście, SL, TP), plakietki po prawej przy osi, przeciąganie SL/TP z odczytem, +SL/+TP, usuwanie z „Cofnij”,
+     BE, zamknięcie części z podglądem, edycja SL/TP w szufladzie, dwa wykresy jednego instrumentu, margines za ostatnią świecą, sesja 1.6 z otwartą pozycją.
+     Parametry: ?w=375 (wąski ekran), ?theme=platinum, ?shots=1 (zrzuty przez most CDP window.__shot do katalogu z testu). Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const shots = qs.get('shots') === '1';
+// zrzuty (?shots=1) przechodzą wszystkie sceny także przy 375 px; w testach wąski ekran sprawdza tylko sekcje telefonu (reszta jest sprawdzana przy 1920)
+const wide = !narrow || shots;
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  // zrzuty bez panelu journala po poprzednim trade'zie i bez starego powiadomienia (poza sceną „usuniety-sl”)
+  if (!name.startsWith('journal')) document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  const tz = document.getElementById('toast');
+  if (tz && name !== 'usuniety-sl') tz.hidden = true;
+  await sleep(120);
+  window.__shot(JSON.stringify({ id, name: `${name}-${qs.get('theme') === 'platinum' ? 'platinum' : 'onyx'}-${narrow ? 375 : 1920}` }));
+  await until(() => window.__done?.[id], 10000);
+};
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const mkDef = () => ({ instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] });
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja 171', def: mkDef(), now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  let RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const stepN = async (n) => { for (let i = 0; i < n; i++) { await RP.step(1); } await sleep(60); };
+  const ch = () => RP.chart();
+  const host = () => scr().querySelector('.bt-plot');
+  const layer = (c = ch()) => c.tradeLayer();
+  const tag = (k, c = ch()) => layer(c).querySelector(`[data-k="${k}"]`);
+  const acts = () => layer().querySelector('.bt-tag-act');
+  const live = () => layer().querySelector('.bt-tl-live')?.textContent || '';
+  const lastPx = () => { const b = ch().bars(); return b[b.length - 1][4]; };
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const yPx = (px, c = ch()) => host().getBoundingClientRect().top + c.series.priceToCoordinate(px);
+  const pe = (type, el, x, y, extra = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true, ...extra }));
+  const center = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const fmt2 = (x) => new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+  // fokus plakietki z zdarzeniem focusin (nagłówkowa przeglądarka bez fokusu systemowego nie zawsze je wysyła)
+  const focusTag = (k) => { const el = tag(k); el.focus(); el.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); };
+  // WIDOCZNY tekst plakietki: sam .bt-tag-t (bez rzędu przycisków) i ostrzeżenie „bez SL” tylko, gdy nie jest ukryte; textContent całej plakietki czytałby też ukryte węzły
+  const mainText = (k) => tag(k)?.querySelector('.bt-tag-t')?.textContent ?? '';
+  const warnShown = () => { const w = tag('pos')?.querySelector('.bt-tag-warn'); return !!w && !w.hidden && getComputedStyle(w).display !== 'none'; };
+  const norm = (x) => String(x).replace(/\s/g, ' ');
+  // każdy przycisk i pole okna „Zamknij część” trafia sam w siebie (nic: kolumna przycisków ani plakietka, nie leży nad oknem); zwraca liczbę sprawdzonych elementów i listę błędów
+  const partHits = () => {
+    const pn = layer().querySelector('.bt-part'), bad = [];
+    const els = [...(pn?.querySelectorAll('button, input') || [])];
+    for (const b of els) {
+      const r = b.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!(hit === b || b.contains(hit))) bad.push(`${b.dataset.tl || b.name} → ${hit?.dataset?.tl || hit?.className || hit?.tagName}`);
+    }
+    return { n: els.length, bad };
+  };
+  const tapEl = async (el) => { const [x, y] = center(el); pe('pointerdown', el, x, y, { pointerType: 'touch' }); el.focus(); el.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); pe('pointerup', el, x, y, { pointerType: 'touch' }); el.click(); await sleep(80); };
+  const closeAllNow = async () => { if (pos()) RP.orders().closeAll(); await sleep(80); };
+  // wejście z panelu: SL i TP w punktach (puste = bez), ilość ręczna albo z ryzyka
+  const openPos = async ({ side = 'buy', sl = 10, tp = 20, qty = null } = {}) => {
+    await closeAllNow();
+    setF('sl', sl === '' ? '' : sl); setF('tp', tp === '' ? '' : tp);
+    if (qty != null) setF('qty', qty); else { P('[name="qty"]').value = ''; P('[name="qty"]').dispatchEvent(new Event('input', { bubbles: true })); }
+    RP.orders().submit(side); await sleep(80);
+  };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(80);
+  if (qs.get('shots') === '1') for (const f of ['.bt-jr']) document.querySelectorAll(f).forEach((x) => x.remove());
+
+  // ---------- plakietki po prawej, rysunek zablokowany, margines ----------
+  await section('plakietki', async () => {
+    setF('sl', 10); setF('tp', 20);
+    await openPos({ sl: 10, tp: 20 });
+    await stepN(6);
+    const c = ch(), hr = host().getBoundingClientRect();
+    const axisLeft = hr.left + hr.width - (c.series.priceScale().width() || 0);
+    const bs = c.bars(), lastX = hr.left + c.chart.timeScale().timeToCoordinate(bs[bs.length - 1][0]);
+    for (const k of ['pos', 'psl', 'ptp']) {
+      const el = tag(k);
+      rec('plakietki', !!el && !el.hidden, `plakietka ${k} widoczna`);
+      if (!el || el.hidden) continue;
+      const r = el.getBoundingClientRect();
+      rec('plakietki', Math.abs(r.right - (axisLeft - 4)) <= 1.5, `${k}: prawa krawędź = oś − 4 (${Math.round(r.right)} vs ${Math.round(axisLeft - 4)})`);
+      rec('plakietki', r.left > lastX + 8, `${k}: lewa krawędź za ostatnią świecą (${Math.round(r.left)} vs ${Math.round(lastX)})`);
+    }
+    const p = pos();
+    const ys = { pos: yPx(p.entryPrice), psl: yPx(p.sl), ptp: yPx(p.tp) };
+    for (const k of ['pos', 'psl', 'ptp']) { const r = tag(k).getBoundingClientRect(); rec('plakietki', !!tag(k).dataset.edge || Math.abs((r.top + r.bottom) / 2 - ys[k]) <= 3, `${k}: środek plakietki na cenie linii (${Math.round((r.top + r.bottom) / 2)} vs ${Math.round(ys[k])}, wejście ${Math.round(ys.pos)})`); }
+    // poza widokiem ceny plakietka stoi przy krawędzi ze strzałką; klik przewija oś do poziomu (auto-skala zostaje wyłączona)
+    for (const k of ['psl', 'ptp']) {
+      const el = tag(k);
+      if (!el.dataset.edge) continue;
+      const before = el.dataset.edge;
+      el.querySelector('.bt-tag-t').click(); await sleep(250);
+      rec('plakietki', !tag(k).dataset.edge && c.auto() === false, `klik w plakietkę ${k} przy krawędzi (${before}) przewija oś do poziomu`);
+      c.setAuto(true); await sleep(200);
+    }
+    const posT = mainText('pos');
+    // format ze specyfikacji B (bez alternatywy): „LONG 3 · +520 $ · +1,30R”, na telefonie „LONG +1,30R”
+    rec('plakietki', narrow ? /^LONG [+−-]?\d,\d\dR$/.test(mainText('pos')) : /^LONG \d+ · [+−-]?[\d\s]+\$ · [+−-]?\d,\d\dR$/.test(mainText('pos')), `wejście: «${mainText('pos')}»`);
+    rec('plakietki', !warnShown(), 'przy postawionym SL ostrzeżenie „bez SL” jest ukryte');
+    rec('plakietki', getComputedStyle(tag('pos')).fontSize.replace('px', '') >= 11 && tag('pos').getBoundingClientRect().height >= 23.5, `plakietka ≥ 11 px i 24 px wysokości (${getComputedStyle(tag('pos')).fontSize}, ${Math.round(tag('pos').getBoundingClientRect().height)} px)`);
+    rec('plakietki', !layer().querySelector('.bt-lead') || [...layer().querySelectorAll('.bt-tag')].some((e) => e.dataset.edge), 'bez kolizji nie ma kreski łączącej plakietkę z linią');
+    rec('plakietki', /SL/.test(tag('psl').textContent), `SL: «${tag('psl').textContent}»`);
+    rec('plakietki', narrow ? /TP .*\$/.test(tag('ptp').textContent) : /TP .*\$ · .*R/.test(tag('ptp').textContent), `TP: «${tag('ptp').textContent}»`);
+    // rysunek pozycji zostaje tylko jako tło stref, zablokowany
+    const d = c.tradingState().position;
+    rec('rysunek', !!d && d.locked === true, 'rysunek pozycji zablokowany (tło stref)');
+    // linie: wejście ciągła, SL i TP kreskowane (znaczniki osi z tytułami)
+    const marks = c.positionMarks();
+    // znaczniki osi z ceną, bez tytułów: tytuł rysowałby się na lewo od ceny, czyli pod plakietką (prawa krawędź = oś − 4 px), a plakietka niesie ten sam tekst
+    rec('plakietki', marks.length === 3 && marks.every((m) => m.axis && !m.title) && [p.entryPrice, p.sl, p.tp].every((px) => marks.some((m) => m.price === px)), `znaczniki osi: ${marks.map((m) => `${m.price}${m.title ? ' ' + m.title : ''}`).join(', ')}`);
+    await shot('linie');
+    // margines: prawa strefa zawsze mieści najszerszą plakietkę (zoom ×0,5, ×1, ×3)
+    for (const sp of [3, 6, 18]) {
+      c.chart.timeScale().applyOptions({ barSpacing: sp }); await sleep(260);
+      const hr2 = host().getBoundingClientRect(), axisL = hr2.left + hr2.width - (c.series.priceScale().width() || 0);
+      const lx = hr2.left + c.chart.timeScale().timeToCoordinate(c.bars()[c.bars().length - 1][0]);
+      const left = Math.min(...['pos', 'psl', 'ptp'].map((k) => tag(k).getBoundingClientRect().left));
+      rec('margines', left >= lx + 8 - 0.5, `odstęp świeca–plakietka ≥ 8 px przy barSpacing ${sp} (${Math.round(left - lx)} px, oś ${Math.round(axisL)})`);
+    }
+    c.chart.timeScale().applyOptions({ barSpacing: 6 }); await sleep(200);
+  });
+
+  // ---------- przeciąganie SL z odczytem na żywo ----------
+  if (wide) await section('przeciaganie', async () => {
+    const p0 = pos(), slBefore = p0.sl, logN = p0.log.length;
+    const el = tag('psl'), [x, y] = center(el);
+    const target = q(Math.min(lastPx() - 1, slBefore + 4));
+    const lastBarX = () => ch().chart.timeScale().timeToCoordinate(ch().bars().at(-1)[0]);
+    const x0 = lastBarX();
+    pe('pointerdown', el, x, y);
+    pe('pointermove', el, x, yPx(target)); await sleep(60);
+    const t1 = el.textContent;
+    await sleep(300);
+    rec('przeciaganie', Math.abs(lastBarX() - x0) <= 1, `świece nie uciekają przy chwycie i przeciąganiu (ostatnia świeca ${Math.round(x0)} → ${Math.round(lastBarX())} px)`);
+    rec('przeciaganie', getComputedStyle(el.querySelector('.bt-tag-note')).borderTopLeftRadius === '0px' && getComputedStyle(el.querySelector('.bt-tag-note')).borderTopWidth === '0px', 'notatka „ryzyko teraz” bez zaokrąglonej podkładki i obramowania (tekst z kropką)');
+    rec('przeciaganie', /SL/.test(t1) && /pkt/.test(t1) && /\$/.test(t1) && /R/.test(t1), `odczyt w trakcie: pkt, $ i R («${t1}»)`);
+    rec('przeciaganie', /ryzyko teraz/i.test(el.querySelector('.bt-tag-note')?.textContent || ''), `notka „ryzyko teraz” («${el.querySelector('.bt-tag-note')?.textContent}»)`);
+    rec('przeciaganie', pos().sl === slBefore, 'w trakcie silnik działa na zatwierdzonym SL');
+    await shot('przeciaganie');
+    // Esc anuluje
+    key('Escape'); pe('pointerup', el, x, yPx(target)); await sleep(80);
+    rec('przeciaganie', pos().sl === slBefore && pos().log.length === logN, 'Esc anuluje bez zmian');
+    // zatwierdzenie
+    const el2 = tag('psl'), [x2, y2] = center(el2);
+    pe('pointerdown', el2, x2, y2); pe('pointermove', el2, x2, yPx(target)); await sleep(40); pe('pointerup', el2, x2, yPx(target)); await sleep(100);
+    rec('przeciaganie', pos().sl === target && pos().log.length === logN + 1 && pos().sl0 === p0.sl0, `puszczenie zapisuje SL ${target}, sl0 bez zmian`);
+    { const { positionPrices } = await import('/js/rysunki.js'); const pp = positionPrices(ch().tradingState().position, 0.25); rec('rysunek', !!pp && pp.sl === pos().sl, `strefy idą za liniami (SL rysunku ${pp?.sl} vs ${pos().sl})`); }
+    rec('przeciaganie', norm(live()) === norm(`SL ${fmt2(target)}`), `komunikat aria-live dokładnie z ceną («${live()}», oczekiwane «SL ${fmt2(target)}»)`);
+    // odrzucenie: SL nad ceną bieżącą wraca z komunikatem
+    const el3 = tag('psl'), [x3, y3] = center(el3);
+    pe('pointerdown', el3, x3, y3); pe('pointermove', el3, x3, yPx(lastPx() + 3)); await sleep(40); pe('pointerup', el3, x3, yPx(lastPx() + 3)); await sleep(100);
+    rec('przeciaganie', pos().sl === target, 'SL po złej stronie ceny odrzucony, linia wraca');
+    rec('przeciaganie', /złej stronie|odrzucon/i.test(live()), `komunikat odrzucenia («${live()}»)`);
+    // chwyt za samą linię (pas ±4 px), bez plakietki
+    const hr = host().getBoundingClientRect(), yl = yPx(pos().tp);
+    const tpBefore = pos().tp, tpTarget = q(tpBefore + 3);
+    pe('pointerdown', host(), hr.left + 120, yl + 2); pe('pointermove', host(), hr.left + 120, yPx(tpTarget)); pe('pointerup', host(), hr.left + 120, yPx(tpTarget)); await sleep(100);
+    rec('przeciaganie', pos().tp === tpTarget, `chwyt linii TP w pasie ±4 px (${tpBefore} → ${pos().tp})`);
+    // z dala od linii nic nie łapie
+    pe('pointerdown', host(), hr.left + 120, yPx(pos().tp) + 40); pe('pointerup', host(), hr.left + 120, yPx(pos().tp) + 40); await sleep(40);
+    rec('przeciaganie', pos().tp === tpTarget, 'kliknięcie z dala od linii nie rusza TP');
+    // linii wejścia nie da się przeciągać
+    const ent = tag('pos'), [ex, ey] = center(ent), ep = pos().entryPrice;
+    pe('pointerdown', ent, ex, ey); pe('pointermove', ent, ex, ey - 40); pe('pointerup', ent, ex, ey - 40); await sleep(60);
+    rec('przeciaganie', pos().entryPrice === ep && pos().sl === target, 'linia wejścia nie jest przeciągana');
+  });
+
+  // ---------- +SL / +TP, usuwanie z Cofnij ----------
+  if (wide) await section('plusy', async () => {
+    const entry = tag('pos');
+    focusTag('pos'); await sleep(40);
+    rec('plusy', !acts() || !acts().querySelector('[data-tl="sl+"]'), 'przy istniejącym SL nie ma „+SL”');
+    // 1.7-5: „+TP” zostaje, dopóki poziomów jest mniej niż 4 (wcześniej tylko przy braku TP)
+    rec('plusy', !!acts() && !!acts().querySelector('[data-tl="tp+"]'), 'przy jednym TP „+TP” jest widoczne (dodaje kolejny poziom, do 4)');
+    // usunięcie TP jedną akcją
+    tag('ptp').querySelector('[data-tl="rm"]').click(); await sleep(100);
+    rec('usun', pos().tp === null && pos().tps.length === 0, 'TP usunięty jednym kliknięciem ×');
+    rec('usun', pos().sl !== null && !tag('ptp'), 'SL nietknięty, plakietka TP znika');
+    // +TP: linia w ręku
+    focusTag('pos'); await sleep(40);
+    const plusTp = acts()?.querySelector('[data-tl="tp+"]');
+    rec('plusy', !!plusTp, 'po usunięciu wraca „+TP”');
+    plusTp.click(); await sleep(60);
+    const hand = tag('hand');
+    rec('plusy', !!hand && /TP/.test(hand.textContent), `linia „w ręku” z plakietką («${hand?.textContent}»)`);
+    const hr = host().getBoundingClientRect(), want = q(pos().entryPrice + 15);
+    pe('pointermove', host(), hr.left + 200, yPx(want)); await sleep(50);
+    rec('plusy', /TP/.test(tag('hand')?.textContent || '') && pos().tp === null, 'ruch myszy przesuwa linię, nic nie zapisane');
+    await shot('plusy');
+    pe('pointerdown', host(), hr.left + 200, yPx(want)); pe('pointerup', host(), hr.left + 200, yPx(want)); await sleep(100);
+    rec('plusy', pos().tp !== null && Math.abs(pos().tp - want) <= 0.5 && !tag('hand'), `klik zatwierdza TP (${pos().tp})`);
+    // Esc anuluje linię w ręku
+    tag('ptp').querySelector('[data-tl="rm"]').click(); await sleep(80);
+    focusTag('pos'); await sleep(30);
+    acts().querySelector('[data-tl="tp+"]').click(); await sleep(40);
+    key('Escape'); await sleep(40);
+    rec('plusy', !tag('hand') && pos().tp === null, 'Esc anuluje linię w ręku');
+    // Enter z klawiatury stawia TP od razu na odległości startowej (pamięć panelu: 20 pkt)
+    focusTag('pos'); await sleep(30);
+    const b = acts().querySelector('[data-tl="tp+"]');
+    const ev = key('Enter', {}, b); await sleep(100);
+    rec('plusy', pos().tp !== null && Math.abs(pos().tp - (pos().entryPrice + 20)) < 0.01 && ev.defaultPrevented, `Enter na „+TP” stawia TP na odległości startowej (${pos().tp})`);
+    // usunięcie SL: komunikat z „Cofnij”, bez potwierdzenia
+    const sl = pos().sl;
+    tag('psl').querySelector('[data-tl="rm"]').click(); await sleep(100);
+    rec('usun', pos().sl === null && pos().sl0 !== null, 'SL usunięty (P6), sl0 zostaje');
+    rec('usun', warnShown() && norm(tag('pos').querySelector('.bt-tag-warn').textContent) === 'bez SL', `plakietka wejścia pokazuje widoczne „bez SL” («${mainText('pos')}»)`);
+    const act = document.querySelector('#toast .toast-act');
+    rec('usun', !!act && /Cofnij/.test(act.textContent) && !document.getElementById('toast').hidden, 'powiadomienie „SL usunięty” z przyciskiem Cofnij');
+    // P6 + P5: po usunięciu SL R zostaje od pierwszego SL, czyli jest liczbą, a nie „R —”
+    rec('usun', /[+−-]?\d,\d\dR$/.test(mainText('pos')) && !/R —/.test(mainText('pos')), `R zostaje od pierwszego SL («${mainText('pos')}»)`);
+    await shot('usuniety-sl');
+    act.click(); await sleep(100);
+    rec('usun', pos().sl === sl, `Cofnij przywraca poprzedni SL (${pos().sl})`);
+    tag('psl').querySelector('[data-tl="rm"]').click(); await sleep(80);
+    focusTag('pos'); await sleep(30);
+    rec('usun', !!acts()?.querySelector('[data-tl="sl+"]'), 'po usunięciu wraca „+SL”');
+    acts().querySelector('[data-tl="sl+"]').click(); await sleep(40);
+    pe('pointermove', host(), 300, yPx(pos().entryPrice - 6)); await sleep(30);
+    pe('pointerdown', host(), 300, yPx(pos().entryPrice - 6)); pe('pointerup', host(), 300, yPx(pos().entryPrice - 6)); await sleep(100);
+    rec('plusy', pos().sl !== null && Math.abs(pos().sl - (pos().entryPrice - 6)) <= 0.5, `+SL, klik: SL postawiony (${pos().sl})`);
+  });
+
+  // ---------- odrzucenie zapisu legacy-copy: komunikat z powodem, nie ogólne „Sprawdź, czy dashboard działa” ----------
+  if (!narrow) await section('zapis', async () => {
+    const orig = client.save;
+    client.save = async () => { const e = new Error('kopia'); e.status = 500; e.code = 'legacy-copy'; throw e; };
+    try {
+      await openPos({ sl: 10, tp: 20 }); await sleep(300);
+      const m = scr().querySelector('.bt-msg').textContent;
+      rec('zapis', /kopii sprzed wersji 1\.7/.test(m) && /miejsce na dysku/.test(m) && /nie jest zapisywana/.test(m), `komunikat o braku kopii i niezapisanej sesji («${m}»)`);
+      rec('zapis', !/Sprawdź, czy dashboard działa/.test(m), 'bez ogólnego komunikatu o dashboardzie');
+    } finally { client.save = orig; }
+  });
+
+  // ---------- „Cofnij” dotyczy tej samej pozycji ----------
+  if (wide) await section('cofnij', async () => {
+    await openPos({ sl: 10, tp: 20, qty: 2 });
+    tag('psl').querySelector('[data-tl="rm"]').click(); await sleep(100);
+    const act = document.querySelector('#toast .toast-act');
+    rec('cofnij', !!act && pos().sl === null, 'SL usunięty, jest „Cofnij”');
+    const oldId = pos().id;
+    await openPos({ sl: '', tp: '', qty: 2 });
+    rec('cofnij', pos().id !== oldId && pos().sl === null, 'otwarta inna pozycja bez SL');
+    document.querySelector('#toast .toast-act')?.click(); await sleep(100);
+    rec('cofnij', pos().sl === null && pos().sl0 === null, 'Cofnij nie ustawia SL ani sl0 nowej pozycji');
+    rec('cofnij', /już zamknięta|already closed/i.test(live()), `komunikat „pozycja już zamknięta” («${live()}»)`);
+    // 1920: szybki panel journala bez paska zwiniętego (zachowanie bez zmian)
+    { const jr = scr().querySelector('.bt-jr'); rec('journal', !!jr && !jr.dataset.compact && getComputedStyle(jr.querySelector('.bt-jr-bar')).display === 'none' && !!jr.querySelector('[name="setup"]') && jr.querySelector('[name="setup"]').getBoundingClientRect().height > 0, '1920: szybki panel journala w pełnej postaci, bez paska'); }
+  });
+
+  // ---------- kolizja poziomów: kreska łącząca plakietkę z linią, cele dotyku ≥ 24 px ----------
+  if (!narrow) await section('lacznik', async () => {
+    await openPos({ sl: 10, tp: 0.25, qty: 2 });
+    await sleep(300);
+    const lead = layer().querySelector('.bt-lead.tp');
+    const tg = tag('ptp'), tr = tg.getBoundingClientRect(), hr = host().getBoundingClientRect();
+    const lineY = yPx(pos().tp), tagY = (tr.top + tr.bottom) / 2;
+    rec('lacznik', Math.abs(tagY - lineY) >= 8, `plakietka TP odsunięta od linii przy kolizji (${Math.round(Math.abs(tagY - lineY))} px)`);
+    const lr = lead?.getBoundingClientRect();
+    rec('lacznik', !!lead && lr.height >= 8 && lr.top <= Math.min(tagY, lineY) + 2 && lr.bottom >= Math.max(tagY, lineY) - 2, `kreska łączy plakietkę z linią (${lr ? Math.round(lr.top) + '–' + Math.round(lr.bottom) : 'brak'}, plakietka ${Math.round(tagY)}, linia ${Math.round(lineY)})`);
+    const rm = tag('ptp').querySelector('[data-tl="rm"]').getBoundingClientRect();
+    rec('lacznik', rm.width >= 23.5 && rm.height >= 23.5, `× na plakietce TP ≥ 24×24 px (${Math.round(rm.width)}×${Math.round(rm.height)})`);
+    focusTag('pos'); await sleep(40);
+    const small = [...acts().querySelectorAll('button')].filter((b) => { const r = b.getBoundingClientRect(); return r.width < 23.5 || r.height < 23.5; });
+    rec('lacznik', small.length === 0, 'przyciski przy wejściu ≥ 24×24 px');
+    await shot('lacznik');
+  });
+
+  // ---------- BE ----------
+  if (wide) await section('be', async () => {
+    await openPos({ sl: '', tp: '', qty: 3 });
+    const p = pos();
+    rec('be', p && p.sl === null && p.sl0 === null, 'wejście bez SL (ręczna wielkość)');
+    rec('be', /R —$/.test(mainText('pos')) && warnShown(), `bez SL: R „—” i widoczne „bez SL” («${mainText('pos')}»)`);
+    focusTag('pos'); await sleep(40);
+    const be = () => acts()?.querySelector('[data-tl="be"]');
+    rec('be', !!acts()?.querySelector('[data-tl="sl+"]') && !!acts()?.querySelector('[data-tl="tp+"]'), 'bez SL i TP są oba przyciski +SL i +TP');
+    await shot('przyciski');
+    rec('be', be() && be().disabled && /poniżej|below/i.test(be().title), `po stronie straty BE nieaktywne z podpowiedzią («${be()?.title}»)`);
+    key('e'); await sleep(60);
+    rec('be', pos().sl === null && /poniżej średniej wejścia|below the average entry/i.test(scr().querySelector('.bt-ord-note')?.textContent || ''), `klawisz E: komunikat zamiast cichego odrzucenia («${scr().querySelector('.bt-ord-note')?.textContent}»)`);
+    // scenariusz deterministyczny, bez zależności od danych: wejście przesunięte 3 pkt pod bieżącą cenę (derive na pozycji w księdze), więc cena jest po stronie zysku, a ścieżki przycisku BE i klawisza E wykonują się zawsze
+    { const { derive } = await import('/js/bt-wypelnienia.js'); const bk = RP.book(), pp = bk.positions.NQ; pp.fills[0].price = q(lastPx() - 3); bk.positions.NQ = derive(pp); RP.orders().refresh(); await sleep(150); }
+    rec('be', lastPx() - pos().entryPrice >= 2.75, `przygotowana pozycja po stronie zysku (cena ${lastPx()}, wejście ${pos().entryPrice})`);
+    {
+      focusTag('pos'); await sleep(40);
+      rec('be', be() && !be().disabled, 'po stronie zysku BE aktywne');
+      be().click(); await sleep(100);
+      rec('be', pos().sl === pos().entryPrice && pos().be === true && pos().sl0 === pos().entryPrice, 'BE bez SL ustawia SL na wejście (sl0 = BE)');
+      rec('be', pos().rUsd === 0 && /ryzyko pierwotne 0|initial risk 0/.test(tag('pos').title) && /R —$/.test(mainText('pos')), `R „—” z notką „ryzyko pierwotne 0” w podpowiedzi («${tag('pos').title}»)`);
+      // SL na BE ma kolor BE także na plakietce (jak linia i znacznik osi)
+      await sleep(300);
+      const probe = document.createElement('span'); probe.style.color = 'var(--be)'; document.body.appendChild(probe);
+      rec('be', tag('psl').classList.contains('be') && getComputedStyle(tag('psl')).borderTopColor === getComputedStyle(probe).color, `plakietka SL na BE w kolorze --be («${getComputedStyle(tag('psl')).borderTopColor}» vs «${getComputedStyle(probe).color}»)`);
+      probe.remove();
+      focusTag('pos'); await sleep(40);
+      rec('be', be() && be().disabled && /już|already/i.test(be().title), `SL już na BE: przycisk nieaktywny («${be()?.title}»)`);
+      await shot('be');
+      // BE nigdy nie cofa SL: SL podciągnięty ponad wejście → przycisk nieaktywny z podpowiedzią, klawisz E niczego nie zmienia
+      {
+        const up = q(pos().entryPrice + 0.5);
+        RP.orders().setLevel('NQ', 'sl', up); await sleep(80);
+        focusTag('pos'); await sleep(40);
+        rec('be', pos().sl === up && be().disabled && /powyżej wejścia|above the entry/i.test(be().title), `SL w zysku: BE nieaktywne z podpowiedzią («${be()?.title}»)`);
+        key('e'); await sleep(60);
+        rec('be', pos().sl === up, 'klawisz E nie cofa SL');
+      }
+    }
+  });
+
+  // ---------- × → zamknij część ----------
+  if (wide) await section('czesc', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 10 });
+    await stepN(3);
+    RP.orders().closeQty('NQ', 4); await sleep(80);
+    rec('czesc', pos().openQty === 6 && pos().qty === 10, 'pozycja 6 z 10 po zamknięciu 4');
+    focusTag('pos'); await sleep(30);
+    tag('pos').querySelector('[data-tl="x"]').click(); await sleep(60);
+    const panel = layer().querySelector('.bt-part');
+    rec('czesc', !!panel, 'panel „Zamknij część”');
+    rec('czesc', !!panel?.querySelector('[data-tl="base"][data-base="orig"]') && !!panel?.querySelector('[data-tl="base"][data-base="open"]'), 'wybór „od pozostałej / od pierwotnej” (openQty < qty)');
+    rec('czesc', [25, 50, 75, 100].every((x) => panel?.querySelector(`[data-tl="pct"][data-pct="${x}"]`)), '25/50/75/100%');
+    { const h = partHits(); rec('czesc', h.n >= 7 && h.bad.length === 0, `1920: każdy przycisk i pole okna części trafia w siebie (${h.n} elementów${h.bad.length ? ', BŁĘDY: ' + h.bad.join('; ') : ''})`); }
+    rec('czesc', /2 z 6/.test(panel?.querySelector('[data-tl="pct"][data-pct="25"]')?.textContent || ''), `przycisk 25% podaje „2 z 6” («${panel?.querySelector('[data-tl="pct"][data-pct="25"]')?.textContent}»)`);
+    panel.querySelector('[data-tl="base"][data-base="orig"]').click(); await sleep(30);
+    const prev = () => layer().querySelector('.bt-part .bt-part-prev')?.textContent || '';
+    const b75 = layer().querySelector('.bt-part [data-tl="pct"][data-pct="75"]')?.textContent || '';
+    rec('czesc', /6 z 6/.test(b75) && /cała reszta/.test(b75), `od pierwotnej 75% = 8 > 6: przycisk mówi «${b75}»`);
+    const inp = layer().querySelector('.bt-part [name="n"]');
+    inp.value = '4'; inp.dispatchEvent(new Event('input', { bubbles: true })); await sleep(30);
+    rec('czesc', /zamknie 4 z 6/.test(prev()) && /\$/.test(prev()), `podgląd „zamknie 4 z 6” z kwotą («${prev()}»)`);
+    inp.value = '9'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+    key('Enter', {}, inp); await sleep(60);
+    rec('czesc', pos().openQty === 6 && inp.getAttribute('aria-invalid') === 'true', 'zła wartość zostaje w polu z aria-invalid');
+    inp.value = '4'; inp.dispatchEvent(new Event('input', { bubbles: true })); await sleep(20);
+    await shot('czesc');
+    key('Enter', {}, inp); await sleep(100);
+    rec('czesc', pos().openQty === 2 && pos().exits.at(-1).reason === 'partial' && pos().exits.at(-1).qty === 4, `Enter zamyka 4 (zostało ${pos()?.openQty})`);
+    RP.orders().closeQty('NQ', 1); await sleep(80);
+    rec('czesc', pos().openQty === 1, 'zostaje 1 kontrakt');
+    focusTag('pos'); await sleep(30);
+    tag('pos').querySelector('[data-tl="x"]').click(); await sleep(60);
+    const p1 = layer().querySelector('.bt-part');
+    rec('czesc', !!p1 && !p1.querySelector('[data-tl="pct"]') && /Zamknij 1/.test(p1.querySelector('[data-tl="go"]')?.textContent || ''), `1 kontrakt: jedno „Zamknij 1 · …” («${p1?.querySelector('[data-tl="go"]')?.textContent}»)`);
+    key('Escape'); await sleep(40);
+    rec('czesc', !layer().querySelector('.bt-part') && !!pos(), 'Esc zamyka panel');
+    // kliknięcie obok zamyka okno bez zmian
+    tag('pos').querySelector('[data-tl="x"]').click(); await sleep(40);
+    rec('czesc', !!layer().querySelector('.bt-part'), 'okno otwarte ponownie przyciskiem ×');
+    pe('pointerdown', host(), host().getBoundingClientRect().left + 60, host().getBoundingClientRect().top + 60); pe('pointerup', host(), host().getBoundingClientRect().left + 60, host().getBoundingClientRect().top + 60); await sleep(60);
+    rec('czesc', !layer().querySelector('.bt-part') && !!pos(), 'kliknięcie obok zamyka okno bez zmian');
+    tag('pos').querySelector('[data-tl="x"]').click(); await sleep(60);
+    layer().querySelector('.bt-part [data-tl="go"]').click(); await sleep(100);
+    rec('czesc', !pos(), '„Zamknij 1” zamyka pozycję');
+  });
+
+  // ---------- szuflada: edycja SL/TP ----------
+  if (wide) await section('szuflada', async () => {
+    await openPos({ sl: 10, tp: 20, qty: 2 });
+    await stepN(3);
+    RP.dock().setTab('pos'); await sleep(60);
+    const dk = RP.dock().el, cellBtn = (f) => dk.querySelector(`tr[data-row="NQ"] [data-c="${f}"] button[data-dka="edit"]`);
+    rec('szuflada', !!cellBtn('sl') && !!cellBtn('tp'), 'komórki SL i TP są przyciskami');
+    rec('szuflada', !!dk.querySelector('[data-dka="part"]') && !!dk.querySelector('[data-dka="be"]') && !dk.querySelector('[data-dka="half"]'), 'akcje wiersza: BE, Część…, Zamknij (bez „50%”)');
+    rec('szuflada', /Ryzyko|Risk/.test(dk.textContent), 'kolumna Ryzyko');
+    const sl0 = pos().sl;
+    cellBtn('sl').click(); await sleep(40);
+    const inp = dk.querySelector('input[name="lvl"]');
+    rec('szuflada', !!inp && document.activeElement === inp, 'klik zamienia komórkę w pole ceny z fokusem');
+    key('ArrowUp', {}, inp); await sleep(20);
+    rec('szuflada', Math.abs(Number(inp.value) - (sl0 + 0.25)) < 0.001, `↑ o tick (${inp.value})`);
+    key('ArrowUp', { shiftKey: true }, inp); await sleep(20);
+    rec('szuflada', Math.abs(Number(inp.value) - (sl0 + 1.25)) < 0.001, `Shift+↑ o 1 pkt (${inp.value})`);
+    await shot('szuflada');
+    key('Enter', {}, inp); await sleep(100);
+    rec('szuflada', Math.abs(pos().sl - (sl0 + 1.25)) < 0.001, `Enter zapisuje SL (${pos().sl})`);
+    cellBtn('sl').click(); await sleep(30);
+    key('Escape', {}, dk.querySelector('input[name="lvl"]')); await sleep(40);
+    rec('szuflada', !dk.querySelector('input[name="lvl"]') && Math.abs(pos().sl - (sl0 + 1.25)) < 0.001, 'Esc cofa edycję');
+    // błąd: TP poniżej ceny (Long)
+    // 1.7-5: komórka TP otwiera edytor listy (wiersz na poziom), pole ceny pierwszego poziomu ma nazwę tpr
+    cellBtn('tp').click(); await sleep(30);
+    const ti = dk.querySelector('.bt-dk-tpe input[name="tpr"]');
+    ti.value = String(lastPx() - 5); ti.dispatchEvent(new Event('input', { bubbles: true }));
+    const tpBefore = pos().tp;
+    key('Enter', {}, ti); await sleep(80);
+    const err = dk.querySelector('.bt-dk-err');
+    rec('szuflada', !!err && /TP/.test(err.textContent) && pos().tp === tpBefore && ti.getAttribute('aria-invalid') === 'true', `błąd walidacji pod polem («${err?.textContent}»)`);
+    key('Escape', {}, ti); await sleep(30);
+    // pusta wartość + Enter usuwa poziom
+    cellBtn('tp').click(); await sleep(30);
+    const ti2 = dk.querySelector('.bt-dk-tpe input[name="tpr"]');
+    ti2.value = ''; ti2.dispatchEvent(new Event('input', { bubbles: true }));
+    key('Enter', {}, ti2); await sleep(80);
+    rec('szuflada', pos().tp === null, 'pusta wartość + Enter usuwa TP (P6)');
+    cellBtn('sl').click(); await sleep(30);
+    const si = dk.querySelector('input[name="lvl"]');
+    si.value = ''; si.dispatchEvent(new Event('input', { bubbles: true }));
+    key('Enter', {}, si); await sleep(80);
+    // P6 + P5: R zostaje od pierwszego SL (liczba), a ryzyko teraz mówi „bez SL”
+    rec('szuflada', pos().sl === null && /\dR$/.test(dk.querySelector('tr[data-row="NQ"] [data-c="r"]').textContent) && norm(dk.querySelector('tr[data-row="NQ"] [data-c="risk"]').textContent) === 'bez SL', `usunięcie SL: R liczbowe («${dk.querySelector('tr[data-row="NQ"] [data-c="r"]').textContent}»), ryzyko «${dk.querySelector('tr[data-row="NQ"] [data-c="risk"]').textContent}»`);
+    // „Część…” z szuflady
+    dk.querySelector('[data-dka="part"]').click(); await sleep(80);
+    rec('szuflada', !!layer().querySelector('.bt-part'), '„Część…” otwiera panel przy plakietce');
+    key('Escape'); await sleep(30);
+  });
+
+  // ---------- dwa wykresy jednego instrumentu ----------
+  if (!narrow) await section('dwa', async () => {
+    await openPos({ sl: 10, tp: 20, qty: 2 });
+    RP.setLayout('2h'); await sleep(300);
+    const cs = RP.charts();
+    rec('dwa', cs.length === 2, 'dwa wykresy');
+    if (cs.length === 2) {
+      await stepN(2);
+      const sl = q(pos().sl + 2);
+      RP.orders().setLevel('NQ', 'sl', sl); await sleep(150);
+      const px = (c) => c.positionMarks().find((m) => m.price === sl)?.price;
+      rec('dwa', pos().sl === sl && px(cs[0]) === sl && px(cs[1]) === sl, `zmiana SL widoczna na obu wykresach (${px(cs[0])}, ${px(cs[1])})`);
+      rec('dwa', /SL/.test(tag('psl', cs[0])?.textContent || '') && /SL/.test(tag('psl', cs[1])?.textContent || ''), 'plakietki SL na obu');
+    }
+    RP.setLayout('1'); await sleep(200);
+  });
+
+  // ---------- pozycja zamknięta w trakcie przeciągania ----------
+  if (!narrow) await section('zamkniecie', async () => {
+    await openPos({ sl: 10, tp: 20, qty: 2 });
+    await stepN(2);
+    const el = tag('psl'), r = el.getBoundingClientRect();
+    pe('pointerdown', el, r.left + 10, r.top + r.height / 2); pe('pointermove', el, r.left + 10, r.top + 30); await sleep(40);
+    rec('zamkniecie', !!ch().dragInfo(), 'przeciąganie trwa');
+    RP.orders().closeAll(); await sleep(120);
+    rec('zamkniecie', !ch().dragInfo() && /zamknięta/i.test(live()), `pozycja zamknięta w trakcie: przeciąganie kończy się z komunikatem («${live()}»)`);
+    pe('pointerup', el, r.left + 10, r.top + 30); await sleep(40);
+    rec('zamkniecie', !pos(), 'po puszczeniu nic nie wraca');
+  });
+
+  // ---------- sesja 1.6 z otwartą pozycją ----------
+  await section('stara', async () => {
+    await closeAllNow();
+    const px = q(lastPx());
+    RP.close(); await sleep(80);
+    const old = newSessionDoc({ id: newSessionId(), name: 'Stara 1.6', def: mkDef(), now: Date.now() });
+    const t0 = nyAt('2024-03-12', '09:31');
+    old.cursor = t0;
+    old.book = {
+      orders: [],
+      positions: { ES: null, MES: null, MNQ: null, NQ: { id: 'p1', instrument: 'NQ', dir: 'Long', qty: 3, openQty: 3, entryT: t0 - 60, entryPrice: px, sl0: null, sl: px - 8, tp: px + 16, be: false, exits: [], orderId: 'o1' } },
+      hw: t0, hwi: { NQ: t0 }, seq: 2,
+    };
+    await client.create(old);
+    RP = openReplay(document.body, { sessionId: old.id, client, onClosed: () => {}, notionEveryMs: 0 });
+    await RP.ready; await sleep(200);
+    const p = pos();
+    rec('stara', !!p && RP.book().v === 3 && Array.isArray(p.fills) && p.fills.length === 1, 'księga zmigrowana do v3');
+    rec('stara', p && p.sl0 === px - 8 && p.sl === px - 8 && p.tp === px + 16 && p.qty === 3, 'sl0 = sl (P5), lustro bez zmian');
+    rec('stara', !!tag('pos') && !!tag('psl') && !!tag('ptp'), 'pozycja z liniami i plakietkami');
+    rec('stara', /[+−-]?\d,\d\dR$/.test(mainText('pos')), `plakietka wejścia liczy R liczbowo («${mainText('pos')}»)`);
+    rec('stara', RP.doc().v === 2, 'sesja zostaje v: 2');
+    await closeAllNow();
+    RP.close(); await sleep(80);
+    RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+    await RP.ready; await sleep(100);
+  });
+
+  // ---------- 375 px ----------
+  // ---------- 375 px: kolumna przycisków wejścia i odczyt przeciągania ----------
+  // ---------- 375 px: szybki panel journala po trade'zie jako pasek przy dolnej krawędzi ----------
+  if (narrow) await section('journal', async () => {
+    await stepN(1);
+    await openPos({ sl: 10, tp: 20 });
+    await stepN(1);
+    await closeAllNow(); await sleep(250);
+    const jr = scr().querySelector('.bt-jr'), hr = host().getBoundingClientRect();
+    rec('journal', !!jr && jr.dataset.compact === 'collapsed', 'po trade\'u panel jest zwinięty do paska');
+    const r = jr.getBoundingClientRect();
+    rec('journal', r.height <= 64 && r.top > hr.top + hr.height * 0.6, `pasek jednowierszowy przy dolnej krawędzi wykresu (${Math.round(r.height)} px, góra ${Math.round(r.top - hr.top)} z ${Math.round(hr.height)})`);
+    const bar = jr.querySelector('.bt-jr-bar'), bt = jr.querySelector('.bt-jr-bt').textContent;
+    rec('journal', /^Journal trade'a #\d+$/.test(bt.trim()), `tekst paska («${bt}»)`);
+    const bs = [...bar.querySelectorAll('button')];
+    rec('journal', bs.map((b) => b.textContent.trim()).join('|') === 'Uzupełnij|Później' && bs.every((b) => b.getBoundingClientRect().height >= 43.5 && b.getBoundingClientRect().width >= 43.5), `przyciski „Uzupełnij” i „Później” ≥ 44 px (${bs.map((b) => Math.round(b.getBoundingClientRect().width) + '×' + Math.round(b.getBoundingClientRect().height)).join(', ')})`);
+    await shot('journal-zwiniety');
+    bs[0].click(); await sleep(150);
+    rec('journal', jr.dataset.compact === 'expanded' && jr.querySelector('[name="setup"]').getBoundingClientRect().height > 0 && getComputedStyle(bar).display === 'none', 'stuknięcie „Uzupełnij” rozwija panel z polem setupu');
+    await shot('journal-rozwiniety');
+    jr.querySelector('[data-jr="skip"]').click(); await sleep(80);
+  });
+
+  if (narrow) await section('kolumna', async () => {
+    const paneBottom = () => host().getBoundingClientRect().top + host().clientHeight - ch().chart.timeScale().height();
+    // każdy przycisk kolumny trafia sam w siebie (elementFromPoint w środku, nie plakietka SL/TP ani jej ×) i mieści się w polu wykresu
+    const check = async (label, min = 3) => {
+      // szybki panel journala po poprzednim trade'zie (istniejące zachowanie, pełna szerokość na telefonie) nie jest przedmiotem tego testu
+      document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+      focusTag('pos'); await sleep(120);
+      const bs = [...(acts()?.querySelectorAll('button') || [])], bad = [], top = host().getBoundingClientRect().top;
+      for (const b of bs) {
+        const r = b.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (!(hit === b || b.contains(hit))) bad.push(`${b.dataset.tl} → ${hit?.dataset?.tl || hit?.className || hit?.tagName} @${Math.round(r.top)}–${Math.round(r.bottom)}, wykres ${Math.round(top)}–${Math.round(paneBottom())}, dir ${acts().dataset.dir}`);
+        if (r.top < top - 0.5 || r.bottom > paneBottom() + 0.5) bad.push(`${b.dataset.tl} poza polem (${Math.round(r.top)}–${Math.round(r.bottom)}, pole ${Math.round(top)}–${Math.round(paneBottom())})`);
+      }
+      rec('kolumna', bs.length >= min && bad.length === 0, `${label}: ${bs.length} przycisków, ${bad.length ? 'BŁĘDY: ' + bad.join('; ') : 'każdy trafia w siebie i mieści się w wykresie'}`);
+      await shot('kolumna-' + label.replace(/\W+/g, '-'));
+    };
+    await stepN(1);
+    await openPos({ sl: 10, tp: 20 });
+    await stepN(2);
+    // drugie stuknięcie plakietki wejścia zamyka kolumnę (dotyk: samo dotknięcie ustawia fokus, a to nie może jej trzymać otwartej)
+    tag('pos').dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null })); await sleep(60);
+    await tapEl(tag('pos').querySelector('.bt-tag-t'));
+    rec('kolumna', !!acts() && !acts().hidden, 'pierwsze stuknięcie plakietki wejścia otwiera kolumnę');
+    await tapEl(tag('pos').querySelector('.bt-tag-t'));
+    rec('kolumna', !acts() || acts().hidden, 'drugie stuknięcie zamyka kolumnę');
+    await check('SL 10 pkt', 2);
+    // SL 1 pkt: bez kroku odtwarzania (SL mógłby zostać trafiony, a plakietka SL stoi tuż pod wejściem)
+    await openPos({ sl: 1, tp: '' });
+    await check('SL blisko wejścia', 3);
+    await openPos({ sl: '', tp: '', qty: 2 });
+    await stepN(2);
+    // wejście przy dolnej i górnej krawędzi pola ceny (ręczny zakres osi)
+    const e = pos().entryPrice, c = ch();
+    c.setAuto(false);
+    c.series.priceScale().setVisibleRange({ from: e - 2, to: e + 40 }); await sleep(400);
+    await check('wejście przy dolnej krawędzi', 4);
+    c.series.priceScale().setVisibleRange({ from: e - 40, to: e + 2 }); await sleep(400);
+    await check('wejście przy górnej krawędzi', 4);
+    c.setAuto(true); await sleep(200);
+    // okno części na telefonie: kolumna przycisków zamknięta, plakietka wejścia nie leży nad oknem, każdy przycisk okna trafia w siebie
+    await openPos({ sl: 10, tp: 20, qty: 4 });
+    RP.orders().closeQty('NQ', 1); await sleep(80);
+    document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+    focusTag('pos'); await sleep(60);
+    tag('pos').querySelector('[data-tl="x"]').click(); await sleep(150);
+    { const h = partHits();
+      rec('kolumna', !!layer().querySelector('.bt-part') && (!acts() || acts().hidden), 'przy otwartym oknie części kolumna przycisków jest zamknięta');
+      rec('kolumna', h.n >= 7 && h.bad.length === 0, `375: każdy przycisk i pole okna części trafia w siebie (${h.n} elementów${h.bad.length ? ', BŁĘDY: ' + h.bad.join('; ') : ''})`);
+      const pr = layer().querySelector('.bt-part').getBoundingClientRect(), hh = host().getBoundingClientRect();
+      rec('kolumna', pr.top >= hh.top - 0.5 && pr.bottom <= paneBottom() + 0.5 && [...layer().querySelectorAll('.bt-part button')].every((b) => b.getBoundingClientRect().bottom <= paneBottom() + 0.5), `okno części w całości w polu wykresu (${Math.round(pr.top - hh.top)}–${Math.round(pr.bottom - hh.top)} z ${Math.round(paneBottom() - hh.top)} px)`);
+      await shot('okno-czesci'); }
+    key('Escape'); await sleep(60);
+    // komunikat „Cofnij” na telefonie bez skrótu klawiszowego
+    await openPos({ sl: 10, tp: 20 });
+    tag('psl').querySelector('[data-tl="rm"]').click(); await sleep(100);
+    { const ta = document.querySelector('#toast .toast-act'), vis = ta && [...ta.childNodes].filter((n) => n.nodeType === 3 || !n.classList?.contains('toast-key')).map((n) => n.textContent).join('');
+      rec('kolumna', !!ta && !/Ctrl|⌘/.test(ta.textContent) && /^Cofnij$/.test((vis || '').trim()), `komunikat bez skrótu klawiszowego na telefonie («${ta?.textContent}»)`); }
+    // odczyt przeciągania w dwóch wierszach, w marginesie za ostatnią świecą
+    await openPos({ sl: 10, tp: 20 });
+    await stepN(3);
+    const el = tag('psl'), r0 = el.getBoundingClientRect(), x0 = r0.left + 10, y0 = r0.top + r0.height / 2;
+    pe('pointerdown', el, x0, y0, { pointerType: 'touch' }); pe('pointermove', el, x0, yPx(pos().sl + 2), { pointerType: 'touch' }); await sleep(300);
+    const dr = el.getBoundingClientRect(), hr = host().getBoundingClientRect(), lx = hr.left + c.chart.timeScale().timeToCoordinate(c.bars().at(-1)[0]);
+    const txt = el.querySelector('.bt-tag-t').textContent;
+    rec('kolumna', /\n/.test(txt) && txt.split('\n').length === 2, `odczyt w dwóch wierszach («${txt.replace('\n', ' / ')}»)`);
+    rec('kolumna', dr.left >= lx + 8 - 0.5, `odczyt w marginesie, nie zasłania ostatnich świec (lewa krawędź ${Math.round(dr.left)}, świeca ${Math.round(lx)}, szerokość ${Math.round(dr.width)} px)`);
+    await shot('przeciaganie-odczyt');
+    key('Escape'); pe('pointerup', el, x0, y0, { pointerType: 'touch' }); await sleep(100);
+    // sprzątanie stanu fokusu plakietki, żeby kolejna sekcja zaczynała z zamkniętym rzędem przycisków
+    tag('pos')?.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null })); await closeAllNow();
+  });
+
+  if (narrow) await section('telefon', async () => {
+    await stepN(1);
+    await openPos({ sl: 10, tp: 20 });
+    await stepN(5);
+    rec('telefon', !!pos() && !!tag('pos'), `pozycja i plakietka są (${!!pos()}, ${!!tag('pos')})`);
+    const t = tag('pos');
+    rec('telefon', /^LONG\s*[+−-]?\d/.test(t.querySelector('.bt-tag-t').textContent.trim()) && !/·/.test(t.querySelector('.bt-tag-t').textContent), `krótka plakietka («${t.querySelector('.bt-tag-t').textContent}»)`);
+    rec('telefon', !acts() || acts().hidden || !acts().querySelector('button'), 'bez stuknięcia nie ma przycisków');
+    t.querySelector('.bt-tag-t').click(); await sleep(60);
+    rec('telefon', !!acts() && !acts().hidden, 'stuknięcie plakietki pokazuje przyciski');
+    const btns = [...(acts()?.querySelectorAll('button') || [])];
+    rec('telefon', btns.length >= 2 && btns.every((b) => { const r = b.getBoundingClientRect(); return r.width >= 44 - 0.5 && r.height >= 44 - 0.5; }), `przyciski ≥ 44 px (${btns.map((b) => `${Math.round(b.getBoundingClientRect().width)}×${Math.round(b.getBoundingClientRect().height)}`).join(', ')})`);
+    const rms = [...layer().querySelectorAll('[data-tl="rm"]')];
+    rec('telefon', rms.length === 2 && rms.every((b) => { const r = b.getBoundingClientRect(); return r.width >= 43.5 && r.height >= 43.5; }), `× na SL i TP ≥ 44 px (${rms.map((b) => `${Math.round(b.getBoundingClientRect().width)}×${Math.round(b.getBoundingClientRect().height)}`).join(', ')})`);
+    // rząd przycisków to kolumna nie szersza niż plakietka (min. 44 px), nie wchodzi nad świece; plakietka SL stoi przy swojej linii; tło plakietek pełne
+    { const rr = acts().getBoundingClientRect(), tr2 = tag('pos').getBoundingClientRect(), hr2 = host().getBoundingClientRect(), cc = ch();
+      const lx2 = hr2.left + cc.chart.timeScale().timeToCoordinate(cc.bars().at(-1)[0]);
+      // 1.7-5: przy jednym TP kolumna ma też „+TP”; gdy pięć przycisków nie mieści się w jednej kolumnie, układa się w dwóch (grid, 2 × 44 px), co jest dozwolonym trybem z 1.7-1
+      rec('telefon', (rr.width <= Math.max(tr2.width, 44) + 1 || (/^grid/.test(acts().dataset.dir || '') && rr.width <= 91)) && rr.left > lx2 + 8, `kolumna przycisków ${Math.round(rr.width)} px (plakietka ${Math.round(tr2.width)} px), lewa krawędź ${Math.round(rr.left)} za świecą ${Math.round(lx2)}`);
+      const sl = tag('psl'), sr = sl.getBoundingClientRect();
+      rec('telefon', !!sl.dataset.edge || Math.abs((sr.top + sr.bottom) / 2 - yPx(pos().sl)) <= 3, `plakietka SL przy swojej linii (${Math.round((sr.top + sr.bottom) / 2)} vs ${Math.round(yPx(pos().sl))})`);
+      const bg = getComputedStyle(sl).backgroundColor;
+      rec('telefon', !/\//.test(bg) && !/rgba\(.*,\s*0?\.\d+\)/.test(bg), `tło plakietki pełne, bez przezroczystości («${bg}»)`); }
+    await shot('linie');
+    // chwyt linii palcem: pas ±22 px (cel 44 px)
+    const hr = host().getBoundingClientRect(), ysl = yPx(pos().sl), slB = pos().sl, tgt = q(slB + 3);
+    pe('pointerdown', host(), hr.left + 100, ysl + 18, { pointerType: 'touch' }); pe('pointermove', host(), hr.left + 100, yPx(tgt), { pointerType: 'touch' }); pe('pointerup', host(), hr.left + 100, yPx(tgt), { pointerType: 'touch' }); await sleep(100);
+    rec('telefon', pos().sl === tgt, `dotyk 18 px od linii chwyta SL (${slB} → ${pos().sl})`);
+    pe('pointerdown', host(), hr.left + 100, yPx(pos().sl) + 18, { pointerType: 'mouse' }); pe('pointerup', host(), hr.left + 100, yPx(pos().sl) + 18, { pointerType: 'mouse' });
+    rec('telefon', pos().sl === tgt, 'mysz 18 px od linii nie chwyta (pas ±4 px)');
+    // margines za ostatnią świecą
+    const c = ch(), axisL = hr.left + hr.width - (c.series.priceScale().width() || 0), lx = hr.left + c.chart.timeScale().timeToCoordinate(c.bars().at(-1)[0]);
+    const left = Math.min(...['pos', 'psl', 'ptp'].map((k) => tag(k).getBoundingClientRect().left));
+    rec('telefon', left >= lx + 8 - 0.5 && tag('pos').getBoundingClientRect().right <= axisL - 3, `plakietki w marginesie za świecą (${Math.round(left - lx)} px)`);
+    rec('telefon', document.documentElement.scrollWidth <= innerWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth})`);
+    // szuflada: komórka SL jako przycisk ≥ 44 px, pole ceny ≥ 44 px i 16 px (bez powiększania w iOS)
+    RP.dock().setTab('pos'); await sleep(80);
+    const cb = RP.dock().el.querySelector('tr[data-row="NQ"] [data-c="sl"] button[data-dka="edit"]');
+    rec('telefon', !!cb && cb.getBoundingClientRect().height >= 43.5 && cb.getBoundingClientRect().width >= 43.5, `komórka SL w szufladzie ≥ 44 px (${Math.round(cb?.getBoundingClientRect().width)}×${Math.round(cb?.getBoundingClientRect().height)})`);
+    cb?.click(); await sleep(40);
+    const li = RP.dock().el.querySelector('input[name="lvl"]');
+    rec('telefon', !!li && li.getBoundingClientRect().height >= 43.5 && parseFloat(getComputedStyle(li).fontSize) >= 16, `pole ceny w szufladzie ≥ 44 px i 16 px (${Math.round(li?.getBoundingClientRect().height)} px, ${getComputedStyle(li).fontSize})`);
+    await sleep(200);
+    { const dkr = RP.dock().el.getBoundingClientRect(), li2 = li.getBoundingClientRect(), st = RP.dock().el.querySelector('td.bt-dk-a'), stl = st.getBoundingClientRect().left;
+      rec('telefon', li2.left >= dkr.left - 0.5 && li2.right <= stl + 0.5, `edytowana komórka w widocznej części dock (pole ${Math.round(li2.left)}–${Math.round(li2.right)}, widok ${Math.round(dkr.left)}–${Math.round(stl)})`); }
+    key('Escape', {}, li); await sleep(30);
+    // panel części mieści się w polu wykresu
+    focusTag('pos'); await sleep(30);
+    layer().querySelector('[data-tl="x"]')?.click(); await sleep(60);
+    const pn = layer().querySelector('.bt-part'), pr = pn?.getBoundingClientRect();
+    rec('telefon', !!pn && pr.left >= hr.left - 0.5 && pr.right <= hr.right + 0.5, 'panel części mieści się w szerokości wykresu');
+    await shot('czesc');
+    key('Escape'); await sleep(30);
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

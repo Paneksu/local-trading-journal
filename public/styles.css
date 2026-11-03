@@ -126,6 +126,7 @@
   /* skala (root 90% => 1rem = 14,4 px) */
   --t-xs: .66rem;    /* 9,5 */
   --t-sm: .729rem;   /* 10,5 */
+  --t-tag: .764rem;  /* 11: plakietki pozycji na wykresie replayu (czytelne i nie mniejsze niż etykiety osi) */
   --t-base: .868rem; /* 12,5 */
   --t-md: .9375rem;  /* 13,5 */
   --t-lg: 1.125rem;  /* 16,2 */

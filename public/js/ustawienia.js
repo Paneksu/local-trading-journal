@@ -237,6 +237,7 @@ export function createSettings(options) {
     document.documentElement.classList.add('sv-open');
     gear()?.setAttribute('aria-expanded', 'true');
     pop.addEventListener('keydown', (ev) => mods.backtest.onKeyDown(ev));
+    for (const type of ['dragstart', 'dragover', 'drop', 'dragend']) pop.addEventListener(type, (ev) => { if (sec === 'backtest') mods.backtest.onDrag?.(ev); });
     if (want) rememberSection(id);
     setHash(group);
     cur().enter?.();

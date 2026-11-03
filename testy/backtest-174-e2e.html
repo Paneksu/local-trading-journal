@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: prawy klik i nawigacja 1.7-4, odbiór na prawdziwych świecach</title>
+<!-- Strona odbioru 1.7-4 (testy/backtest-e2e.mjs, sekcja `174`): prawdziwe świece NQ (1s w oknach 9:30–11:00, 1m poza nimi), serwer z atrapą Notion.
+     Scenariusz karty: (1) krok 15s na wykresie 5m: p95 czasu kroku ≤ 16 ms; (2) prawy klik nad rynkiem → Sprzedaj limit po cenie kliknięcia z presetu Scalp (SL 15 pkt, TP 2R, ryzyko sesji):
+     zlecenie wypełnia się po tej cenie, SL i TP liczone od niej; (3) skok do ceny z otwartą pozycją ~4 dni handlowych w przód (poniedziałek 10:30 → czwartek/piątek): kursor na końcu pierwszej świecy
+     bazowej z dotknięciem (przeliczenie na surowych świecach), czas do wyniku ≤ 1,5 s; (4) skok do daty w przód z otwartą pozycją (do piątku 10:00): kursor w celu, czas ≤ 1,5 s.
+     Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], info, fatal }. Każda asercja może zawieść. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [], info = {};
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 8000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(10); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+
+try {
+  try { for (const k of ['thq.bt.open.v1', 'thq.bt.dock.v1', 'thq.bt.ord.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
+  const { visibleCount, mergeBase } = await import('/js/bt-swieca.js');
+  const client = createSessionClient();
+  const SCALP = { id: 'scalp', name: 'Scalp', sl: { unit: 'pts', value: 15 }, tps: [{ unit: 'rr', value: 2, pct: 100 }], size: { mode: 'session', value: 0 }, autoBe: { kind: 'r', value: 1, offsetTicks: 0 } };
+  let btSet = sanitizeBt({ presets: [SCALP] });
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+  let RP = null;
+  const open = async (name, from, tf) => {
+    if (RP) { RP.close(); await sleep(250); }
+    const doc = newSessionDoc({ id: newSessionId(), name, def: { instruments: ['NQ'], from, balance: 50000, risk: { mode: 'pct', value: 5 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] }, now: Date.now() });
+    doc.layout = { kind: '1', active: 0, charts: [{ instrument: 'NQ', tf }] };
+    await client.create(doc);
+    RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0, getSettings: () => btSet, onPresets: (patch) => { btSet = sanitizeBt({ ...btSet, ...patch }); } });
+    await RP.ready;
+    info.sessionId = doc.id;
+    return doc;
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const ch = () => RP.chart();
+  const lastPx = () => { const st = RP.data().stream('NQ'); const n = visibleCount(st, RP.cursor()); return st.bars[n - 1][4]; };
+  const menu = () => scr().querySelector('.bt-cm');
+  const settle = async () => { await until(() => !RP.busy(), 30000); await sleep(80); };
+  const noJr = () => document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+
+  // ---------- (1) krok 15s na wykresie 5m, p95 kroku ≤ 16 ms ----------
+  await section('krok', async () => {
+    await open('Sesja 174 krok', '2024-03-12', '5m');
+    await RP.goTo(nyAt('2024-03-12', '10:00')); await sleep(300);
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(60);
+    scr().querySelector('.bt-step-l [data-step="15s"]').click(); await sleep(100);
+    rec('krok', RP.doc().stepTf === '15s' && scr().querySelector('.bt-tfs [aria-pressed="true"]').dataset.tf === '5m', `krok 15s na wykresie 5m (stepTf ${RP.doc().stepTf})`);
+    const c0 = RP.cursor(), ts = [], full = [];
+    for (let i = 0; i < 101; i++) {
+      const t0 = performance.now();
+      const p = RP.step(1);
+      ts.push(performance.now() - t0);
+      await p;
+      full.push(performance.now() - t0);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const sorted = [...ts].sort((a, b) => a - b), p95 = sorted[Math.floor(sorted.length * 0.95) - 1], worst = sorted[sorted.length - 1];
+    info.step = { n: ts.length, p95: Math.round(p95 * 100) / 100, worst: Math.round(worst * 100) / 100, median: Math.round(sorted[50] * 100) / 100 };
+    rec('krok', RP.cursor() - c0 === 101 * 15, `101 kroków po 15 s: kursor +${RP.cursor() - c0} s (oczekiwane 1515)`);
+    rec('krok', p95 <= 16, `p95 czesci synchronicznej kroku ${p95.toFixed(2)} ms (próg 16 ms), mediana ${sorted[50].toFixed(2)} ms, najgorszy ${worst.toFixed(2)} ms`);
+    const lb = ch().bars().at(-1);
+    rec('krok', lb[0] % 300 === 0 && lb[0] === nyAt('2024-03-12', '10:25'), `wykres 5m pokazuje świecę 5m w budowie (10:25, ${new Date(lb[0] * 1000).toISOString()})`);
+  });
+
+  // ---------- (2) prawy klik → Sprzedaj limit po cenie kliknięcia z presetu, wypełnienie po tej cenie ----------
+  await section('menu', async () => {
+    await open('Sesja 174 menu', '2024-03-12', '1s');
+    await RP.goTo(nyAt('2024-03-12', '10:30')); await sleep(300);
+    noJr();
+    RP.orders().choosePreset('scalp'); await sleep(150);
+    const L = lastPx(), host = scr().querySelector('.bt-plot'), r = host.getBoundingClientRect();
+    // cena kliknięcia: tuż pod górną krawędzią pola ceny, jeśli leży ponad rynkiem (Sprzedaj limit), inaczej tuż nad dolną (Kup limit)
+    const topP = q(ch().series.coordinateToPrice(14)), botP = q(ch().series.coordinateToPrice(r.height - ch().chart.timeScale().height() - 14));
+    const sell = topP > L + 0.5, want = sell ? topP : botP;
+    info.menu = { L, want, sell };
+    const y = r.top + ch().series.priceToCoordinate(want), x = r.left + 160;
+    const target = document.elementFromPoint(x, y);
+    target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2, buttons: 2, view: window }));
+    await sleep(120);
+    rec('menu', !!menu(), 'prawy klik otwiera menu na prawdziwych świecach');
+    const P0 = Number(menu()?.dataset.price), id = sell ? 'order-sell-limit' : 'order-buy-limit';
+    rec('menu', Math.abs(P0 - want) <= 0.5, `cena kliknięcia ${P0} ≈ zamierzona ${want}`);
+    const it = menu()?.querySelector(`[data-mi="${id}"]`);
+    rec('menu', !!it && it.getAttribute('aria-disabled') === 'false' && /preset Scalp/.test(it.textContent), `pozycja ${id}: «${norm(it?.textContent)}»`);
+    it.click(); await sleep(150);
+    const o = RP.book().orders[0];
+    const dir = sell ? 1 : -1;
+    rec('menu', RP.book().orders.length === 1 && o.type === 'limit' && o.price === P0 && o.sl === P0 + dir * 15 && o.tp === P0 - dir * 30 && o.qty === 8 && o.autoBe?.kind === 'r', `zlecenie: ${JSON.stringify({ side: o.side, type: o.type, price: o.price, qty: o.qty, sl: o.sl, tp: o.tp })}`);
+    // odtwarzanie 100× do wypełnienia (maks. 120 s)
+    const t0 = performance.now();
+    await new Promise((done) => {
+      const loop = () => { if (!RP.book().orders.length || performance.now() - t0 > 120000) { RP.pause(); done(); return; } requestAnimationFrame(loop); };
+      RP.setSpeed(100); RP.play(); requestAnimationFrame(loop);
+    });
+    await sleep(200);
+    const p = pos();
+    info.menu.filled = !!p; info.menu.fillMs = Math.round(performance.now() - t0);
+    rec('menu', !!p, `zlecenie wypełnione w odtwarzaniu (${info.menu.fillMs} ms czasu rzeczywistego)`);
+    if (p) {
+      const fill = p.fills[0];
+      // limit po cenie kliknięcia: wypełnienie po cenie zlecenia albo lepiej (luka); SL i TP zostają policzone od ceny zlecenia
+      rec('menu', (sell ? fill.price >= P0 : fill.price <= P0) && p.sl === o.sl && p.tp === o.tp && p.qty === 8 && p.dir === (sell ? 'Short' : 'Long'), `pozycja ${p.dir} ${p.qty} @ ${fill.price} (limit ${P0}), SL ${p.sl}, TP ${p.tp}`);
+      rec('menu', fill.price === P0, `wypełnienie dokładnie po cenie kliknięcia (${fill.price} = ${P0})`);
+    }
+  });
+
+  // dwie próby skoków na tych samych dniach: poniedziałek 10:30 NY, wyniki liczone na surowych świecach z trasy zakresu
+  const DAY0 = '2024-03-11';
+  async function future() {
+    const cur = RP.cursor();
+    const r = await client.range({ instruments: ['NQ'], from: cur, to: cur + Math.floor(7.9 * 86400), tf: 'base' });
+    const b = r.inst.NQ;
+    return { cur, st: mergeBase(b.m1, b.s1, b.real1s) };
+  }
+
+  // ---------- (3) skok do ceny z otwartą pozycją 5 dni w przód (runda 2: jak w karcie, wcześniej ~3,2) ----------
+  await section('cena', async () => {
+    // dzień startu: pierwszy z kandydatów, po którym w oknie 5–7,5 dnia pojawia się nowy rekord ceny (dane 1m z trasy zakresu), żeby skok miał co najmniej 5 dni
+    let DAYX = DAY0;
+    for (const d of [DAY0, '2024-03-04', '2024-02-26', '2024-02-19', '2024-03-18', '2024-04-01', '2024-04-08', '2024-02-12']) {
+      const c0 = nyAt(d, '10:30'), rr = await client.range({ instruments: ['NQ'], from: c0, to: c0 + Math.floor(7.9 * 86400), tf: '1m' });
+      const bs = rr.inst.NQ.bars || [];
+      const early = bs.filter((b) => b[0] < c0 + 5 * 86400), late = bs.filter((b) => b[0] >= c0 + 5 * 86400 && b[0] <= c0 + 7.5 * 86400);
+      if (early.length && late.some((b) => b[2] > Math.max(...early.map((x) => x[2])) || b[3] < Math.min(...early.map((x) => x[3])))) { DAYX = d; break; }
+    }
+    info.cenaDay = DAYX;
+    await open('Sesja 174 cena', DAYX, '5m');
+    await RP.goTo(nyAt(DAYX, '10:30')); await sleep(400);
+    noJr();
+    RP.orders().choosePreset(null); await sleep(80);
+    setF('sl', 2500); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('buy'); await sleep(200);
+    rec('cena', !!pos() && pos().qty === 1, `pozycja otwarta przed skokiem (${pos()?.dir} @ ${pos()?.entryPrice}, SL ${pos()?.sl})`);
+    const { cur, st } = await future();
+    // cena docelowa: pierwszy nowy rekord (w górę albo w dół) po 5 dniach od kursora, w oknie do 7,5 dnia: cena, której nie było w pierwszych 5 dniach, więc pierwsze dotknięcie przypada dopiero po 5–7,5 dnia (karta: skok o 5 dni)
+    const t3 = cur + 5 * 86400, t4 = cur + 7.5 * 86400, early = st.bars.filter((b) => b[0] >= cur && b[0] < t3);
+    const hiPre = Math.max(...early.map((b) => b[2])), loPre = Math.min(...early.map((b) => b[3]));
+    const upI = st.bars.findIndex((b) => b[0] >= t3 && b[0] <= t4 && b[2] > hiPre), dnI = st.bars.findIndex((b) => b[0] >= t3 && b[0] <= t4 && b[3] < loPre);
+    const dirX = upI >= 0 && (dnI < 0 || upI <= dnI) ? 'up' : 'down', hitI = dirX === 'up' ? upI : dnI;
+    rec('cena', hitI > 0, `jest świeca z nowym rekordem ceny (${dirX}) w oknie 5–7,5 dnia po kursorze (indeks ${hitI})`);
+    const target = dirX === 'up' ? q(hiPre + 0.25) : q(loPre - 0.25);
+    const idx = st.bars.findIndex((b) => b[0] >= cur && (dirX === 'up' ? b[2] >= target : b[3] <= target));
+    const exp = { t: st.bars[idx][0], end: st.bars[idx][0] + st.len[idx] };
+    info.cena = { cur, target, dirX, expEnd: exp.end, days: ((exp.t - cur) / 86400).toFixed(2) };
+    // czas samej trasy (serwer)
+    const f0 = performance.now();
+    const route = await (await fetch(`/api/backtest/find-price?instrument=NQ&from=${cur}&price=${target}&dir=${dirX}&days=8`)).json();
+    info.cena.serverMs = Math.round(performance.now() - f0);
+    rec('cena', route.t === exp.t && route.end === exp.end, `trasa find-price = przeliczenie na surowych świecach (${route.t}/${route.end} = ${exp.t}/${exp.end}) w ${info.cena.serverMs} ms`);
+    // najgorszy przypadek serwera: cena nieosiągalna, limit 20 dni (okna ze świecami), czas w budżecie 8 s i wynik bez trafienia
+    const w0 = performance.now();
+    const worst = await (await fetch(`/api/backtest/find-price?instrument=NQ&from=${cur}&price=999999&dir=up&days=20`)).json();
+    info.cena.worstMs = Math.round(performance.now() - w0); info.cena.worst = worst;
+    rec('cena', worst.none === true && ['limit', 'data-end', 'budget'].includes(worst.why) && info.cena.worstMs <= 8500, `cena nieosiągalna, 20 dni: ${JSON.stringify(worst)} w ${info.cena.worstMs} ms (budżet 8 s)`);
+    // skok przez okno dialogowe: od kliknięcia „Skocz” do kursora na celu
+    key('p'); await sleep(150);
+    const gp = scr().querySelector('.bt-gp');
+    gp.querySelector('input[name="gpPrice"]').value = String(target).replace('.', ',');
+    gp.querySelector('input[name="gpDays"]').value = '8';
+    const t0 = performance.now();
+    gp.querySelector('[data-gp="go"]').click();
+    const ok = await until(() => RP.cursor() === exp.end && !RP.busy(), 20000);
+    const ms = performance.now() - t0;
+    info.cena.jumpMs = Math.round(ms);
+    rec('cena', !!ok, `kursor na końcu świecy z dotknięciem (${RP.cursor()} = ${exp.end})`);
+    rec('cena', Number(info.cena.days) >= 5, `skok obejmuje co najmniej 5 dni (${info.cena.days})`);
+    rec('cena', ms <= 1500, `skok do ceny ~${info.cena.days} dnia w przód z otwartą pozycją: ${Math.round(ms)} ms do wyniku (próg 1500 ms)`);
+    rec('cena', !!pos() || RP.doc().trades.length === 1, `pozycja po skoku: ${pos() ? 'otwarta' : 'zamknięta po drodze (' + RP.doc().trades.at(-1)?.exits.at(-1)?.reason + ')'}`);
+  });
+
+  // ---------- (4) skok do daty w przód z otwartą pozycją (do piątku 10:00 NY) ----------
+  await section('data', async () => {
+    await open('Sesja 174 data', DAY0, '5m');
+    await RP.goTo(nyAt(DAY0, '10:30')); await sleep(400);
+    noJr();
+    RP.orders().choosePreset(null); await sleep(80);
+    setF('sl', 2500); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('buy'); await sleep(200);
+    key('g'); await sleep(150);
+    const gd = scr().querySelector('.bt-gd');
+    gd.querySelector('input[name="gdDate"]').value = '2024-03-15'; gd.querySelector('input[name="gdTime"]').value = '10:00';
+    const t0 = performance.now();
+    gd.querySelector('[data-gd="go"]').click();
+    const want = nyAt('2024-03-15', '10:00');
+    const ok = await until(() => RP.cursor() === want && !RP.busy(), 20000);
+    const ms = performance.now() - t0;
+    info.data = { jumpMs: Math.round(ms) };
+    rec('data', !!ok, `kursor w celu 15.03 10:00 NY (${RP.cursor()} = ${want})`);
+    rec('data', ms <= 1500, `skok do daty ~4 dni w przód z otwartą pozycją: ${Math.round(ms)} ms (próg 1500 ms)`);
+    rec('data', !!pos() || RP.doc().trades.length === 1, `pozycja po skoku: ${pos() ? 'otwarta' : 'zamknięta po drodze'}`);
+  });
+
+  // ---------- (5) runda 2 (przegląd kodu P3-2): cały skok do ceny po stronie przeglądarki z limitem 20 dni i otwartą pozycją ----------
+  await section('cena20', async () => {
+    await open('Sesja 174 cena 20 dni', DAY0, '5m');
+    await RP.goTo(nyAt(DAY0, '10:30')); await sleep(400);
+    noJr();
+    RP.orders().choosePreset(null); await sleep(80);
+    setF('sl', 2500); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('buy'); await sleep(200);
+    const cur = RP.cursor();
+    // cel: pierwszy nowy rekord wysokiej ceny (maksima dób licznych z godzinowych świec) po co najmniej 8 dniach od kursora, w oknie 20 dni
+    const r = await client.range({ instruments: ['NQ'], from: cur, to: cur + 20 * 86400, tf: '1h' });
+    const hours = r.inst.NQ.bars || [], days = [];
+    for (const b of hours) { const k = Math.floor((b[0] - cur) / 86400); days[k] = Math.max(days[k] ?? -Infinity, b[2]); }
+    let run = -Infinity, target = null, hitDay = null;
+    for (let k = 0; k < days.length; k++) {
+      if (days[k] == null) continue;
+      if (k >= 8 && days[k] > run && Number.isFinite(run)) { target = q(run + 0.25); hitDay = k; break; }
+      run = Math.max(run, days[k]);
+    }
+    rec('cena20', target != null, `jest dzień z nowym rekordem ceny po co najmniej 8 dniach (cel ${target}, dzień ${hitDay}, godzinowych ${hours.length})`);
+    key('p'); await sleep(150);
+    const gp = scr().querySelector('.bt-gp');
+    gp.querySelector('input[name="gpPrice"]').value = String(target).replace('.', ',');
+    gp.querySelector('input[name="gpDays"]').value = '20';
+    const t0 = performance.now();
+    gp.querySelector('[data-gp="go"]').click();
+    const ok = await until(() => RP.cursor() > cur + 5 * 86400 && !RP.busy(), 30000);
+    const ms = performance.now() - t0;
+    info.cena20 = { target, hitDay, jumpMs: Math.round(ms), cursorDays: ((RP.cursor() - cur) / 86400).toFixed(2) };
+    rec('cena20', !!ok, `kursor po skoku (${info.cena20.cursorDays} dnia od startu) przy limicie 20 dni`);
+    rec('cena20', ms <= 5000, `cały skok do ceny ~${info.cena20.cursorDays} dnia z limitem 20 dni i otwartą pozycją: ${Math.round(ms)} ms (próg 5000 ms, budżet serwera 8 s)`);
+    rec('cena20', !!pos() || RP.doc().trades.length === 1, `pozycja po skoku: ${pos() ? 'otwarta' : 'zamknięta po drodze'}`);
+    // najgorszy przypadek po stronie przeglądarki: cena nieosiągalna, 20 dni: od kliknięcia do komunikatu „nie padła”
+    key('p'); await sleep(150);
+    const gp2 = scr().querySelector('.bt-gp');
+    gp2.querySelector('input[name="gpPrice"]').value = '999999';
+    gp2.querySelector('input[name="gpDays"]').value = '20';
+    const c1 = RP.cursor(), w0 = performance.now();
+    gp2.querySelector('[data-gp="go"]').click();
+    const shown = await until(() => /nie padła/.test(norm(scr().querySelector('.bt-find-t')?.textContent ?? '')), 15000);
+    info.cena20.worstClientMs = Math.round(performance.now() - w0);
+    rec('cena20', !!shown && RP.cursor() === c1, `cena nieosiągalna, 20 dni, po stronie przeglądarki: komunikat po ${info.cena20.worstClientMs} ms, kursor bez zmian (próg 8500 ms)`);
+    rec('cena20', info.cena20.worstClientMs <= 8500, `najgorszy przypadek w przeglądarce ${info.cena20.worstClientMs} ms ≤ 8500 ms`);
+  });
+
+  // ---------- (6) runda 2 (przegląd kodu P3-3): trade zamknięty po drodze w skoku trafia do atrapy Notion ----------
+  await section('notion', async () => {
+    await open('Sesja 174 notion', DAY0, '5m');
+    await RP.goTo(nyAt(DAY0, '10:30')); await sleep(400);
+    noJr();
+    RP.orders().choosePreset(null); await sleep(80);
+    setF('sl', 15); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('buy'); await sleep(200);
+    key('g'); await sleep(150);
+    const gd = scr().querySelector('.bt-gd');
+    gd.querySelector('input[name="gdDate"]').value = '2024-03-15'; gd.querySelector('input[name="gdTime"]').value = '10:00';
+    gd.querySelector('[data-gd="go"]').click();
+    const want = nyAt('2024-03-15', '10:00');
+    await until(() => RP.cursor() === want && !RP.busy(), 20000);
+    const tr = RP.doc().trades.at(-1);
+    rec('notion', !pos() && !!tr && tr.exits.at(-1).reason === 'sl', `pozycja zamknięta po SL 15 pkt w trakcie skoku (${tr?.id}, ${tr?.exits.at(-1)?.reason})`);
+    const sent = await until(() => RP.doc().trades.at(-1)?.notion?.state === 'sent', 20000);
+    rec('notion', !!sent, `trade ${tr?.id} zamknięty po drodze trafił do atrapy Notion (stan ${RP.doc().trades.at(-1)?.notion?.state}, strona ${RP.doc().trades.at(-1)?.notion?.pageId ?? '–'})`);
+    rec('notion', /Po drodze: SL trafiony \d{2}:\d{2}:\d{2} NY/.test(norm(scr().querySelector('.bt-msg')?.textContent ?? '')), `komunikat po drodze zostaje po zapisie do Notion: «${norm(scr().querySelector('.bt-msg')?.textContent ?? '')}»`);
+  });
+
+  out.textContent = JSON.stringify({ checks, info });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, info, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

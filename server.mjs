@@ -16,7 +16,7 @@ import { upgradeDefaults } from './lib/config-migracje.mjs';
 import { scrubSecrets } from './lib/diag.mjs';
 import { DatabentoError } from './lib/databento.mjs';
 import { createNews } from './lib/news-service.mjs';
-import { createReplayRange } from './lib/backtest-range.mjs';
+import { createReplayRange, parseFindQuery } from './lib/backtest-range.mjs';
 import { createBacktestStore, BacktestError, SESSION_BODY_LIMIT, SESSION_ID_RE } from './lib/backtest-store.mjs';
 import { createBacktestSync, MARKER_RE } from './lib/backtest-sync.mjs';
 import { createDayIndex } from './lib/backtest-index.mjs';
@@ -38,6 +38,7 @@ import { sealPackage, openPackage, peekPackage, MAX_ATTEMPTS } from './lib/trans
 import { createDiag } from './lib/diag.mjs';
 import { resolveDataDir, scanData, createMover, layersOfRow, CANDLE_ROWS, CANDLE_SYMBOLS, DiskError, freeSpace } from './lib/dysk.mjs';
 import { createBackups, BackupError } from './lib/kopie.mjs';
+import { createTzFix, TzFixError } from './lib/strefa-notion.mjs';
 
 const PUBLIC = path.join(ROOT, 'public');
 const HOST = '127.0.0.1';
@@ -346,7 +347,7 @@ function sendError(res, e) {
     return sendJson(res, e.tooLarge ? 413 : 400, { error: e.msgKey ? t(e.message) : e.message, fields: e.fields });
   }
   console.error('[write]', e.message);
-  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError || e instanceof BacktestError || e instanceof DiskError || e instanceof BackupError ? e.status : 500;
+  const s = e instanceof NotionError || e instanceof DatabentoError || e instanceof NewsError || e instanceof BacktestError || e instanceof DiskError || e instanceof BackupError || e instanceof TzFixError ? e.status : 500;
   // 401 z Notion to problem tokenu, nie klienta: oddajemy 502 z czytelnym komunikatem
   const status = s === 401 || s < 400 || s > 599 ? 502 : s;
   return sendJson(res, status, { error: e.message, code: e.code, ...(e.left !== undefined ? { left: e.left } : {}) });
@@ -760,6 +761,7 @@ function prevDataDir() { const p = config.dataDirPrev; return typeof p === 'stri
 // N5: zadanie kopii baz (kopia teraz, podgląd, przywrócenie) też blokuje restart, zatrzymanie i aktualizację (kopie sprawdzają własne zadanie przed tą funkcją)
 function busyReason() {
   if (backups.busy()) return backups.busy();
+  if (tzFix.busy()) return tzFix.busy();
   if (upd.running) return t('Aktualizacja już trwa.');
   if (setupJob.running) return t('Trwa tworzenie dziennika. Spróbuj po jego zakończeniu.');
   if (mover.busy()) return t('Trwa przenoszenie danych. Spróbuj po jego zakończeniu.');
@@ -835,6 +837,26 @@ const backups = createBackups({
   onRestored: () => data.invalidate(),
   scrub: (s) => scrubSecrets(s, [...['NOTION_TOKEN', 'DATABENTO_API_KEY', 'FRED_API_KEY', 'FINNHUB_API_KEY'].map((k) => loadEnv()[k]).filter(Boolean), ...forgottenSecrets]),
 });
+// Poprawa strefy czasu starych wpisów (1.7.0, odbiór): podgląd → kopia baz → zmiana pola time_zone dat wejścia i wyjścia na strefę aplikacji (lib/strefa-notion.mjs)
+// [U] 3.11.2026 «Popraw strefę na NY (Recommended)» (przed zmianą kopia zapasowa bazy; uruchamia użytkownik z Ustawień po podglądzie)
+// Liczba zapisów trade'ów (dziennik, kosz, backtest, usuwanie DEMO) przyjętych i jeszcze niezakończonych: poprawa strefy nie startuje przy liczniku > 0 (R3-1)
+let tradeWritesInFlight = 0;
+const tzFix = createTzFix({
+  notion, sources: SOURCES, t,
+  writesInFlight: () => tradeWritesInFlight,
+  loadRoles: async () => { const sch = await data.loadSchema('trades'); return { date: sch.roles.date?.name, exit: sch.roles.exit?.name, instrument: sch.roles.instrument?.name }; },
+  copy: (extra) => backups.copyNow(extra),
+  isBusy: () => { if (backups.busy()) return backups.busy(); if (upd.running) return t('Aktualizacja już trwa.'); if (setupJob.running) return t('Trwa tworzenie dziennika. Spróbuj po jego zakończeniu.'); if (mover.busy()) return t('Trwa przenoszenie danych. Spróbuj po jego zakończeniu.'); return null; },
+  lang: () => (config.lang === 'en' ? 'en' : 'pl'),
+  onDone: () => data.invalidate(),
+  // odstęp między zapisami stron (limit Notion ok. 3 żądań na sekundę); zmienna tylko dla testów na atrapie
+  pace: process.env.THQ_TZFIX_PACE_MS != null ? Math.max(0, Number(process.env.THQ_TZFIX_PACE_MS) || 0) : undefined,
+  scrub: (s) => scrubSecrets(s, [...['NOTION_TOKEN', 'DATABENTO_API_KEY', 'FRED_API_KEY', 'FINNHUB_API_KEY'].map((k) => loadEnv()[k]).filter(Boolean), ...forgottenSecrets]),
+});
+Object.assign(ACTIONS, {
+  '/api/tz-fix/preview': async (body) => tzFix.preview(body?.tz),
+  '/api/tz-fix/apply': async (body) => tzFix.apply(body?.tz, body?.confirm, body?.token, body?.choices ?? {}),
+});
 Object.assign(ACTIONS, {
   '/api/backups/create': async () => backups.create(),
   '/api/backups/preview': async (body) => backups.preview(body?.name),
@@ -869,6 +891,7 @@ const server = http.createServer(async (req, res) => {
       // backtest: POST /api/backtest/trade/trash|restore { sessionId, tradeId, skipNotion? }. Ciało JSON do 1 KB, identyfikatory walidowane po stronie serwera.
       const trTrash = req.method === 'POST' ? url.pathname.match(/^\/api\/trades\/([0-9a-f-]{36})\/(trash|untrash)$/i) : null;
       const btTrade = req.method === 'POST' && (url.pathname === '/api/backtest/trade/trash' || url.pathname === '/api/backtest/trade/restore');
+      const demoRm = req.method === 'POST' && url.pathname === '/api/demo/remove';
       if (!isShutdown && !action && !isPage && !sh && !dr && !bts && !btn && !btdel && !trTrash && !btTrade) { res.writeHead(405, SEC_HEADERS); return res.end(); }
       const bad = guardWrite(req, { json: !isShutdown });
       if (bad) {
@@ -883,7 +906,20 @@ const server = http.createServer(async (req, res) => {
         res.on('finish', () => setTimeout(() => process.exit(0), 100));
         return;
       }
+      // licznik zapisów w toku (R3-1): zwiększany przy przyjęciu zapisu trade'a, zmniejszany w finally po ZAKOŃCZENIU pracy handlera (nie po zamknięciu odpowiedzi)
+      let counted = false;
       try {
+        // Decyzja sesji głównej 3.11.2026 (bezpieczeństwo P3-1): w czasie poprawy strefy starych wpisów zapis, edycja i usuwanie trade'ów dostają 409, żeby poprawa
+        // nie nadpisała daty zmienionej w trakcie jej przebiegu
+        // Bezpieczeństwo R3-1 i R3-2a (rundy 4 i 5): zapis w toku jest liczony do końca pracy handlera (finally niżej), także gdy klient zerwie połączenie,
+        // a poprawa nie startuje, gdy licznik > 0. Sprawdzenie blokady i zwiększenie licznika idą bez await, więc nie ma okna między przyjęciem zapisu a startem poprawy.
+        // Usunięcie wpisów DEMO też zmienia strony z planu poprawy.
+        if ((isPage && m[1].toLowerCase() === 'trades') || trTrash || btTrade || demoRm) {
+          const why = tzFix.busy();
+          if (why) return sendJson(res, 409, { error: why, code: 'running' });
+          tradeWritesInFlight++;
+          counted = true;
+        }
         if (sh) {
           if (!PAGE_ID_RE.test(sh[1])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');
           const body = await readJson(req, SHOT_BODY_LIMIT, 'Plik jest za duży: najwyżej 10 MB.');
@@ -941,6 +977,8 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, await writer[m[1].toLowerCase()](body, m[2] || null));
       } catch (e) {
         return sendError(res, e);
+      } finally {
+        if (counted) { counted = false; tradeWritesInFlight--; }
       }
     }
 
@@ -996,6 +1034,16 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/backtest/bounds') {
       try { return sendJson(res, 200, replayRange.bounds({ instruments: (url.searchParams.get('instruments') ?? '').split(',').filter(Boolean) })); } catch (e) { return sendError(res, e); }
     }
+    // 1.7-4: skok do ceny: pierwsza świeca bazowa instrumentu po kursorze, która dotyka ceny, w limicie dni handlowych (tylko lokalne świece). Parametry liczbowe przechodzą przez parseFindQuery
+    // (typy, zakresy, długości), strażnik Sec-Fetch-Site działa wyżej dla wszystkich odczytów /api/*, a przerwane żądanie (Anuluj, zamknięcie karty) przerywa wyszukiwanie.
+    if (url.pathname === '/api/backtest/find-price') {
+      const ac = new AbortController();
+      res.on('close', () => { if (!res.writableFinished) ac.abort(); });
+      try {
+        const qy = parseFindQuery(url.searchParams, t);
+        return sendJson(res, 200, await replayRange.findPrice({ ...qy, signal: ac.signal }));
+      } catch (e) { if (e?.code === 'aborted') return undefined; return sendError(res, e); }
+    }
     if (url.pathname === '/api/backtest/sessions') {
       try { return sendJson(res, 200, { sessions: btStore.list() }); } catch (e) { return sendError(res, e); }
     }
@@ -1043,10 +1091,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/disk/move/status') return sendJson(res, 200, mover.status());
     // N5: lista kopii baz Notion i stan zadania (tylko dysk, bez sieci)
+    if (url.pathname === '/api/tz-fix') return sendJson(res, 200, tzFix.status());
     if (url.pathname === '/api/backups') { try { return sendJson(res, 200, backups.list()); } catch (e) { return sendError(res, e); } }
     // N4: stan źródeł danych (bez sieci): klucze tak/nie z 4 znakami, limity, kredyt, sufity, kolejka, import
     if (url.pathname === '/api/sources') return sendJson(res, 200, sourcesState());
-    if (url.pathname === '/api/ping') return sendJson(res, 200, { ok: true, app: 'trading-hq', version: APP_VERSION, img: stats });
+    if (url.pathname === '/api/ping') return sendJson(res, 200, { ok: true, app: 'trading-hq', version: APP_VERSION, img: stats, ...(process.env.THQ_TEST_NONCE ? { testNonce: process.env.THQ_TEST_NONCE } : {}) });
     if (url.pathname === '/api/img') return await handleImg(url, res);
 
     // Strony robocze z testy/ (np. podgląd kart Udostępnij) tylko dla dashboardu testowego: testy/start-test.mjs ustawia THQ_TEST_PAGES=1.

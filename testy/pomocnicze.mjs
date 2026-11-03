@@ -5,6 +5,8 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSy
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import http from 'node:http';
+import net from 'node:net';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,11 +34,11 @@ export function cleanEnv(extra = {}) {
 
 export function start(file, args = [], env = {}, { cwd = ROOT } = {}) {
   const p = spawn(process.execPath, [file, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  p.out = ''; p.err = '';
+  p.out = ''; p.err = ''; p.exited = false;
   p.stdout.on('data', (d) => { p.out += d; });
   p.stderr.on('data', (d) => { p.err += d; });
   procs.add(p);
-  p.on('exit', () => procs.delete(p));
+  p.on('exit', (code) => { p.exited = true; p.exitCode = code; procs.delete(p); });
   return p;
 }
 // asynchronicznie (spawnSync zablokowałby pętlę zdarzeń, a fałszywy serwer wydań działa w tym samym procesie)
@@ -55,32 +57,68 @@ export function run(file, args = [], env = {}, { cwd = ROOT } = {}) {
 }
 // porównanie niezależne od kolejności kluczy
 export const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
-export async function waitHttp(url, ms = 15000) {
+// Port zajęty = ktoś słucha (połączenie się udaje). Cudzy proces na porcie testu nie może być rozmówcą testu (runda 4, P2-1 przeglądu kodu).
+export const portBusy = (port) => new Promise((ok) => {
+  const s = net.connect({ port, host: '127.0.0.1' });
+  s.setTimeout(1500, () => { s.destroy(); ok(false); });
+  s.once('connect', () => { s.destroy(); ok(true); });
+  s.once('error', () => ok(false));
+});
+// wolny port: podany, a gdy zajęty przez obcy proces, wolny port przydzielony przez system (zakres efemeryczny, więc nie wchodzi w drogę portom
+// przydzielanym kolejno przez run.mjs i testy); ostrzeżenie na stderr. Brak portu od systemu = jasny błąd.
+// Własne procesy testu, które dostały kill(), ale jeszcze się nie zakończyły, są najpierw dokańczane (do 3 s): ostrzeżenie dotyczy wtedy tylko naprawdę obcego procesu.
+export async function freePort(port) {
+  const dying = [...procs].filter((p) => p.killed && !p.exited);
+  if (dying.length) await Promise.race([Promise.all(dying.map((p) => new Promise((ok) => p.once('exit', ok)))), sleep(3000)]);
+  if (!(await portBusy(port))) return port;
+  const p = await new Promise((ok, fail) => { const s = net.createServer(); s.once('error', fail); s.listen(0, '127.0.0.1', () => { const x = s.address().port; s.close(() => ok(x)); }); });
+  console.warn(`[testy] port ${port} zajęty przez obcy proces (nie z tego przebiegu testów), używam ${p}`);
+  return p;
+}
+// Gotowość = odpowiedź WŁASNEGO procesu: proces potomny żyje, a odpowiedź niesie znacznik (nonce) przekazany przy starcie.
+// opts.proc: proces potomny (jego wyjście przed odpowiedzią = błąd z jego stderr); opts.nonce + opts.read(r) → znacznik z odpowiedzi; bez nonce tylko status < 500.
+export async function waitHttp(url, ms = 15000, opts = {}) {
+  const { proc, nonce, read } = opts;
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
-    try { const r = await fetch(url, { headers: { Authorization: 'Bearer x' } }); if (r.status < 500) return true; } catch { /* jeszcze nie */ }
+    if (proc?.exited) throw new Error(`Proces testowy zakończył się przed gotowością (kod ${proc.exitCode}): ${url}\n${String(proc.err || proc.out).slice(-400)}`);
+    try {
+      const r = await fetch(url, { headers: { Authorization: 'Bearer x' } });
+      if (r.status < 500) {
+        if (!nonce) return true;
+        const got = await read(r);
+        // proces mógł paść tuż po odpowiedzi cudzego serwera: sprawdzamy żywotność jeszcze raz
+        if (got === nonce && !proc?.exited) return true;
+        if (!proc?.exited) { await sleep(120); if (proc?.exited) throw new Error(`Port zajęty przez obcy proces: ${url} (odpowiedź bez znacznika testu; ${String(proc.err).slice(-200)})`); }
+      }
+    } catch (e) { if (/obcy proces|zakończył się/.test(String(e?.message))) throw e; /* jeszcze nie */ }
     await sleep(120);
   }
   throw new Error(`Nie odpowiada: ${url}`);
 }
-export async function atrapa(port, env = {}) {
-  const p = start(path.join(ROOT, 'testy', 'atrapa-notion.mjs'), [String(port)], cleanEnv(env));
-  await waitHttp(`http://127.0.0.1:${port}/__test/log`);
+const newNonce = () => randomBytes(8).toString('hex');
+const nonceHeader = (r) => r.headers.get('x-test-nonce');
+export async function atrapa(port0, env = {}) {
+  const port = await freePort(port0), nonce = newNonce();
+  const p = start(path.join(ROOT, 'testy', 'atrapa-notion.mjs'), [String(port)], cleanEnv({ ...env, THQ_TEST_NONCE: nonce }));
+  await waitHttp(`http://127.0.0.1:${port}/__test/log`, 15000, { proc: p, nonce, read: nonceHeader });
   const base = `http://127.0.0.1:${port}`;
   const get = async (pth) => (await fetch(base + pth, { headers: { Authorization: 'Bearer x' } })).json();
   const post = async (pth, body) => (await fetch(base + pth, { method: 'POST', headers: { Authorization: 'Bearer x', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
   return { p, base, port, get, post, writes: () => get('/__test/writes'), dump: () => get('/__test/dump'), stop: () => p.kill() };
 }
-export async function atrapaDb(port, env = {}) {
-  const p = start(path.join(ROOT, 'testy', 'atrapa-databento.mjs'), [String(port)], cleanEnv(env));
-  await waitHttp(`http://127.0.0.1:${port}/__test/log`);
+export async function atrapaDb(port0, env = {}) {
+  const port = await freePort(port0), nonce = newNonce();
+  const p = start(path.join(ROOT, 'testy', 'atrapa-databento.mjs'), [String(port)], cleanEnv({ ...env, THQ_TEST_NONCE: nonce }));
+  await waitHttp(`http://127.0.0.1:${port}/__test/log`, 15000, { proc: p, nonce, read: nonceHeader });
   const base = `http://127.0.0.1:${port}`;
   const j = async (pth, body) => (await fetch(base + pth, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) })).json();
   return { p, base, port, log: () => j('/__test/log'), config: (c) => j('/__test/config', c), reset: () => j('/__test/reset', {}), stop: () => p.kill() };
 }
-export async function server(port, env, { cwd = ROOT } = {}) {
-  const p = start(path.join(cwd, 'server.mjs'), [], cleanEnv({ PORT: String(port), ...env }), { cwd });
-  await waitHttp(`http://127.0.0.1:${port}/api/ping`);
+export async function server(port0, env, { cwd = ROOT } = {}) {
+  const port = await freePort(port0), nonce = newNonce();
+  const p = start(path.join(cwd, 'server.mjs'), [], cleanEnv({ PORT: String(port), ...env, THQ_TEST_NONCE: nonce }), { cwd });
+  await waitHttp(`http://127.0.0.1:${port}/api/ping`, 15000, { proc: p, nonce, read: async (r) => (await r.json().catch(() => ({}))).testNonce });
   return { p, base: `http://127.0.0.1:${port}`, port, stop: () => p.kill() };
 }
 // żądanie do dashboardu z nagłówkami jak z samej strony (ochrona zapisu)

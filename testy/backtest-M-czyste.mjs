@@ -48,12 +48,13 @@ export default ({ test, assert, ROOT }) => {
     const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)) };
     Z.rememberOrderFields(storage, 'NQ', { unit: 'pt', sl: '12', tp: '24' });
     Z.rememberOrderFields(storage, 'ES', { unit: 'tick', sl: '16', tp: '' });
-    assert.deepEqual(Z.recallOrderFields(storage, 'NQ'), { unit: 'pt', sl: '12', tp: '24' });
-    assert.deepEqual(Z.recallOrderFields(storage, 'ES'), { unit: 'tick', sl: '16', tp: '' });
+    // 1.7-5: odczyt niesie listę TP (stary zapis z jednym tp = jeden wiersz 100%, puste tp = brak poziomów)
+    assert.deepEqual(Z.recallOrderFields(storage, 'NQ'), { unit: 'pt', sl: '12', tp: '24', tps: [{ v: '24', pct: '100' }] });
+    assert.deepEqual(Z.recallOrderFields(storage, 'ES'), { unit: 'tick', sl: '16', tp: '', tps: [] });
     assert.equal(Z.recallOrderFields(storage, 'MES'), null);
     // cena (jednostka „cena”) nie jest zapamiętywana: przy następnym otwarciu rynek jest gdzie indziej
     Z.rememberOrderFields(storage, 'NQ', { unit: 'px', sl: '18000', tp: '18100' });
-    assert.deepEqual(Z.recallOrderFields(storage, 'NQ'), { unit: 'pt', sl: '12', tp: '24' });
+    assert.deepEqual(Z.recallOrderFields(storage, 'NQ'), { unit: 'pt', sl: '12', tp: '24', tps: [{ v: '24', pct: '100' }] });
     mem.set(Z.ORD_MEM_KEY, '{zły');
     assert.equal(Z.recallOrderFields(storage, 'NQ'), null);
     mem.set(Z.ORD_MEM_KEY, JSON.stringify({ NQ: { unit: 'pt', sl: '<b>', tp: '-3' } }));

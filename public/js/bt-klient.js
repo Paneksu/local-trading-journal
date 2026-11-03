@@ -19,8 +19,8 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
   const revs = new Map(); // id → rev ostatnio znany z serwera
   let queued = null, timer = 0, inflight = null, lastError = null;
 
-  async function getJson(url) {
-    const r = await fetchImpl(url, { cache: 'no-store' });
+  async function getJson(url, opts = {}) {
+    const r = await fetchImpl(url, { cache: 'no-store', ...opts });
     let j = null;
     try { j = await r.json(); } catch { /* bez treści */ }
     if (!r.ok) { const e = new Error(j?.error || String(r.status)); e.status = r.status; e.code = j?.code; throw e; }
@@ -62,6 +62,8 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
   // trade ze swojej kopii sesji usuwa (i dopisuje) wywołujący, z awaitowanym zapisem. skipNotion = usuń tylko lokalnie (za zgodą, gdy Notion nie zna strony).
   const trashTrade = async (sessionId, tradeId, { skipNotion = false } = {}) => { await settle(); return post('/api/backtest/trade/trash', { sessionId, tradeId, ...(skipNotion ? { skipNotion: true } : {}) }); };
   const restoreTrade = async (sessionId, tradeId) => { await settle(); return post('/api/backtest/trade/restore', { sessionId, tradeId }); };
+  // 1.7-4: skok do ceny. q = { instrument, from, price, dir: 'up'|'down', days }, signal przerywa żądanie (Anuluj). Wynik: { t, end } albo { none: true, until, why }
+  const findPrice = async ({ instrument, from, price, dir, days }, { signal } = {}) => getJson(`/api/backtest/find-price?instrument=${encodeURIComponent(instrument)}&from=${Math.floor(from)}&price=${encodeURIComponent(price)}&dir=${encodeURIComponent(dir)}&days=${Math.floor(days)}`, signal ? { signal } : {});
   const bounds = async (instruments) => getJson(`/api/backtest/bounds?instruments=${encodeURIComponent(instruments.join(','))}`);
   const news = async ({ from, to }) => getJson(`/api/news?from=${Math.floor(from)}&to=${Math.floor(to)}`);
 
@@ -120,5 +122,5 @@ export function createSessionClient({ fetchImpl = (...a) => globalThis.fetch(...
     return j;
   }
 
-  return { setOnError: (fn) => { onError = fn || onError0; }, remove, restore, trashTrade, restoreTrade, load, list, days, statsSource, range, bounds, news, save, create, flush, notion, pending: () => (queued ? 1 : 0) + (inflight ? 1 : 0), lastError: () => lastError };
+  return { setOnError: (fn) => { onError = fn || onError0; }, remove, restore, trashTrade, restoreTrade, load, list, days, statsSource, range, findPrice, bounds, news, save, create, flush, notion, pending: () => (queued ? 1 : 0) + (inflight ? 1 : 0), lastError: () => lastError };
 }

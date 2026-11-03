@@ -103,7 +103,9 @@ export function toast(msg, { error = false, action = null, ms = 0 } = {}) {
   if (action) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'btn sm ghost toast-act';
-    const hint = action.undo ? (isMac ? '⌘Z' : 'Ctrl+Z') : '';
+    // skrót klawiszowy tylko tam, gdzie jest klawiatura: na dotyku i wąskim ekranie samo „Cofnij”
+    const noKeys = typeof matchMedia === 'function' && matchMedia('(hover: none), (max-width: 640px)').matches;
+    const hint = action.undo && !noKeys ? (isMac ? '⌘Z' : 'Ctrl+Z') : '';
     b.textContent = action.label;
     // podpowiedź skrótu w osobnym elemencie: ekrany dotykowe ją chowają (CSS @media (hover: none))
     if (hint) { const k = document.createElement('span'); k.className = 'toast-key'; k.textContent = ` (${hint})`; b.append(k); }

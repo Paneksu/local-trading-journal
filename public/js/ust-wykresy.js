@@ -8,7 +8,8 @@ import { THEMES } from './palety.js';
 import { t } from './i18n.js';
 import { resetChartGroup, chartContrast, fixChartColor, previewSvg, FILM_FORMATS, FILM_SECONDS, FILM_DIMS } from './styl-wykresu.js';
 import { filterSupported } from './film.js';
-import { SESSION_IDS, BROWSER_TZ, validTz, tzLabel, tzOptionLabel, allZones, tzGroupsHtml, loadStyleDock, saveStyleDock } from './podglad.js';
+import { DEFAULT_TZ } from './strefa.js';
+import { SESSION_IDS, validTz, tzLabel, tzOptionLabel, allZones, tzGroupsHtml, loadStyleDock, saveStyleDock } from './podglad.js';
 import { normHex } from './palety.js';
 import { esc, L, THEME_NAME, ratioTxt, gHead, chk, grp, chartOps, onChk } from './ust-wspolne.js';
 import { newsLookHtml, earnLookHtml } from './newsy-karty.js';
@@ -30,12 +31,12 @@ export function createWykresy(ctx) {
   function tzOptions() {
     const cur = validTz(settings.chartTz) ? settings.chartTz : '';
     const opt = (v, label) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
-    return opt('', t('Strefa przeglądarki ({tz})', { tz: tzLabel(BROWSER_TZ) })) + (cur && !allZones().includes(cur) ? opt(cur, tzOptionLabel(cur)) : '') + tzGroupsHtml(opt);
+    return opt('', t('Domyślna: {tz}', { tz: tzLabel(DEFAULT_TZ) })) + (cur && !allZones().includes(cur) ? opt(cur, tzOptionLabel(cur)) : '') + tzGroupsHtml(opt);
   }
   function tzHtml() {
-    return `<div class="sp-f"><label class="lbl" for="sp-tz">${L('Strefa czasowa wykresu')}</label>
+    return `<div class="sp-f"><label class="lbl" for="sp-tz">${L('Strefa czasu')}</label>
       <select id="sp-tz" class="sp-in sp-sel" data-fk="tz" aria-describedby="sp-tz-d">${tzOptions()}</select>
-      <p class="note" id="sp-tz-d">${L('Oś czasu wykresów świecowych. Czasy trade\'ów zostają te same, zmienia się tylko opis osi. Lista na wykresie zmienia strefę tymczasowo.')}</p></div>`;
+      <p class="note" id="sp-tz-d">${L('Godziny w całej aplikacji: formularz dziennika, listy, kalendarz, oś wykresu oraz historia i Journal w Backteście. Wpisy zapisane wcześniej w czasie polskim popraw w Kopie i diagnostyka → Strefa starych wpisów. Lista na wykresie zmienia strefę osi tymczasowo.')}</p></div>`;
   }
   // P38 (28.10.2026), słowa użytkownika: «okej wedle naszej rozmowy  BADJ domyslnie wlaczony w ustawieniach przelacznik»: wartość początkowa przycisku B-ADJ na wykresie.
   function badjHtml() {

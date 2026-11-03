@@ -12,6 +12,8 @@ import { t, locale } from './i18n.js';
 import { niceTicks, placeTip, ensureTip } from './charts.js';
 import { parseTf, SESSIONS, sessionWindows, pdhlSpans, overlayLevels } from './swiece.js';
 import { dateRef } from './kontrakty.js';
+import { validTz, setAppTz, appTz, tzShort } from './strefa.js';
+export { validTz };
 import { confirmDialog, toast } from './modal.js';
 import * as G from './geometria.js';
 import { themed, CSS_COLORS } from './rysunki-kolory.js';
@@ -78,9 +80,8 @@ export function saveStyleDock(v) { try { globalThis.localStorage?.setItem(STYLE_
 
 // ---- P26: strefa czasowa osi (słowa użytkownika 28.10.2026: «nie mam pojecia jaki czas utc jest ustawiony dla dziennika, wiec powinien byc
 // do ustawienia na wykresie jak i staly w ustawieniach»). Czasy trade'ów i świec są momentami UTC (Notion zwraca datę z przesunięciem,
-// parseDT liczy moment); strefa zmienia tylko opis osi, dymka i linijek. Stała strefa: Ustawienia → Ogólne (settings.chartTz, '' = przeglądarka).
+// parseDT liczy moment); strefa zmienia tylko opis osi, dymka i linijek. Stała strefa: Ustawienia → Wykresy (settings.chartTz, '' = Nowy Jork, 3.11.2026: strefa całej aplikacji, strefa.js).
 // Szybki przełącznik na wykresie nadpisuje ją tymczasowo (do przeładowania strony albo zmiany w Ustawieniach), bez zapisu: decyzja gustu.
-export const BROWSER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } })();
 // P27 (28.10.2026), słowa użytkownika: «strefy czasowe powinny byc wszystkie i na wykresie tez powinna byc lista rozwijana, a nie przelaczniki».
 // Odstępstwo od P26 (przycisk przełączający po kolei UTC, Nowy Jork, Chicago): na wykresie lista rozwijana ze wszystkimi strefami IANA
 // (szybki wybór na górze), w Ustawieniach lista wszystkich stref z polem filtra. Wybór na wykresie dalej tymczasowy (decyzja gustu z P26).
@@ -95,16 +96,13 @@ const TZ_NAMES = {
   'Europe/Warsaw': 'Warszawa', 'Europe/London': 'Londyn', 'America/New_York': 'Nowy Jork', 'America/Chicago': 'Chicago', 'America/Los_Angeles': 'Los Angeles',
   'Asia/Tokyo': 'Tokio', 'Asia/Hong_Kong': 'Hongkong', 'Asia/Singapore': 'Singapur', 'Asia/Dubai': 'Dubaj', 'Australia/Sydney': 'Sydney',
 };
-let tzBase = '', tzOver = '';
-export function validTz(z) {
-  if (typeof z !== 'string' || !z || z.length > 64) return false;
-  try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch { return false; }
-}
-export function setChartTzDefault(z) { tzBase = validTz(z) ? z : ''; tzOver = ''; }
-export const chartTz = () => tzOver || tzBase || BROWSER_TZ;
+let tzOver = '';
+// 3.11.2026: pusta strefa z Ustawień znaczy strefę domyślną aplikacji (Nowy Jork), nie strefę przeglądarki; strefa żyje w strefa.js
+export function setChartTzDefault(z) { setAppTz(z); tzOver = ''; }
+export const chartTz = () => tzOver || appTz();
 // Tymczasowa strefa z listy na wykresie ('' albo strefa z Ustawień = bez nadpisania). Zwraca strefę osi.
 export function setChartTzOverride(z) {
-  const base = tzBase || BROWSER_TZ;
+  const base = appTz();
   tzOver = validTz(z) && z !== base ? z : '';
   return chartTz();
 }
@@ -182,7 +180,7 @@ export function tzGroupsHtml(opt, sec = Date.now() / 1000) {
 // Lista stref powstaje raz na pasek (ok. 400 pozycji, przesunięcie liczone na chwilę `sec`, np. wejścia w trade).
 export function tzSelectHtml(sec = Date.now() / 1000) {
   const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
-  const base = tzBase || BROWSER_TZ;
+  const base = appTz();
   return `<select class="sp-in sp-sel swc-tz" data-swc="tz" aria-label="${esc(t('Strefa czasowa osi'))}" title="${esc(t('Strefa czasowa osi. Zmiana tutaj jest tymczasowa; stałą ustawisz w Ustawieniach → Ogólne.'))}">` +
     opt('', t('Z Ustawień: {tz}', { tz: tzLabel(base, sec) })) +
     tzGroupsHtml(opt, sec) + '</select>';
@@ -231,7 +229,7 @@ export function markToggles(root, auto, sec, prefs = null, badj = null) {
   if (prefs) markOverlays(root, prefs, sec);
   if (a) a.setAttribute('aria-pressed', String(!!auto));
   if (z) {
-    z.options[0].textContent = t('Z Ustawień: {tz}', { tz: tzLabel(tzBase || BROWSER_TZ, sec) });
+    z.options[0].textContent = t('Z Ustawień: {tz}', { tz: tzLabel(appTz(), sec) });
     if (z.value !== tzOver) z.value = tzOver;
   }
 }
@@ -703,14 +701,18 @@ export function levelsSvg(trade, s, iEntry, iExit, xRight, W, { mini = false, cf
     if (Number.isFinite(sl) && cfg.sl) back += rect(ep, sl, 'pos-loss');
     if (!Number.isFinite(tp) && !Number.isFinite(sl) && Number.isFinite(xp)) back += rect(ep, xp, (trade.r ?? trade.pnl ?? (xp - ep)) >= 0 ? 'pos-profit' : 'pos-loss');
   }
-  const hline = (p, cls) => {
+  const hline = (p, cls, prefix = '') => {
     const y = f1(s.y(p));
     front += `<line class="lvl ${cls}" x1="${xa}" x2="${f1(Math.max(x1, x2))}" y1="${y}" y2="${y}"/>`;
-    labels += `<text class="lvl-l ${cls}" x="${W - 4}" y="${y}" text-anchor="end" dominant-baseline="middle">${esc(num(p, 2))}</text>`;
+    labels += `<text class="lvl-l ${cls}" x="${W - 4}" y="${y}" text-anchor="end" dominant-baseline="middle">${esc(prefix + num(p, 2))}</text>`;
   };
   if (Number.isFinite(sl) && cfg.sl) hline(sl, 'sl');
   if (Number.isFinite(tp) && cfg.tp) hline(tp, 'tp');
-  if (Number.isFinite(be)) hline(be, 'be');
+  if (Number.isFinite(be)) {
+    // odbiór wyglądu 1.7.0 P2-6: podpis „BE” przy prawym końcu linii (R2-P2-2) leżał na korpusie ostatniej świecy krótkich trade'ów i był nieczytelny w obu motywach;
+    // nazwa stoi teraz w prawym marginesie razem z ceną („BE 18 393,25”), czyli poza świecami; w miniaturach sama cena jak dotąd
+    hline(be, 'be', mini ? '' : 'BE\u00a0');
+  }
   const mark = (i, p, cls) => {
     const x = f1(s.x(i));
     front += `<line class="lvl-t ${cls}" x1="${x}" x2="${x}" y1="${s.top}" y2="${s.bottom}"/>`;
@@ -1008,7 +1010,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
   // ---- rysowanie ----
   function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (alive && S.status === 'ok') draw(); }); }
   const F = () => fmtIn(chartTz()); // P26: strefa z Ustawień albo przełącznika na wykresie
-  function fmtFull(sec) { return F().FULL.format(new Date(sec * 1000)); }
+  function fmtFull(sec) { return `${F().FULL.format(new Date(sec * 1000))}\u00a0${tzShort(chartTz(), sec * 1000)}`; }
   function fmtDay(sec) { return F().DAY.format(new Date(sec * 1000)); }
   const priceDec = (step) => (step >= 1 ? 0 : step >= 0.1 ? 1 : 2);
 

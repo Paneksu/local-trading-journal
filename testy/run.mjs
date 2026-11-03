@@ -20,8 +20,11 @@ const only = process.argv[2] || '';
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 const json = (f) => JSON.parse(readFileSync(f, 'utf8'));
+// porty testów liczone kolejno od 4601; zajęte przez obcy proces (ktoś słucha na tym porcie) są pomijane (runda 4, P2-1: obcy serwer na 4610)
 let port = 4600;
-const nextPort = () => ++port;
+const busyPorts = new Set();
+for (let p = 4601; p <= 4800; p++) if (await H.portBusy(p)) busyPorts.add(p);
+const nextPort = () => { do { port++; } while (busyPorts.has(port)); return port; };
 const pagesOf = (dump) => Object.fromEntries(Object.values(dump).flatMap((d) => d.pages.map((p) => [p.id, H.canon({ props: p.properties, trash: !!p.in_trash })])));
 
 // ---------- zasady migracji ----------
@@ -1071,13 +1074,18 @@ for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^backtest-.
 }
 
 // ---------- uruchomienie ----------
+// testy ponowione RAZ po przejściowym błędzie ładowania modułu przez serwer testowy (tylko ten błąd): liczone osobno, nie po cichu jako zdane
+const retried = [];
+const TRANSIENT = /Failed to fetch dynamically imported module/;
 let pass = 0, fail = 0, skipped = 0, skipEnv = 0; // skipEnv: test sam się pominął (np. brak Chrome/Edge): e.skipTest, liczony osobno, nie jako zdany // skipped: odfiltrowane fragmentem nazwy z linii poleceń (D2, przegląd 28.10.2026)
 const t0 = Date.now();
 for (const t of tests) {
   if (only && !t.name.includes(only)) { skipped++; continue; }
   const s = Date.now();
   try {
-    await t.fn();
+    try { await t.fn(); } catch (e0) {
+      if (e0 && !e0.skipTest && TRANSIENT.test(String(e0.stack || e0))) { console.log(`↻ ${t.name}: ponawiam raz po przejściowym błędzie ładowania modułu`); H.killAll(); await t.fn(); retried.push(t.name); } else throw e0;
+    }
     pass++;
     console.log(`✓ ${t.name} (${((Date.now() - s) / 1000).toFixed(1)} s)`);
   } catch (e) {
@@ -1089,5 +1097,6 @@ for (const t of tests) {
   }
 }
 H.cleanupTemps();
-console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped${skipEnv ? `, ${skipEnv} pominiętych (brak środowiska)` : ''} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+if (retried.length) console.log(`\nPONOWIONE (${retried.length}; przejściowy błąd ładowania modułu, zdane dopiero przy drugiej próbie):\n  ${retried.join('\n  ')}`);
+console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped${retried.length ? `, ${retried.length} ponowionych` : ''}${skipEnv ? `, ${skipEnv} pominiętych (brak środowiska)` : ''} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 process.exit(fail ? 1 : 0);

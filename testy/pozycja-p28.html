@@ -105,14 +105,16 @@ try {
   // ===== zapis =====
   panel.querySelector('[data-act="tsave"]')?.click(); await sleep(300);
   const pb = patches[0] || {};
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  // oczekiwana data i godzina w strefie przeglądarki (Intl, niezależnie od kodu edytora)
+  // [U] 3.11.2026 «mala poprawka do notion i do journalingu, ja wpisuje godziny wedle nowojorskiego czasu nie polskiego»: zapis dat idzie w strefie aplikacji (domyślnie Nowy Jork), nie przeglądarki
+  // strefa zapisu = strefa z Ustawień; ta strona ustawia ją na UTC (P.setChartTzDefault('UTC') wyżej), więc PATCH ma UTC
+  const tz = 'UTC';
+  // oczekiwana data i godzina w strefie aplikacji (Intl, niezależnie od kodu edytora)
   const wall = (ms) => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map((x) => [x.type, x.value])); return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` }; };
   const wIn = wall(candles[95][0] * 1000), wOut = wall(candles[135][0] * 1000);
   rec('P32-8', patches.length === 1 && !('r' in pb) && pb.exitPrice === 5850 && pb.entryPrice === 5840 && pb.sl === 5836, `PATCH bez R (R ręczne), ceny z rysunku: ${JSON.stringify(pb)}`);
   rec('P28-2', !('pnl' in pb), 'P&L nie jest wysyłany (trade nie ma liczby kontraktów): pole zostaje');
   rec('P28-3', pb.date === wIn.date && pb.time === wIn.time && pb.exitDate === wOut.date && pb.exitTime === wOut.time && pb.tz === tz,
-    `PATCH: daty przyciągnięte do świecy, w strefie przeglądarki (${tz}): ${pb.date} ${pb.time} → ${pb.exitDate} ${pb.exitTime}`);
+    `PATCH: daty przyciągnięte do świecy, w strefie aplikacji (${tz}): ${pb.date} ${pb.time} → ${pb.exitDate} ${pb.exitTime}`);
   rec('P28-3', pb.edited === 'S0', `zapis nadal z kontrolą 409 (edited ${pb.edited})`);
   const tr = ed.trade();
   rec('P28-3', tr.at === candles[95][0] * 1000 && tr.exitAt === candles[135][0] * 1000 && tr.r === 0.5 && tr.exitPrice === 5850, `edytor ma nowy trade, R bez zmian (P32) (at ${tr.at - T0 * 1000}, exitAt ${tr.exitAt - T0 * 1000}, R ${tr.r})`);

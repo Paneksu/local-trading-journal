@@ -7,6 +7,7 @@
 import { t, locale } from './i18n.js';
 import { esc, L, gHead, grp, dot, fmtBytes, docLink, getJson, postJson } from './ust-wspolne.js';
 import { docUrl } from './ust-zrodla.js';
+import { createTzSec } from './ust-strefa.js';
 
 const NAMES = { notion: 'Notion', databento: 'Databento', fred: 'FRED', finnhub: 'Finnhub', github: 'GitHub' };
 const OPTIONAL = new Set(['fred', 'finnhub']);
@@ -26,12 +27,14 @@ export function connState(s, c) {
 }
 // Nazwy baz w liście kopii i powody kopii (manifest.reason; kopie z aktualizacji nie mają powodu)
 const DB_LABEL = { trades: "Trade'y", konta: 'Konta', dziennik: 'Dziennik', finanse: 'Wydatki i payouty' };
-const WHY = { update: 'przy aktualizacji', manual: 'ręczna', 'before-restore': 'przed przywróceniem' };
+const WHY = { update: 'przy aktualizacji', manual: 'ręczna', 'before-restore': 'przed przywróceniem', 'before-tz-fix': 'przed poprawą strefy czasu' };
 const ago = (sec) => (sec < 3600 ? t('{n} min', { n: Math.max(1, Math.round(sec / 60)) }) : sec < 86400 ? t('{n} godz.', { n: Math.round(sec / 3600) }) : t('{n} dni', { n: Math.round(sec / 86400) }));
 
 export function createDiagSec(ctx) {
   // N5: stan kopii z GET /api/backups (lista, zadanie, słowo potwierdzenia), otwarty podgląd { name, err }, komunikat wyniku, znacznik obsłużonego zadania
   let bk = null, bkErr = '', bkTimer = 0, pv = null, bkMsg = null, seenAt = null;
+  // 1.7.0 (odbiór): poprawa strefy czasu starych wpisów w Notion
+  const tzs = createTzSec(ctx);
   const when = (iso, name) => {
     const d = iso ? new Date(iso) : null;
     return d && !Number.isNaN(+d) ? new Intl.DateTimeFormat(locale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d) : name;
@@ -167,7 +170,7 @@ export function createDiagSec(ctx) {
         bkStart('/api/backups/restore', { name: v, confirm: typed, token }, (m) => { pv = { ...pv, err: m }; });
         return true;
       }
-      default: return false;
+      default: return tzs.handle(act, v);
     }
   }
   function serverHtml() {
@@ -203,9 +206,10 @@ export function createDiagSec(ctx) {
     const bad = ctx.diag()?.configCorrupt;
     const corrupt = bad ? `<section class="card sv-g" id="sv-g-konfig"><h3 class="sp-g">${L('Plik konfiguracji był uszkodzony')}</h3>
       <p class="note sv-warn">${esc(t('Plik config.local.json nie był poprawnym JSON-em. Dashboard odłożył go jako {name} w folderze aplikacji i zaczął z ustawieniami domyślnymi: kredyt Databento nie jest wpisany, limity są domyślne. Wpisz je ponownie w Źródłach danych albo przepisz z kopii.', { name: bad }))}</p></section>` : '';
-    return corrupt + grp(connHtml(), 'polaczenia') + grp(serverHtml(), 'serwer') + grp(logHtml(), 'log') + grp(updatesHtml(), 'aktualizacje') + grp(backupsHtml(), 'kopie') + grp(licencje(), 'licencje');
+    return corrupt + grp(connHtml(), 'polaczenia') + grp(serverHtml(), 'serwer') + grp(logHtml(), 'log') + grp(updatesHtml(), 'aktualizacje') + grp(backupsHtml(), 'kopie') + grp(tzs.html(), 'strefa') + grp(licencje(), 'licencje');
   }
   function onChange(ev) {
+    if (tzs.onChange(ev)) return true;
     if (ev.target.matches('[data-act="sp-upd"]')) { ctx.opts.onConfig({ updateCheck: ev.target.checked }); return true; }
     return false;
   }
@@ -215,7 +219,7 @@ export function createDiagSec(ctx) {
   }
   return {
     id: 'diag', html, handle, onInput: () => false, onChange, onEscape,
-    enter() { loadBk(); }, leave() { clearTimeout(bkTimer); },
-    keepTyped: ['#sv-bk-confirm'],
+    enter() { loadBk(); tzs.enter(); }, leave() { clearTimeout(bkTimer); tzs.leave(); },
+    keepTyped: ['#sv-bk-confirm', '#sv-tz-confirm'],
   };
 }

@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: auto BE i presety 1.7-3 (strona robocza)</title>
+<!-- Strona robocza testów backtest-173 (testy/backtest-173-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: auto BE w bilecie (jednostki R, pkt, ticki, $, cena, podgląd progu, R bez SL nieaktywne), próg BE na pozycji (+BE, przeciąganie z odczytem,
+     strzałki, usuwanie z Cofnij, edycja i wyłączenie w panelu ×, kolumna szuflady), wyzwolenie z komunikatem i plakietką BE, chipy presetów (aktywacja, Kup jednym kliknięciem, edycja odłącza,
+     „Zapisz jako preset…”), przycisk przeciwny „Zamknij n” bez SL w panelu, linia BE w Journalu, brak przykrywania (elementFromPoint), układ 375 px (tylko brak poziomego przewijania i przykrytych przycisków).
+     Parametry: ?w=375, ?theme=platinum, ?shots=1 (zrzuty przez most CDP window.__shot). Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }.
+     Zasada tej strony: każda asercja może zawieść (żadnych gałęzi „pominięte = zdane”, OR-ów zawsze prawdziwych ani szukania po textContent z ukrytymi spanami). -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const shots = qs.get('shots') === '1';
+const wide = !narrow || shots;
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  const tz = document.getElementById('toast');
+  if (tz) tz.hidden = true;
+  await sleep(150);
+  window.__shot(JSON.stringify({ id, name: `${name}-${qs.get('theme') === 'platinum' ? 'platinum' : 'onyx'}-${narrow ? 375 : 1920}` }));
+  await until(() => window.__done?.[id], 10000);
+};
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
+  const { fmtMoney, fmtR } = await import('/js/format.js');
+  const { visibleCount } = await import('/js/bt-swieca.js');
+  const { abeInfo } = await import('/js/bt-zlecenia.js');
+  const client = createSessionClient();
+  const mkDef = () => ({ instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] });
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja 173', def: mkDef(), now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  // ustawienia bloku bt trzymane w stronie (tak jak robi to aplikacja przez onPresets)
+  let btSet = sanitizeBt(null);
+  const savedPatches = [];
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0, getSettings: () => btSet, onPresets: (patch) => { savedPatches.push(patch); btSet = sanitizeBt({ ...btSet, ...patch }); } });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const trades = () => RP.doc().trades;
+  const ch = () => RP.chart();
+  const host = () => scr().querySelector('.bt-plot');
+  const layer = () => ch().tradeLayer();
+  const tag = (k) => layer().querySelector(`[data-k="${k}"]`);
+  const mainText = (k) => tag(k)?.querySelector('.bt-tag-t')?.textContent ?? '';
+  const live = () => layer().querySelector('.bt-tl-live')?.textContent ?? '';
+  const focusTag = (k) => { const el = tag(k); el.focus(); el.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); };
+  const acts = () => layer().querySelector('[data-k="pos"] .bt-tag-act');
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const num = (s) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+  const center = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const pe = (type, el, x, y, extra = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true, ...extra }));
+  const yPx = (px) => host().getBoundingClientRect().top + ch().series.priceToCoordinate(px);
+  const modeOf = (side) => P(`[data-o="${side}"] .bt-ord-mode`).textContent;
+  const note = () => P('.bt-ord-note').textContent;
+  const prev = () => { const e = P('.bt-ord-prev'); return e.hidden ? '' : e.textContent; };
+  const btn = (side) => P(`[data-o="${side}"]`);
+  const kupPx = () => num(btn('buy').querySelector('.bt-ord-px').textContent);
+  // podgląd: „auto BE przy 18 016,50 (Kup) · 17 986,50 (Sprzedaj)” dla jednostek względnych albo „auto BE przy 18 010,25” dla ceny; zwraca próg dla Kup
+  const abePrev = () => { const m = prev().match(/auto BE przy ([\d\s.,]+?)(?: \(Kup\)|$)/); return m ? num(m[1]) : null; };
+  const abePrevSell = () => { const m = prev().match(/\(Kup\) · ([\d\s.,]+) \(Sprzedaj\)$/); return m ? num(m[1]) : null; };
+  const hits = (els) => {
+    const bad = [];
+    let n = 0;
+    for (const b of els) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || getComputedStyle(b).visibility === 'hidden') continue;
+      n++;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      // pole wyboru w etykiecie (.check) jest niewidocznym natywnym polem: trafia w nie jego etykieta, czyli element, który je zawiera
+      if (!(hit === b || b.contains(hit) || (b.type === 'checkbox' && b.closest('label')?.contains(hit)))) bad.push(`${b.dataset.tl || b.dataset.dka || b.dataset.o || b.dataset.pr || b.name || b.className} → ${hit?.dataset?.tl || hit?.className || hit?.tagName}`);
+    }
+    return { n, bad };
+  };
+  const closeAllNow = async () => { RP.orders().closeAll(); await sleep(80); };
+  // wejście z panelu: SL i TP w punktach (puste = bez), ilość ręczna albo z ryzyka; auto BE wyłączony
+  const abeOff = () => { const c = P('[name="abeOn"]'); if (c.checked) c.click(); };
+  const openPos = async ({ side = 'buy', sl = 10, tp = 30, qty = null } = {}) => {
+    await closeAllNow();
+    abeOff();
+    setF('sl', sl); setF('tp', tp);
+    if (qty != null) setF('qty', qty); else setF('qty', '');
+    RP.orders().submit(side); await sleep(80);
+  };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(100);
+  document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  // R3-P2-1 (runda 4): TP poza polem ceny przykleja się do górnej krawędzi (↑ TP), a próg BE tuż pod krawędzią nie może na niego nachodzić ani przykrywać jego ×;
+  // sprawdza rozstaw plakietek (≥ 24 px) i elementFromPoint w środku każdego ×
+  const edgeCollision = async (tagName) => {
+    await closeAllNow(); abeOff();
+    setF('sl', 10); setF('tp', 600); setF('qty', 1);
+    RP.orders().submit('buy'); await sleep(120);
+    const yEdge = 19, price = q(ch().series.coordinateToPrice(yEdge));
+    RP.orders().setLevel('NQ', 'abe', price); await sleep(150);
+    const tp = tag('ptp'), be = tag('pbe');
+    rec(tagName, tp?.dataset.edge === 'up', `TP poza polem ceny przyklejony do górnej krawędzi (edge ${tp?.dataset.edge})`);
+    const a = tp.getBoundingClientRect(), b = be.getBoundingClientRect();
+    rec(tagName, !(a.top < b.bottom - 1 && b.top < a.bottom - 1), `plakietki TP (${Math.round(a.top)}–${Math.round(a.bottom)}) i próg BE (${Math.round(b.top)}–${Math.round(b.bottom)}) nie nachodzą na siebie`);
+    // toast „Zamknięcie …” z closeAllNow (odbiór 1.7.0) stoi w prawym dolnym rogu i na czas pomiaru ×  jest ukryty (jak w zrzutach)
+    { const tz0 = document.getElementById('toast'); if (tz0) tz0.hidden = true; }
+    const hx = hits(layer().querySelectorAll('[data-k="ptp"] .bt-tag-x, [data-k="pbe"] .bt-tag-x'));
+    rec(tagName, hx.n === 2 && hx.bad.length === 0, `środki obu × (TP i próg BE) trafiają w siebie (${hx.n}; ${hx.bad.join('; ')})`);
+    await shot('kolizja-tp-be');
+    await closeAllNow();
+  };
+  const moreOpen = () => { const m = scr().querySelector('.bt-ord-more'); if (m && getComputedStyle(m).display !== 'none' && m.getAttribute('aria-expanded') !== 'true') m.click(); };
+
+  // ---------- bilet: auto BE z jednostkami, podgląd progu, R bez SL nieaktywne ----------
+  if (wide) await section('bilet', async () => {
+    await closeAllNow();
+    setF('sl', 10); setF('tp', ''); setF('qty', 1);
+    const on = P('[name="abeOn"]');
+    rec('bilet', !on.checked && P('.bt-abe-unit').hidden && P('[name="abeVal"]').closest('label').hidden, 'domyślnie auto BE wyłączony, jednostki i pole progu ukryte');
+    on.click(); await sleep(60);
+    rec('bilet', on.checked && !P('.bt-abe-unit').hidden, 'przełącznik odsłania jednostki i próg');
+    const units = [...P('.bt-abe-unit').querySelectorAll('button')].map((b) => b.textContent);
+    rec('bilet', units.join('|') === 'R|pkt|ticki|$|cena', `jednostki progu: ${units.join(' | ')}`);
+    const e0 = kupPx();
+    setF('abeVal', 1);
+    rec('bilet', P('[data-abek="r"]').getAttribute('aria-pressed') === 'true' && abePrev() === q(e0 + 10) && abePrevSell() === q(e0 - 10), `R: 1R przy SL 10 pkt → Kup ${q(e0 + 10)}, Sprzedaj ${q(e0 - 10)} (podgląd «${prev()}»)`);
+    P('[data-abek="pts"]').click(); setF('abeVal', 3); await sleep(40);
+    rec('bilet', abePrev() === q(e0 + 3), `pkt: 3 pkt → ${q(e0 + 3)} (podgląd «${prev()}»)`);
+    P('[data-abek="ticks"]').click(); setF('abeVal', 8); await sleep(40);
+    rec('bilet', abePrev() === q(e0 + 2), `ticki: 8 ticków → ${q(e0 + 2)} (podgląd «${prev()}»)`);
+    P('[data-abek="usd"]').click(); setF('abeVal', 100); await sleep(40);
+    rec('bilet', abePrev() === q(e0 + 5), `$: 100 $ przy 1 kontrakcie NQ (20 $/pkt) → ${q(e0 + 5)} (podgląd «${prev()}»)`);
+    P('[data-abek="price"]').click(); setF('abeVal', q(e0 + 7.25)); await sleep(40);
+    rec('bilet', abePrev() === q(e0 + 7.25), `cena: wartość wprost ${q(e0 + 7.25)} (podgląd «${prev()}»)`);
+    // R bez SL: jednostka nieaktywna z podpowiedzią, a wybrana R blokuje zlecenie z powodem
+    P('[data-abek="r"]').click(); setF('abeVal', 1); await sleep(30);
+    setF('sl', ''); setF('qty', 1); await sleep(60);
+    const rb = P('[data-abek="r"]');
+    rec('bilet', rb.disabled && rb.title === 'Auto BE w R wymaga SL', `R bez SL: przycisk nieaktywny z podpowiedzią («${rb.title}»)`);
+    rec('bilet', btn('buy').disabled && note() === 'Auto BE w R wymaga SL.', `R bez SL: Kup nieaktywne z powodem («${note()}»)`);
+    P('[data-abek="pts"]').click(); setF('abeVal', 3); await sleep(40);
+    rec('bilet', !btn('buy').disabled && note() === '', `po zmianie jednostki na pkt Kup działa bez SL («${note()}»)`);
+    // zły próg: pusty
+    setF('abeVal', ''); await sleep(30);
+    rec('bilet', btn('buy').disabled && note() === 'Wpisz próg auto BE.', `pusty próg: «${note()}»`);
+    // pamięć instrumentu zawiera stan auto BE
+    setF('abeVal', 3); setF('sl', 10); await sleep(40);
+    const mem = JSON.parse(localStorage.getItem('thq.bt.ord.v1') || '{}').NQ;
+    rec('bilet', mem?.abe?.on === true && mem.abe.kind === 'pts' && mem.abe.value === '3', `pamięć panelu: ${JSON.stringify(mem?.abe)}`);
+    await shot('bilet-auto-be');
+    // zlecenie niesie próg: Long 1, SL 10, auto BE 3 pkt, offset 0
+    RP.orders().submit('buy'); await sleep(100);
+    const p = pos();
+    rec('bilet', !!p && p.sl === q(p.entryPrice - 10) && p.autoBe && p.autoBe.kind === 'pts' && p.autoBe.value === 3 && p.autoBe.offsetTicks === 0 && p.autoBe.done === false, `pozycja ma uzbrojony próg: ${JSON.stringify(p?.autoBe)}`);
+    const info = abeInfo(p);
+    rec('bilet', info.armed && norm(info.text) === `przy +3 pkt (${norm(new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(p.entryPrice + 3))}) · BE`, `opis progu: «${info.text}»`);
+    // domyślny offset z Ustawień (2) i offset wpisany w polu (5)
+    await closeAllNow();
+    btSet = sanitizeBt({ ...btSet, beOffset: 2 });
+    RP.orders().submit('buy'); await sleep(100);
+    rec('bilet', pos()?.autoBe?.offsetTicks === 2, `offset z Ustawień: ${pos()?.autoBe?.offsetTicks}`);
+    await closeAllNow();
+    setF('abeOff', 5);
+    RP.orders().submit('buy'); await sleep(100);
+    rec('bilet', pos()?.autoBe?.offsetTicks === 5, `offset wpisany w polu: ${pos()?.autoBe?.offsetTicks}`);
+    await closeAllNow();
+    setF('abeOff', 21); await sleep(40);
+    rec('bilet', btn('buy').disabled && note() === 'Offset auto BE: liczba ticków od 0 do 20.', `offset 21 odrzucony («${note()}»)`);
+    setF('abeOff', ''); btSet = sanitizeBt({ ...btSet, beOffset: 0 });
+    abeOff(); await sleep(40);
+  });
+
+  // ---------- pozycja: +BE, znacznik progu, przeciąganie, strzałki, usuwanie z Cofnij ----------
+  if (wide) await section('pozycja', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 2 });
+    const p0 = pos(), avg = p0.avg;
+    rec('pozycja', !tag('pbe') && p0.autoBe === null, 'bez progu nie ma plakietki BE');
+    focusTag('pos'); await sleep(50);
+    const plus = acts()?.querySelector('[data-tl="abe+"]');
+    rec('pozycja', !!plus && plus.textContent === '+BE' && plus.getAttribute('aria-label') === 'Dodaj próg auto BE', `przy wejściu jest przycisk «${plus?.textContent}» obok +SL/+TP (tu SL i TP są, więc tylko +BE i BE)`);
+    // +BE (dodaje próg) różni się od BE (przesuwa SL teraz): kreskowana ramka w kolorze BE, solidny BE, odstęp między nimi
+    const beB = acts().querySelector('[data-tl="be"]'), csP = getComputedStyle(plus), csB = getComputedStyle(beB);
+    rec('pozycja', csP.borderTopStyle === 'dashed' && csB.borderTopStyle === 'solid' && csP.color !== csB.color && beB.getBoundingClientRect().left - plus.getBoundingClientRect().right >= 8, `+BE: ramka ${csP.borderTopStyle} i kolor ${csP.color}, BE: ${csB.borderTopStyle} ${csB.color}, odstęp ${Math.round(beB.getBoundingClientRect().left - plus.getBoundingClientRect().right)} px`);
+    // Enter na „+BE”: próg domyślny na +1R = 10 pkt (SL 10 pkt)
+    const ev = key('Enter', {}, plus); await sleep(120);
+    rec('pozycja', ev.defaultPrevented && pos().autoBe?.kind === 'price' && pos().autoBe.value === q(avg + 10) && pos().autoBe.done === false, `+BE stawia próg na +1R = ${q(avg + 10)} (silnik: ${JSON.stringify(pos().autoBe)})`);
+    rec('pozycja', !!tag('pbe') && tag('pbe').getAttribute('aria-valuenow') === String(q(avg + 10)), 'pojawia się plakietka BE przy progu');
+    // odczyt w spoczynku: zysk w $ i R na progu (2 kontrakty, 10 pkt → 400 $, 1R = 400 $)
+    rec('pozycja', norm(mainText('pbe')) === norm(`BE ${fmtMoney(400)} · ${fmtR(1)}`), `plakietka progu w spoczynku z prefiksem BE: «${mainText('pbe')}»`);
+    rec('pozycja', !layer().querySelector('[data-tl="abe+"]'), 'po ustawieniu progu +BE znika');
+    // Decyzja sesji głównej 2.11.2026: klik na +BE od razu stawia próg w domyślnym miejscu (karta: „klik stawia próg na +1R”), bez linii „w ręku”
+    RP.orders().setAutoBe('NQ', null); await sleep(100);
+    focusTag('pos'); await sleep(50);
+    layer().querySelector('[data-tl="abe+"]').click(); await sleep(120);
+    rec('pozycja', pos().autoBe?.kind === 'price' && pos().autoBe.value === q(avg + 10) && !tag('hand'), `klik +BE od razu stawia próg ${q(avg + 10)} (silnik: ${JSON.stringify(pos().autoBe)}), bez linii w ręku`);
+    // znaczniki osi: cena progu jest wśród linii pozycji, a strefa pozycji ma linię BE na tej cenie
+    const marks = ch().positionMarks();
+    rec('pozycja', marks.some((m) => m.price === q(avg + 10) && m.axis), `znacznik osi ceny z ceną progu (${marks.map((m) => m.price).join(', ')})`);
+    // strefa pozycji (rysunek-tło) ma linię BE na szerokości pozycji na cenie progu: ta sama geometria co w dzienniku (positionExtras, style.beLevel)
+    const { positionPrices } = await import('/js/rysunki.js');
+    const zone = positionPrices(ch().tradingState().position, 0.25);
+    rec('pozycja', zone && zone.be === q(avg + 10) && ch().tradingState().position.style.beLevel === q(avg + 10) - avg, `strefa pozycji ma linię BE na ${zone?.be} (beLevel ${ch().tradingState().position?.style?.beLevel})`);
+    await shot('pozycja-prog');
+    // przeciąganie plakietki: odczyt z ceną, pkt, $ i R; zapis przy puszczeniu
+    const el = tag('pbe'), [x, y] = center(el), target = q(avg + 14);
+    pe('pointerdown', el, x, y); pe('pointermove', el, x, yPx(target)); await sleep(60);
+    const t1 = norm(el.querySelector('.bt-tag-t').textContent);
+    rec('pozycja', /^BE /.test(t1) && /pkt/.test(t1) && /\$/.test(t1) && /R/.test(t1), `odczyt w trakcie przeciągania: «${t1}»`);
+    rec('pozycja', pos().autoBe.value === q(avg + 10), 'w trakcie silnik działa na zatwierdzonym progu');
+    // w trakcie przeciągania widać linię progu na całej szerokości (znacznik osi z lineVisible), a w spoczynku jej nie ma (linię rysuje strefa pozycji)
+    const mk = ch().positionMarks().find((m) => m.price === target);
+    rec('pozycja', !!mk && mk.line === true, `linia progu widoczna w trakcie przeciągania (${JSON.stringify(mk)})`);
+    // próg tuż nad wejściem: odczyt i notka nie przykrywają plakietki wejścia
+    pe('pointermove', el, x, yPx(q(avg + 1))); await sleep(80);
+    const inter = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const er = tag('pos').getBoundingClientRect(), tr1 = el.getBoundingClientRect(), nt = el.querySelector('.bt-tag-note');
+    rec('pozycja', !inter(tr1, er) && !(nt && !nt.hidden && inter(nt.getBoundingClientRect(), er)), `odczyt (${Math.round(tr1.top)}–${Math.round(tr1.bottom)}) i notka nie przykrywają plakietki wejścia (${Math.round(er.top)}–${Math.round(er.bottom)})`);
+    pe('pointermove', el, x, yPx(target)); await sleep(60);
+    await shot('pozycja-przeciaganie');
+    pe('pointerup', el, x, yPx(target)); await sleep(120);
+    rec('pozycja', pos().autoBe.value === target && pos().autoBe.kind === 'price', `puszczenie zapisuje próg ${target} (silnik: ${pos().autoBe.value})`);
+    rec('pozycja', norm(live()) === norm(`BE ${new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(target)}`), `komunikat aria-live z ceną («${live()}»)`);
+    // strzałka w górę o tick, Shift o 1 pkt
+    focusTag('pbe'); key('ArrowUp', {}, tag('pbe')); await sleep(100);
+    rec('pozycja', pos().autoBe.value === q(target + 0.25), `strzałka ↑ przesuwa o tick (${pos().autoBe.value})`);
+    key('ArrowDown', { shiftKey: true }, tag('pbe')); await sleep(100);
+    rec('pozycja', pos().autoBe.value === q(target + 0.25 - 1), `Shift+↓ o 1 pkt (${pos().autoBe.value})`);
+    // po złej stronie średniej: odrzucone, linia wraca, komunikat
+    const good = pos().autoBe.value, el2 = tag('pbe'), [x2, y2] = center(el2);
+    pe('pointerdown', el2, x2, y2); pe('pointermove', el2, x2, yPx(avg - 3)); await sleep(60);
+    rec('pozycja', /po złej stronie/.test(el2.querySelector('.bt-tag-note')?.textContent || ''), `w trakcie: ostrzeżenie «${el2.querySelector('.bt-tag-note')?.textContent}»`);
+    pe('pointerup', el2, x2, yPx(avg - 3)); await sleep(120);
+    rec('pozycja', pos().autoBe.value === good && /po stronie zysku/.test(note()), `próg pod średnią odrzucony, zostaje ${pos().autoBe.value} («${note()}»)`);
+    // chwyt samej linii progu (pas ±4 px) w polu wykresu
+    const hr = host().getBoundingClientRect(), tgt2 = q(good + 3);
+    pe('pointerdown', host(), hr.left + 120, yPx(good) + 2); pe('pointermove', host(), hr.left + 120, yPx(tgt2)); pe('pointerup', host(), hr.left + 120, yPx(tgt2)); await sleep(120);
+    rec('pozycja', pos().autoBe.value === tgt2, `chwyt linii progu w pasie ±4 px (${good} → ${pos().autoBe.value})`);
+    // usunięcie ×: Cofnij przywraca dokładnie poprzedni próg
+    const before = { ...pos().autoBe };
+    tag('pbe').querySelector('[data-tl="rm"]').click(); await sleep(120);
+    rec('pozycja', pos().autoBe === null && !tag('pbe'), '× usuwa próg, plakietka znika');
+    const act = document.querySelector('#toast .toast-act');
+    rec('pozycja', !!act && /Cofnij/.test(act.textContent) && !document.getElementById('toast').hidden, 'komunikat „Próg BE usunięty” z przyciskiem Cofnij');
+    act.click(); await sleep(120);
+    rec('pozycja', JSON.stringify(pos().autoBe) === JSON.stringify(before), `Cofnij przywraca dokładnie ${JSON.stringify(before)}`);
+    // Cofnij nie dotyka innej pozycji
+    tag('pbe').querySelector('[data-tl="rm"]').click(); await sleep(100);
+    const act2 = document.querySelector('#toast .toast-act');
+    await closeAllNow(); await openPos({ sl: 10, tp: 30, qty: 2 });
+    act2?.click(); await sleep(100);
+    rec('pozycja', pos().autoBe === null, 'Cofnij dotyczy tej samej pozycji: nowa pozycja bez progu');
+  });
+
+  // ---------- panel ×: opis progu, Zmień, Wyłącz, +Auto BE ----------
+  if (wide) await section('panel', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 2 });
+    const avg = pos().avg, row = () => P('.bt-ord-pabe'), txt = () => norm(row().querySelector('.bt-ord-pabe-t').textContent);
+    const fx2 = (x) => norm(new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x));
+    rec('panel', !row().hidden && txt() === 'Auto BE: wyłączone', `bez progu: «${txt()}»`);
+    rec('panel', row().querySelector('[data-o="abe-add"]').hidden === false && row().querySelector('[data-o="abe-edit"]').hidden && row().querySelector('[data-o="abe-off"]').hidden, 'bez progu tylko „+ Auto BE”');
+    row().querySelector('[data-o="abe-add"]').click(); await sleep(60);
+    const f = row().querySelector('.bt-ord-pabe-f');
+    rec('panel', !f.hidden && row().querySelector('[data-pabek="r"]').getAttribute('aria-pressed') === 'true' && P('[name="pabeVal"]').value === '1', 'formularz: domyślnie 1R (pozycja ma ryzyko)');
+    P('[name="pabeVal"]').value = '2'; P('[name="pabeVal"]').dispatchEvent(new Event('input', { bubbles: true }));
+    row().querySelector('[data-o="abe-ok"]').click(); await sleep(120);
+    rec('panel', pos().autoBe?.kind === 'r' && pos().autoBe.value === 2 && f.hidden, `zapis: ${JSON.stringify(pos().autoBe)}`);
+    rec('panel', txt() === `Auto BE: przy +2R (${fx2(avg + 20)}) · BE`, `opis: «${txt()}» (2R = 20 pkt od średniej)`);
+    rec('panel', !!tag('pbe') && tag('pbe').getAttribute('aria-valuenow') === String(q(avg + 20)), 'plakietka progu na wykresie idzie za zmianą z panelu');
+    await shot('panel-auto-be');
+    // Zmień: ticki
+    row().querySelector('[data-o="abe-edit"]').click(); await sleep(50);
+    rec('panel', P('[name="pabeVal"]').value === '2' && row().querySelector('[data-pabek="r"]').getAttribute('aria-pressed') === 'true', 'Zmień wypełnia bieżącym progiem');
+    row().querySelector('[data-pabek="ticks"]').click();
+    P('[name="pabeVal"]').value = '12'; P('[name="pabeOff"]').value = '3';
+    row().querySelector('[data-o="abe-ok"]').click(); await sleep(120);
+    rec('panel', JSON.stringify(pos().autoBe) === JSON.stringify({ kind: 'ticks', value: 12, offsetTicks: 3, done: false }) && txt() === `Auto BE: przy +12t (${fx2(avg + 3)}) · BE +3 ticki`, `ticki z offsetem: ${JSON.stringify(pos().autoBe)}, «${txt()}»`);
+    // zły wpis: pusty próg zostaje w formularzu z komunikatem
+    row().querySelector('[data-o="abe-edit"]').click(); await sleep(40);
+    P('[name="pabeVal"]').value = '';
+    row().querySelector('[data-o="abe-ok"]').click(); await sleep(60);
+    rec('panel', note() === 'Wpisz próg auto BE.' && !row().querySelector('.bt-ord-pabe-f').hidden && pos().autoBe.value === 12, `pusty próg: «${note()}», formularz zostaje, silnik bez zmian`);
+    row().querySelector('[data-o="abe-cancel"]').click(); await sleep(40);
+    rec('panel', row().querySelector('.bt-ord-pabe-f').hidden, 'Anuluj zamyka formularz');
+    // Wyłącz
+    row().querySelector('[data-o="abe-off"]').click(); await sleep(100);
+    rec('panel', pos().autoBe === null && txt() === 'Auto BE: wyłączone' && !tag('pbe'), 'Wyłącz: bez progu, bez plakietki');
+    // R bez rUsd (pozycja bez SL od początku): w formularzu R nieaktywne
+    await openPos({ sl: '', tp: '', qty: 2 });
+    row().querySelector('[data-o="abe-add"]').click(); await sleep(40);
+    const rb = row().querySelector('[data-pabek="r"]');
+    rec('panel', rb.disabled && rb.title === 'Auto BE w R wymaga SL' && row().querySelector('[data-pabek="pts"]').getAttribute('aria-pressed') === 'true', `pozycja bez SL: R nieaktywne («${rb.title}»), domyślnie pkt`);
+    row().querySelector('[data-o="abe-cancel"]').click(); await sleep(30);
+    // szuflada: kolumna Auto BE (1920) z tym samym tekstem i wyłączaniem
+    await openPos({ sl: 10, tp: 30, qty: 2 });
+    RP.orders().setAutoBe('NQ', { kind: 'pts', value: 4, offsetTicks: 0 }); await sleep(120);
+    RP.dock().setTab('pos'); await sleep(120);
+    const th = [...RP.dock().el.querySelectorAll('thead th')].map((x) => x.textContent);
+    const cell = RP.dock().el.querySelector('tbody td[data-c="abe"]');
+    rec('panel', th.includes('Auto BE') && cell && getComputedStyle(cell).display !== 'none', `szuflada ma kolumnę Auto BE (${th.join(' | ')})`);
+    rec('panel', norm(cell.querySelector('.bt-dk-abet').textContent) === `przy +4 pkt (${fx2(pos().avg + 4)}) · BE`, `komórka: «${cell.querySelector('.bt-dk-abet').textContent}»`);
+    await shot('szuflada-auto-be');
+    cell.querySelector('.bt-dk-abex').click(); await sleep(120);
+    rec('panel', pos().autoBe === null && norm(cell.querySelector('.bt-dk-abet').textContent) === '–', 'przycisk × w komórce wyłącza próg');
+  });
+
+  // ---------- wyzwolenie: komunikat, plakietka BE, próg znika, wpis w logu i Journalu ----------
+  if (wide) await section('wyzwolenie', async () => {
+    await closeAllNow(); abeOff();
+    // kierunek wybrany po świecach, które jeszcze nie były pokazane: pozycja, która pierwsza osiągnie +1 pkt, a SL 300 pkt nie sięgnie
+    const st = RP.data().stream('NQ');
+    const n0 = visibleCount(st, RP.cursor());
+    const entry = st.bars[n0 - 1][4];
+    let dir = null, thr = null;
+    for (let i = n0; i < Math.min(st.bars.length, n0 + 90); i++) {
+      if (st.bars[i][2] >= entry + 2) { dir = 'buy'; thr = q(entry + 1); break; }
+      if (st.bars[i][3] <= entry - 2) { dir = 'sell'; thr = q(entry - 1); break; }
+    }
+    rec('wyzwolenie', dir !== null, `dane syntetyczne dają ruch ≥ 2 pkt w ciągu 90 świec bazowych (kierunek ${dir})`);
+    setF('sl', 300); setF('tp', ''); setF('qty', 1);
+    RP.orders().submit(dir); await sleep(100);
+    const p0 = pos();
+    rec('wyzwolenie', !!p0 && p0.autoBe === null, `pozycja ${p0?.dir} bez progu`);
+    const sgn = dir === 'buy' ? 1 : -1;
+    // próg ustawiony z panelu: cena 1 pkt w stronę zysku
+    RP.orders().setLevel('NQ', 'abe', thr); await sleep(100);
+    rec('wyzwolenie', pos().autoBe?.value === thr && !!tag('pbe'), `próg ${thr} uzbrojony`);
+    await shot('przed-wyzwoleniem');
+    let fired = false;
+    for (let i = 0; i < 120 && pos() && !pos().autoBe.done; i++) { await RP.step(1); await sleep(15); }
+    fired = !!pos()?.autoBe?.done;
+    const p1 = pos();
+    rec('wyzwolenie', fired && p1.sl === p0.avg, `po wyzwoleniu SL stoi na BE = średnia ${p0.avg} (SL ${p1?.sl}, próg ${p1?.autoBe?.done})`);
+    rec('wyzwolenie', p1.be === true && p1.beAt === thr, `pozycja ma be=true i beAt=${p1?.beAt}`);
+    const lv = norm(live());
+    rec('wyzwolenie', /^Auto BE \d\d:\d\d:\d\d NY · SL na [\d\s]+,\d\d$/.test(lv) && lv.includes(norm(new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(p0.avg))), `komunikat aria-live «${lv}»`);
+    rec('wyzwolenie', !tag('pbe'), 'plakietka progu znika po wyzwoleniu');
+    rec('wyzwolenie', tag('psl').classList.contains('be') && /^BE/.test(mainText('psl')), `plakietka SL zmienia się w BE («${mainText('psl')}»)`);
+    const lg = p1.log.filter((x) => x.k === 'be-auto');
+    rec('wyzwolenie', lg.length === 1 && lg[0].v.price === thr && lg[0].v.sl === p0.avg, `wpis be-auto w log: ${JSON.stringify(lg)}`);
+    rec('wyzwolenie', document.querySelector('#toast') && /^Auto BE \d\d:\d\d:\d\d NY · SL na/.test(norm(document.getElementById('toast').textContent)), 'toast z tym samym komunikatem');
+    const rowTxt = norm(P('.bt-ord-pabe .bt-ord-pabe-t').textContent);
+    rec('wyzwolenie', rowTxt === `Auto BE: wyzwolone przy ${norm(new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(thr))}`, `panel ×: «${rowTxt}»`);
+    await shot('po-wyzwoleniu');
+    // zamknięcie: trade niesie beAt, Journal pokazuje BE jako cenę progu i fakt Auto BE
+    RP.orders().closeAll(); await sleep(150);
+    const tr = trades().at(-1);
+    rec('wyzwolenie', tr.be === true && tr.beAt === thr && tr.log.some((x) => x.k === 'be-auto'), `trade ${tr.id}: be ${tr.be}, beAt ${tr.beAt}`);
+    const { tradeArgOf } = await import('/js/bt-journal-okno.js');
+    rec('wyzwolenie', tradeArgOf(tr).be === thr, `argument podglądu Journala: linia BE na cenie progu (${tradeArgOf(tr).be})`);
+    const D = await import('/vendor/lightweight-charts-drawing/lightweight-charts-drawing.es.js');
+    const { positionDrawing } = await import('/js/wykres.js');
+    const cc = { fg: '#fff', fg2: '#999', loss: '#f00', profit: '#0f0', be: '#fa0' };
+    const pd = positionDrawing({ ...tradeArgOf(tr), sl: tr.sl0, tp: tr.tp }, D, cc, 0);
+    // beLevel = odległość BE od wejścia w stronę zysku (Long: próg − wejście, Short: wejście − próg), więc zawsze dodatnia dla progu po stronie zysku
+    rec('wyzwolenie', pd && pd.style.beLevel === sgn * (thr - tr.entryPrice) && pd.style.beLevel > 0, `rysunek pozycji w Journalu: beLevel ${pd?.style?.beLevel} po stronie zysku (${sgn} · (${thr} − ${tr.entryPrice}))`);
+    RP.openJournalWindow(tr.id); await sleep(400);
+    const facts = [...document.querySelectorAll('.bt-jw .lb-facts > div')].map((d) => [norm(d.querySelector('dt').textContent), norm(d.querySelector('dd').textContent)]);
+    const fmt2 = (x) => norm(new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x));
+    const beRow = facts.find((f) => f[0] === 'BE (bez ryzyka od ceny)'), abRow = facts.find((f) => f[0] === 'Auto BE');
+    rec('wyzwolenie', beRow?.[1] === fmt2(thr), `fakty Journala: BE (bez ryzyka od ceny) = ${beRow?.[1]}`);
+    rec('wyzwolenie', !!abRow && abRow[1].startsWith(`SL na ${fmt2(p0.avg)} · `) && /\d\d:\d\d:\d\d NY$/.test(norm(abRow[1])), `fakty Journala: Auto BE z chwilą wyzwolenia («${abRow?.[1]}»)`);
+    await shot('journal-be');
+    document.querySelector('.bt-jw [data-jw="close"]')?.click(); await sleep(150);
+    // pozycja po wyzwoleniu i dokładka: SL zostaje (nie przesuwa się), plakietka pokazuje „SL”, nie „BE”
+  });
+
+  // ---------- runda 3: plakietka „BE +2t” po wyzwoleniu z offsetem, podpis „BE” w Journalu, fakt „Wyjście z luką pod BE”, komunikat pominięcia ----------
+  if (wide) await section('runda3', async () => {
+    await closeAllNow(); abeOff();
+    const st = RP.data().stream('NQ');
+    const n0 = visibleCount(st, RP.cursor());
+    const entry = st.bars[n0 - 1][4];
+    let dir = null;
+    for (let i = n0; i < Math.min(st.bars.length, n0 + 90); i++) {
+      if (st.bars[i][2] >= entry + 2) { dir = 'buy'; break; }
+      if (st.bars[i][3] <= entry - 2) { dir = 'sell'; break; }
+    }
+    rec('runda3', dir !== null, `dane syntetyczne dają ruch ≥ 2 pkt (kierunek ${dir})`);
+    setF('sl', 300); setF('tp', ''); setF('qty', 1);
+    RP.orders().submit(dir); await sleep(100);
+    const sg = dir === 'buy' ? 1 : -1;
+    const avg = pos().avg;
+    // R2-P2-3: auto BE o 1 pkt z offsetem 2 ticków (0,5 pkt): po wyzwoleniu SL = BE + 2t, plakietka „BE +2t” w kolorze BE (nie „SL +25 $” z czerwoną ramką)
+    RP.orders().setAutoBe('NQ', { kind: 'pts', value: 1, offsetTicks: 2 }); await sleep(100);
+    for (let i = 0; i < 120 && pos() && !pos().autoBe.done; i++) { await RP.step(1); await sleep(15); }
+    const p1 = pos();
+    rec('runda3', !!p1?.autoBe?.done && Math.abs(p1.sl - (avg + sg * 0.5)) < 1e-9, `po wyzwoleniu SL stoi na BE + 2t (${p1?.sl} = ${avg} ${sg > 0 ? '+' : '−'} 0,5)`);
+    rec('runda3', p1.be === false && p1.beAt != null, `pozycja: be ${p1?.be} (SL nie na samym BE), beAt ${p1?.beAt}`);
+    await sleep(120);
+    const txt = mainText('psl'), lbl = tag('psl');
+    rec('runda3', /^BE \+2t · /.test(txt), `plakietka SL po wyzwoleniu z offsetem: «${txt}»`);
+    rec('runda3', lbl.classList.contains('be'), 'plakietka ma klasę be (kolor BE zamiast czerwonej ramki)');
+    // ramka plakietki ma przejście koloru
+    await sleep(400);
+    const bc = getComputedStyle(lbl).borderTopColor, probe = document.createElement('i'); probe.style.color = 'var(--be)'; document.body.appendChild(probe);
+    const beCol = getComputedStyle(probe).color; probe.remove();
+    const rgb = (c) => c.match(/\d+/g).slice(0, 3).map(Number);
+    rec('runda3', rgb(bc).every((v, i) => Math.abs(v - rgb(beCol)[i]) <= 8), `ramka plakietki w kolorze BE (${bc} = ${beCol})`);
+    await shot('be-offset');
+    RP.orders().closeAll(); await sleep(150);
+    const tr = trades().at(-1);
+    RP.openJournalWindow(tr.id); await sleep(500);
+    // R2-P2-2, od odbioru 1.7.0 (P2-6): podpis „BE” stoi w prawym marginesie razem z ceną („BE 18 018,00”), nie na świecach
+    const lab = [...document.querySelectorAll('.bt-jw svg .lvl-l.be')];
+    rec('runda3', lab.length >= 1 && lab.every((x) => /^BE [\d\s]+(,\d{1,2})?$/.test(norm(x.textContent))) && document.querySelectorAll('.bt-jw svg .lvl-bet').length === 0, `Journal: podpis «BE cena» w marginesie, bez podpisu na świecach (${lab.map((x) => norm(x.textContent)).join(' | ')})`);
+    rec('runda3', lab.length >= 1 && document.querySelectorAll('.bt-jw svg .lvl.be').length >= 1, 'Journal: linia BE nadal jest');
+    await shot('journal-be-podpis');
+    document.querySelector('.bt-jw [data-jw="close"]')?.click(); await sleep(150);
+
+    // „Wyjście z luką pod BE”: trade zbudowany silnikiem na cenach strumienia: auto BE przy e+3, potem otwarcie świecy 3 pkt pod BE (stop z luką)
+    const W = await import('/js/bt-wypelnienia.js');
+    const { toTrade } = await import('/js/bt-journal.js');
+    const { gapUnderBe } = await import('/js/bt-ksiega.js');
+    const ib = n0 - 7, e = q(st.bars[ib][4]);
+    const t1 = st.bars[ib][0], t2 = st.bars[ib + 1][0];
+    const l1 = st.len[ib], l2 = st.len[ib + 1];
+    const b1 = [t1, e, e + 3, e - 0.5, e + 2.5, 1], b2 = [t2, e - 3, e - 2.5, e - 3.5, e - 3, 1];
+    const r0 = W.placeOrder(W.emptyBook(), { instrument: 'NQ', side: 'buy', type: 'market', qty: 1, sl: e - 5, tp: null, autoBe: { kind: 'pts', value: 3, offsetTicks: 0 } }, { t: t1, price: e });
+    const r1 = W.advance(r0.book, 'NQ', { bars: [b1, b2], len: [l1, l2] }, t2 + l2);
+    const closed = r1.events.find((x) => x.type === 'closed')?.position;
+    rec('runda3', !!closed, `silnik zamknął pozycję stopem z luką (${r1.events.map((x) => x.type)})`);
+    const g = closed ? toTrade(closed, { day: '2024-03-12', id: 'tgap' }) : null;
+    const gu = g ? gapUnderBe(g) : null;
+    rec('runda3', gu && gu.sl === e && gu.exit === e - 3, `gapUnderBe: SL na ${gu?.sl}, wyjście ${gu?.exit} (e = ${e})`);
+    // czas zdarzenia auto BE (runda 4, pytanie przeglądu): wpis `at` to koniec świecy, w której próg został dotknięty (t1 + długość świecy); stop następnej świecy ma czas jej początku, więc nigdy przed auto BE.
+    // Wcześniejszy zrzut miał auto BE po wyjściu, bo scenariusz zakładał świece po 60 s przy strumieniu 1 s (artefakt scenariusza, nie silnika).
+    const be0 = closed?.log.find((x) => x.k === 'be-auto');
+    rec('runda4', be0?.at === t1 + l1 && g?.exitT === t2 && g.exitT >= be0.at, `auto BE at = koniec świecy (${be0?.at} = ${t1} + ${l1}), wyjście ${g?.exitT} nie przed nim`);
+    if (g) {
+      trades().push({ ...g, setup: 'Breakout', notes: '', journal: 'done' });
+      RP.openJournalWindow('tgap'); await sleep(500);
+      const facts = [...document.querySelectorAll('.bt-jw .lb-facts > div')].map((d) => [norm(d.querySelector('dt').textContent), norm(d.querySelector('dd').textContent)]);
+      const f2 = (x) => norm(new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x));
+      const row = facts.find((f) => f[0] === 'Wyjście z luką pod BE');
+      rec('runda3', row?.[1] === `SL na ${f2(e)}, wyjście ${f2(e - 3)}`, `fakt Journala: Wyjście z luką pod BE = «${row?.[1]}»`);
+      await shot('journal-luka');
+      document.querySelector('.bt-jw [data-jw="close"]')?.click(); await sleep(150);
+    }
+
+    // R2-3: obcięcie po dokładce: komunikat aria-live i toast (zdarzenie be-auto-skipped z silnika)
+    await closeAllNow(); abeOff();
+    const ev = { type: 'be-auto-skipped', instrument: 'NQ', price: 18010.25, why: 'cap', at: Math.floor(Date.now() / 1000) };
+    RP.engineEvent(ev);
+    await sleep(100);
+    const lv = norm(live());
+    rec('runda3', /^Auto BE pominięte \d\d:\d\d:\d\d NY · poziom BE leży już na cenie progu \(18 010,25\)$/.test(lv), `komunikat aria-live pominięcia «${lv}»`);
+
+    // zrzut do pomiaru kontrastu podpisu „BE” na polu pozycji (R2-P2-1): SL 25 i TP 60 pkt, próg BE 18 pkt w polu zysku, pozycja szeroka na kilkanaście świec
+    const n2 = visibleCount(st, RP.cursor()), e2 = st.bars[n2 - 1][4];
+    let d2 = null;
+    for (let i = n2; i < Math.min(st.bars.length, n2 + 90); i++) { if (st.bars[i][2] >= e2 + 2) { d2 = 'buy'; break; } if (st.bars[i][3] <= e2 - 2) { d2 = 'sell'; break; } }
+    setF('sl', 25); setF('tp', 60); setF('qty', 1);
+    RP.orders().submit(d2 || 'buy'); await sleep(100);
+    RP.orders().setLevel('NQ', 'abe', q(pos().avg + (pos().dir === 'Long' ? 18 : -18))); await sleep(100);
+    for (let i = 0; i < 16 && pos() && !pos().autoBe.done; i++) { await RP.step(1); await sleep(15); }
+    rec('runda3', !!pos() && !pos().autoBe.done && pos().autoBe != null, `pozycja (${pos()?.dir} ${pos()?.avg}, SL ${pos()?.sl}, próg ${pos()?.autoBe?.value}, wyzwolony ${pos()?.autoBe?.done}) z uzbrojonym progiem 18 pkt przetrwała 16 świec: podpis «BE» stoi na polu zysku`);
+    // kolor podpisu «BE»: w jasnym motywie przyciemniony (zmierzone na zrzucie be-podpis-pole-platinum: 4,16:1 → 6,12:1 na polu zysku), w ciemnym bez zmian
+    const { beInk, readColors } = await import('/js/wykres.js');
+    const cl = readColors(host()), ink = beInk(cl), light = document.documentElement.dataset.theme === 'platinum';
+    rec('runda3', light ? ink !== cl.be : ink === cl.be, `kolor podpisu BE: ${ink} (--be ${cl.be}, motyw ${light ? 'jasny' : 'ciemny'})`);
+    await shot('be-podpis-pole');
+    await closeAllNow(); abeOff();
+  });
+
+  // ---------- runda 4: granica plakietki „BE +Nt”, kolizja przyklejonego TP z progiem BE ----------
+  if (wide) await section('runda4', async () => {
+    const { beOffsetTicks } = await import('/js/bt-wykres.js');
+    const L = { dir: 'Long', avg: 100, beAt: 101, sl: 105 }, Sh = { dir: 'Short', avg: 100, beAt: 99, sl: 95 };
+    rec('runda4', beOffsetTicks(L) === 20 && beOffsetTicks(Sh) === 20, `20 ticków za BE to nadal «BE +20t» (Long ${beOffsetTicks(L)}, Short ${beOffsetTicks(Sh)})`);
+    rec('runda4', beOffsetTicks({ ...L, sl: 105.25 }) === null && beOffsetTicks({ ...Sh, sl: 94.75 }) === null, '21 ticków za BE to już zwykły «SL»');
+    rec('runda4', beOffsetTicks({ ...L, beAt: null }) === null && beOffsetTicks({ ...L, sl: 100 }) === null, 'bez beAt albo na samym BE nie ma dopisku offsetu');
+    // engineEvent przepuszcza tylko zdarzenia auto BE: «closed» z zewnątrz nie dodaje trade'a ani nie rzuca
+    const n = trades().length;
+    RP.engineEvent({ type: 'closed', position: { instrument: 'NQ', id: 'x' } }); await sleep(60);
+    rec('runda4', trades().length === n, `engineEvent ignoruje zdarzenie «closed» (trade'ów ${trades().length} = ${n})`);
+    await edgeCollision('runda4');
+  });
+
+  // ---------- presety: chipy, aktywacja, Kup jednym kliknięciem, edycja odłącza, zapis z panelu ----------
+  if (wide) await section('presety', async () => {
+    await closeAllNow(); abeOff();
+    const chips = () => [...P('.bt-ord-pchips').querySelectorAll('button')];
+    rec('presety', chips().map((b) => b.textContent).join('|') === 'Brak' && chips()[0].getAttribute('aria-pressed') === 'true' && P('[data-o="psave"]').textContent === 'Zapisz jako preset…', `na starcie tylko chip «Brak» (${chips().map((b) => b.textContent).join('|')}) i „Zapisz jako preset…”`);
+    // zapis bieżących pól: SL 15 pkt, TP 45 pkt, auto BE 1R
+    setF('sl', 15); setF('tp', 45); setF('qty', '');
+    P('[name="abeOn"]').click(); P('[data-abek="r"]').click(); setF('abeVal', 1); await sleep(40);
+    P('[data-o="psave"]').click(); await sleep(40);
+    const form = P('.bt-psave');
+    rec('presety', !form.hidden && P('[data-o="psave"]').hidden && form.querySelector('[name="pname"]').maxLength === 24, 'małe okno nazwy (do 24 znaków), przycisk otwierający schowany');
+    form.requestSubmit(); await sleep(40);
+    rec('presety', P('.bt-psave-err').textContent === 'Wpisz nazwę presetu.' && btSet.presets.length === 0, `pusta nazwa: «${P('.bt-psave-err').textContent}»`);
+    form.querySelector('[name="pname"]').value = 'Runner'; form.requestSubmit(); await sleep(80);
+    const pr = btSet.presets[0];
+    rec('presety', btSet.presets.length === 1 && pr.name === 'Runner' && JSON.stringify(pr.sl) === '{"unit":"pts","value":15}' && JSON.stringify(pr.tps) === '[{"unit":"pts","value":45,"pct":100}]' && pr.size.mode === 'session' && JSON.stringify(pr.autoBe) === '{"kind":"r","value":1,"offsetTicks":0}', `zapisany preset: ${JSON.stringify(pr)}`);
+    rec('presety', btSet.activePreset === pr.id && form.hidden, 'nowy preset jest aktywny, okno zamknięte');
+    rec('presety', chips().map((b) => b.textContent).join('|') === 'Brak|Runner' && chips()[1].getAttribute('aria-pressed') === 'true' && chips()[0].getAttribute('aria-pressed') === 'false', 'chipy: Brak, Runner (zaznaczony)');
+    rec('presety', norm(P('.bt-ord-pnote').textContent) === 'z presetu Runner' && !P('.bt-ord-pnote').hidden, `notka: «${P('.bt-ord-pnote').textContent}»`);
+    // notka stoi w rzędzie chipów (nie w powietrzu nad przełącznikiem typu), chipy 11 px i więcej, aktywny wypełniony, nieaktywny bez wypełnienia
+    const cs = (b) => getComputedStyle(b);
+    rec('presety', P('.bt-ord-pnote').parentElement === P('.bt-ord-presets'), 'notka „z presetu” w rzędzie chipów');
+    rec('presety', parseFloat(cs(chips()[1]).fontSize) >= 11 && cs(chips()[1]).backgroundColor !== 'rgba(0, 0, 0, 0)' && cs(chips()[0]).backgroundColor === 'rgba(0, 0, 0, 0)', `chipy: ${cs(chips()[1]).fontSize}, aktywny tło ${cs(chips()[1]).backgroundColor}, nieaktywny tło ${cs(chips()[0]).backgroundColor}`);
+    // duplikat nazwy
+    P('[data-o="psave"]').click(); await sleep(30);
+    P('.bt-psave [name="pname"]').value = 'runner'; P('.bt-psave').requestSubmit(); await sleep(40);
+    rec('presety', P('.bt-psave-err').textContent === 'Preset o tej nazwie już jest.' && btSet.presets.length === 1, `duplikat nazwy: «${P('.bt-psave-err').textContent}»`);
+    P('[data-o="psave-cancel"]').click(); await sleep(30);
+    // czyszczenie pól i „Brak” (pamięć), potem chip Runner przywraca wartości
+    P('[data-pr=""]').click(); await sleep(60);
+    rec('presety', btSet.activePreset === null && chips()[0].getAttribute('aria-pressed') === 'true' && P('.bt-ord-pnote').hidden, 'Brak wyłącza preset i notkę');
+    setF('sl', 3); setF('tp', ''); P('[name="abeOn"]').click(); await sleep(30);
+    chips()[1].click(); await sleep(80);
+    rec('presety', P('[name="sl"]').value === '15' && P('[name="tp"]').value === '45' && P('[name="abeOn"]').checked && P('[name="abeVal"]').value === '1' && P('[data-abek="r"]').getAttribute('aria-pressed') === 'true', `chip wypełnia pola: SL ${P('[name="sl"]').value}, TP ${P('[name="tp"]').value}, auto BE ${P('[name="abeVal"]').value}`);
+    // Kup jednym kliknięciem: SL, TP, wielkość z ryzyka sesji 500 $ / (15 · 20 $) = 1, auto BE 1R
+    await shot('chipy-preset');
+    btn('buy').click(); await sleep(120);
+    const p = pos();
+    rec('presety', !!p && p.qty === 1 && p.sl === q(p.entryPrice - 15) && p.tp === q(p.entryPrice + 45) && p.autoBe?.kind === 'r' && p.autoBe.value === 1, `Kup z presetu: Long ${p?.qty}, SL ${p?.sl}, TP ${p?.tp}, auto BE ${JSON.stringify(p?.autoBe)}`);
+    // przy otwartej pozycji aktywny preset daje wielkość presetu przy dokładce (SL pozycji bez zmian)
+    rec('presety', modeOf('buy').startsWith('Dołóż '), `przy otwartej pozycji Kup dokłada («${modeOf('buy')}»)`);
+    // odwrócenie z presetu: SL, TP i auto BE nowej pozycji z presetu
+    await closeAllNow();
+    btn('buy').click(); await sleep(100);
+    RP.orders().reverseFor('NQ'); await sleep(150);
+    const rv = pos();
+    rec('presety', rv?.dir === 'Short' && rv.sl === q(rv.entryPrice + 15) && rv.tp === q(rv.entryPrice - 45) && rv.autoBe?.kind === 'r', `Odwróć bierze SL/TP/auto BE z presetu: Short ${rv?.qty}, SL ${rv?.sl}, TP ${rv?.tp}, ${JSON.stringify(rv?.autoBe)}`);
+    await closeAllNow();
+    // edycja pola odłącza preset, kolejne kliknięcie chipa przywraca
+    setF('sl', 20); await sleep(60);
+    rec('presety', norm(P('.bt-ord-pnote').textContent) === 'Runner · zmienione' && chips()[1].getAttribute('aria-pressed') === 'true', `po edycji: «${P('.bt-ord-pnote').textContent}», chip nadal zaznaczony`);
+    btn('buy').click(); await sleep(100);
+    rec('presety', pos()?.sl === q(pos().entryPrice - 20) && pos().tp === q(pos().entryPrice + 45), `zmienione pole decyduje o zleceniu (SL ${pos()?.sl})`);
+    await closeAllNow();
+    chips()[1].click(); await sleep(80);
+    rec('presety', P('[name="sl"]').value === '15' && norm(P('.bt-ord-pnote').textContent) === 'z presetu Runner', 'kliknięcie chipa przywraca wartości presetu');
+    // preset z ryzykiem w $: 900 $ / 300 $ = 3 kontrakty; stała ilość 4; % salda 3 z 50 000 = 1 500 $ → 5
+    const mk = (id, name, size) => ({ id, name, sl: { unit: 'pts', value: 15 }, tps: [], size, autoBe: null });
+    btSet = sanitizeBt({ ...btSet, presets: [...btSet.presets, mk('pusd', 'Ryzyko 900', { mode: 'usd', value: 900 }), mk('pqty', 'Stała 4', { mode: 'qty', value: 4 }), mk('ppct', 'Trzy proc', { mode: 'pct', value: 3 })] });
+    RP.orders().refresh(); await sleep(80);
+    P('[data-pr="pusd"]').click(); await sleep(80);
+    btn('buy').click(); await sleep(100);
+    rec('presety', pos()?.qty === 3, `preset z ryzykiem 900 $: ${pos()?.qty} kontrakty (900 / (15 · 20))`);
+    await closeAllNow();
+    P('[data-pr="pqty"]').click(); await sleep(80);
+    btn('buy').click(); await sleep(100);
+    rec('presety', pos()?.qty === 4, `preset ze stałą ilością: ${pos()?.qty}`);
+    await closeAllNow();
+    P('[data-pr="ppct"]').click(); await sleep(80);
+    btn('buy').click(); await sleep(100);
+    rec('presety', pos()?.qty === 5, `preset z 3% salda (1 500 $): ${pos()?.qty} kontraktów`);
+    await closeAllNow();
+    // usunięty aktywny preset wraca na Brak
+    btSet = sanitizeBt({ ...btSet, presets: btSet.presets.filter((x) => x.id !== 'ppct') }); await sleep(100);
+    RP.orders().refresh(); await sleep(40);
+    rec('presety', btSet.activePreset === null && chips()[0].getAttribute('aria-pressed') === 'true' && !chips().some((b) => b.dataset.pr === 'ppct'), 'aktywny preset usunięty w Ustawieniach: wraca „Brak”');
+    // krawędź 12 karty: ryzyko za małe na ten SL (500 $ przy 40 pkt = 800 $ na kontrakt): Kup nieaktywne z komunikatem i przyciskiem „Użyj 1 kontraktu”
+    btSet = sanitizeBt({ ...btSet, presets: [...btSet.presets, { id: 'pszer', name: 'Szeroki', sl: { unit: 'pts', value: 40 }, tps: [], size: { mode: 'session', value: 0 }, autoBe: null }] });
+    RP.orders().refresh(); await sleep(60);
+    P('[data-pr="pszer"]').click(); await sleep(80);
+    const oneB = P('[data-o="one"]');
+    rec('presety', btn('buy').disabled && note() === 'Ryzyko za małe na ten SL: wpisz liczbę kontraktów ręcznie.' && !oneB.hidden && /^Użyj 1 kontraktu \(ryzyko /.test(oneB.textContent), `preset z SL 40 pkt: Kup nieaktywne («${note()}»), przycisk «${oneB.textContent}»`);
+    oneB.click(); await sleep(80);
+    rec('presety', !btn('buy').disabled && P('[name="qty"]').value === '1' && norm(P('.bt-ord-pnote').textContent) === 'Szeroki · zmienione', `po „Użyj 1 kontraktu”: Kup aktywne, ilość ${P('[name="qty"]').value}, notka «${P('.bt-ord-pnote').textContent}»`);
+    btn('buy').click(); await sleep(100);
+    rec('presety', pos()?.qty === 1 && pos().sl === q(pos().entryPrice - 40), `wejście z 1 kontraktem i SL z presetu: ${pos()?.qty} @ SL ${pos()?.sl}`);
+    await closeAllNow();
+    P('[data-pr=""]').click(); await sleep(40);
+    setF('sl', 10); setF('tp', 30); setF('qty', ''); abeOff();
+  });
+
+  // ---------- przycisk przeciwny bez SL w panelu: Zamknij n (decyzja sesji głównej 2.11.2026, P3-4) ----------
+  if (wide) await section('zamknij', async () => {
+    // pozycja z SL, panel bez SL i bez ilości: Kup dokłada (ilość z ryzyka do SL pozycji), Sprzedaj zamyka całą otwartą ilość
+    await openPos({ sl: 10, tp: 30, qty: 3 });
+    setF('sl', ''); setF('tp', ''); setF('qty', ''); await sleep(60);
+    rec('zamknij', !btn('sell').disabled && modeOf('sell') === 'Zamknij 3' && !btn('buy').disabled && /^Dołóż \d+$/.test(modeOf('buy')), `pozycja z SL: Sprzedaj «${modeOf('sell')}», Kup «${modeOf('buy')}»`);
+    const n0 = trades().length;
+    btn('sell').click(); await sleep(150);
+    rec('zamknij', !pos() && trades().length === n0 + 1 && trades().at(-1).exits.at(-1).qty === 3 && trades().at(-1).exits.at(-1).reason === 'manual', 'Sprzedaj zamknęło całą otwartą ilość (3, ręcznie)');
+    // pozycja bez SL: Kup nie zna ilości (czeka na SL albo wielkość), Sprzedaj dalej zamyka
+    await openPos({ sl: '', tp: '', qty: 3 });
+    setF('qty', ''); await sleep(60);
+    rec('zamknij', btn('buy').disabled && note() === 'Wpisz SL albo wielkość.' && !btn('sell').disabled && modeOf('sell') === 'Zamknij 3', `pozycja bez SL: Kup nieaktywne («${note()}»), Sprzedaj «${modeOf('sell')}»`);
+    await closeAllNow();
+    // Short symetrycznie
+    await openPos({ side: 'sell', sl: '', tp: '', qty: 2 });
+    setF('qty', ''); await sleep(60);
+    rec('zamknij', btn('sell').disabled && !btn('buy').disabled && modeOf('buy') === 'Zamknij 2', `Short bez SL: Sprzedaj nieaktywne (${btn('sell').disabled}), Kup «${modeOf('buy')}»`);
+    btn('buy').click(); await sleep(120);
+    rec('zamknij', !pos(), 'Kup zamknęło Shorta');
+    // z ręczną ilością nadal netting
+    await openPos({ sl: 10, tp: 30, qty: 3 });
+    setF('sl', ''); setF('qty', 1); await sleep(40);
+    rec('zamknij', modeOf('sell') === 'Zmniejsz 1 z 3', `ręczna ilość 1: «${modeOf('sell')}»`);
+    await closeAllNow(); setF('sl', 10); setF('tp', 30); setF('qty', '');
+  });
+
+  // ---------- warstwy: nic nie przykrywa przycisków (elementFromPoint) ----------
+  if (wide) await section('warstwy', async () => {
+    btSet = sanitizeBt({ ...btSet, presets: [{ id: 'w1', name: 'Scalp', sl: { unit: 'pts', value: 10 }, tps: [{ unit: 'rr', value: 2, pct: 100 }], size: { mode: 'session', value: 0 }, autoBe: { kind: 'r', value: 1, offsetTicks: 0 } }, { id: 'w2', name: 'Swing', sl: { unit: 'ticks', value: 40 }, tps: [], size: { mode: 'qty', value: 2 }, autoBe: null }], activePreset: 'w1' });
+    await sleep(100);
+    await openPos({ sl: 10, tp: 30, qty: 2 });
+    RP.orders().setAutoBe('NQ', { kind: 'pts', value: 5, offsetTicks: 0 }); await sleep(100);
+    let h = hits(P('.bt-ord-presets').querySelectorAll('button'));
+    rec('warstwy', h.n >= 4 && h.bad.length === 0, `chipy i „Zapisz jako preset…” trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    h = hits([...document.querySelectorAll('.bt-ord button, .bt-ord input, .bt-ord select')].filter((x) => !x.closest('[hidden]')));
+    rec('warstwy', h.n >= 20 && h.bad.length === 0, `panel zleceń: ${h.n} elementów trafia w siebie (${h.bad.join('; ')})`);
+    focusTag('pos'); await sleep(60);
+    h = hits(layer().querySelectorAll('[data-k="pos"] .bt-tag-act button, .bt-tag-x'));
+    rec('warstwy', h.n >= 4 && h.bad.length === 0, `przyciski rzędu pod wejściem i × plakietek SL/TP/BE trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    // plakietki nie nachodzą na siebie (rozsunięcie 24 px)
+    const tops = ['pos', 'psl', 'ptp', 'pbe'].map((k) => tag(k)).filter(Boolean).map((e) => e.getBoundingClientRect());
+    let overlap = 0;
+    for (let i = 0; i < tops.length; i++) for (let j = i + 1; j < tops.length; j++) if (tops[i].left < tops[j].right && tops[j].left < tops[i].right && tops[i].top < tops[j].bottom - 1 && tops[j].top < tops[i].bottom - 1) overlap++;
+    rec('warstwy', tops.length === 4 && overlap === 0, `cztery plakietki (wejście, SL, TP, BE) bez nakładania (${tops.length}, nakładek ${overlap})`);
+    // próg BE tuż przy TP: plakietki rozsunięte, nic nie przykrywa
+    RP.orders().setLevel('NQ', 'abe', q(pos().tp - 0.25)); await sleep(120);
+    const t2 = ['ptp', 'pbe'].map((k) => tag(k).getBoundingClientRect());
+    rec('warstwy', t2[0].bottom <= t2[1].top + 1 || t2[1].bottom <= t2[0].top + 1, `próg tuż przy TP: plakietki TP i BE rozsunięte (${Math.round(t2[0].top)} / ${Math.round(t2[1].top)})`);
+    h = hits(layer().querySelectorAll('.bt-tag-x'));
+    rec('warstwy', h.n >= 3 && h.bad.length === 0, `× plakietek przy zbliżonych poziomach trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    // okno „Zamknij część” nad plakietkami (nie przykryte przez nową plakietkę BE)
+    layer().querySelector('[data-tl="x"]').click(); await sleep(80);
+    h = hits(layer().querySelectorAll('.bt-part button, .bt-part input'));
+    rec('warstwy', h.n >= 6 && h.bad.length === 0, `okno części z plakietką BE: ${h.n} elementów trafia w siebie (${h.bad.join('; ')})`);
+    key('Escape'); await sleep(40);
+    // formularz „Zapisz jako preset…” i edycja progu w panelu ×
+    P('[data-o="psave"]').click(); await sleep(40);
+    h = hits(P('.bt-psave').querySelectorAll('button, input'));
+    rec('warstwy', h.n === 3 && h.bad.length === 0, `okno nazwy presetu: ${h.n} elementów trafia w siebie (${h.bad.join('; ')})`);
+    P('[data-o="psave-cancel"]').click(); await sleep(30);
+    P('.bt-ord-pabe [data-o="abe-edit"]').click(); await sleep(60);
+    h = hits(P('.bt-ord-pabe').querySelectorAll('button, input'));
+    rec('warstwy', h.n >= 8 && h.bad.length === 0, `edycja progu w panelu ×: ${h.n} elementów trafia w siebie (${h.bad.join('; ')})`);
+    await shot('warstwy');
+    P('.bt-ord-pabe [data-o="abe-cancel"]').click(); await sleep(30);
+    // szuflada
+    RP.dock().setTab('pos'); await sleep(100);
+    h = hits(RP.dock().el.querySelectorAll('tbody .bt-dk-a button, tbody .bt-dk-abex, tbody .bt-dk-x'));
+    rec('warstwy', h.n >= 5 && h.bad.length === 0, `akcje wiersza pozycji i × progu w szufladzie (${h.n}; ${h.bad.join('; ')})`);
+    // kontrast koloru podpisu „BE” (--be) z tłem wykresu ≥ 4,5:1 w obu motywach; podpis na wykresie ma jeszcze obrys w kolorze tła
+    const rgbOf = (c) => { const e = document.createElement('i'); e.style.color = c; document.body.appendChild(e); const v = getComputedStyle(e).color.match(/[\d.]+/g).map(Number); e.remove(); return v; };
+    const lumOf = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+    let bgEl = host(), bgc = 'rgba(0, 0, 0, 0)';
+    while (bgEl && /rgba\(0, 0, 0, 0\)|transparent/.test(bgc)) { bgc = getComputedStyle(bgEl).backgroundColor; bgEl = bgEl.parentElement; }
+    const l1 = lumOf(rgbOf(getComputedStyle(document.documentElement).getPropertyValue('--be'))), l2 = lumOf(rgbOf(bgc)), crt = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+    rec('warstwy', crt >= 4.5, `kontrast podpisu BE z tłem wykresu ${crt.toFixed(2)}:1 (tło ${bgc})`);
+    // wysokość: panel zleceń nie wypycha okna ponad ekran (1920×1080 bez przewijania)
+    rec('warstwy', document.documentElement.scrollHeight <= innerHeight + 1 && document.documentElement.scrollWidth <= innerWidth, `bez przewijania okna (${document.documentElement.scrollHeight}×${document.documentElement.scrollWidth} ≤ ${innerHeight}×${innerWidth})`);
+    await closeAllNow();
+    btSet = sanitizeBt({ ...btSet, activePreset: null });
+    RP.orders().refresh();
+  });
+
+  // ---------- telefon: tylko brak poziomego przewijania i przykrytych przycisków ----------
+  if (narrow) await section('telefon', async () => {
+    btSet = sanitizeBt({ ...btSet, presets: Array.from({ length: 7 }, (_, i) => ({ id: `t${i}`, name: `Preset numer ${i + 1}`, sl: { unit: 'pts', value: 10 + i }, tps: [], size: { mode: 'qty', value: 1 }, autoBe: null })), activePreset: 't1' });
+    await sleep(100);
+    await openPos({ sl: 10, tp: 30, qty: 2 });
+    RP.orders().setAutoBe('NQ', { kind: 'pts', value: 5, offsetTicks: 0 }); await sleep(100);
+    moreOpen(); await sleep(100);
+    const bar = P('.bt-ord-presets'), chipsEl = P('.bt-ord-pchips');
+    // R2-P2-4 (runda 3): chipy zawijają się w rzędy na całą szerokość panelu (nie siedzą w pasku szerokości jednego chipa), bez przewijania w bok
+    const cb = [...chipsEl.querySelectorAll('button')], row1 = cb.filter((b) => Math.abs(b.getBoundingClientRect().top - cb[0].getBoundingClientRect().top) < 2);
+    rec('telefon', chipsEl.clientWidth >= bar.clientWidth * 0.9 && chipsEl.scrollWidth <= chipsEl.clientWidth + 1 && bar.scrollWidth <= bar.clientWidth + 1, `rząd chipów ma szerokość panelu (${chipsEl.clientWidth} z ${bar.clientWidth}), bez przewijania w bok (${chipsEl.scrollWidth}, ${bar.scrollWidth})`);
+    rec('telefon', cb.length >= 7 && row1.length >= 2 && new Set(cb.map((b) => Math.round(b.getBoundingClientRect().top))).size >= 2, `chipy (siedem presetów i „Bez presetu”) zawijają się w kilka rzędów (chipów ${cb.length}, w pierwszym ${row1.length}, rzędów ${new Set(cb.map((b) => Math.round(b.getBoundingClientRect().top))).size})`);
+    rec('telefon', document.documentElement.scrollWidth <= innerWidth, `bez poziomego przewijania strony (${document.documentElement.scrollWidth} ≤ ${innerWidth})`);
+    // chipy przewinięte poza pole przewijania nie są widoczne, więc sprawdzane są te, które w nim leżą; przycisk „Zapisz jako preset…” stoi poza polem przewijania
+    let h = hits([btn('buy'), btn('sell'), P('[data-o="psave"]'), ...chipsEl.querySelectorAll('button')].filter((b) => { const r = b.getBoundingClientRect(), pr = b.closest('.bt-ord-pchips') ? chipsEl.getBoundingClientRect() : bar.getBoundingClientRect(); return r.right <= pr.right + 0.5 && r.left >= pr.left - 0.5; }));
+    rec('telefon', h.n >= 4 && h.bad.length === 0, `Kup, Sprzedaj i widoczne chipy trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    // panel jest wyższy o rzędy chipów, więc pola auto BE przewijamy do widoku (elementFromPoint zna tylko widoczny obszar)
+    P('.bt-ord-abe').scrollIntoView({ block: 'center' }); await sleep(60);
+    h = hits(P('.bt-ord-fields').querySelectorAll('.bt-abe-unit button, .bt-ord-abe .check input'));
+    rec('telefon', h.n >= 1 && h.bad.length === 0, `przełącznik i jednostki auto BE w polach trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    // bez progu przy wejściu są trzy przyciski: +BE, BE i ×
+    RP.orders().setAutoBe('NQ', null); await sleep(100);
+    focusTag('pos'); await sleep(60); layer().querySelector('[data-k="pos"]').scrollIntoView({ block: 'center' }); await sleep(60);
+    h = hits(layer().querySelectorAll('[data-k="pos"] .bt-tag-act button'));
+    rec('telefon', h.n >= 3 && h.bad.length === 0, `przyciski wejścia z +BE trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    await shot('telefon');
+    host().scrollIntoView({ block: 'start' }); await sleep(80);
+    await edgeCollision('telefon');
+    // ekran replayu nie ma własnego poziomego paska (Zamknij pozycję nie wystaje poza panel)
+    rec('telefon', scr().scrollWidth <= scr().clientWidth, `.bt-screen bez poziomego przewijania (${scr().scrollWidth} ≤ ${scr().clientWidth})`);
+    rec('telefon', document.documentElement.scrollWidth <= innerWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth} ≤ ${innerWidth})`);
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

@@ -57,7 +57,8 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(tr.r, 0.5, 'R = 10 pkt / (2 · 10)');
     assert.equal(tr.pnl, 200, 'USD = 10 pkt · 20 USD');
     assert.equal(tr.maeR, -0.5, 'MAE ze świecy 0 (low 95 vs wejście 100, ryzyko 10)');
-    assert.equal(tr.mfeR, 1.2, 'MFE ze świecy 1 (high 112)');
+    // 1.7-1: nowa definicja MAE/MFE na wyniku pozycji ([U] 1.11.2026 «Tak, nowa definicja (Recommended)»): 200 $ zrealizowane przy wyjściu częściowym + 240 $ otwarte po high 112, dzielone przez 400 $ ryzyka
+    assert.equal(tr.mfeR, 1.1, 'MFE ze świecy 1 (high 112) jako wynik pozycji');
     assert.equal(tr.journal, 'todo');
     assert.deepEqual(tr.notion, { id: null, state: 'pending', error: '' });
     assert.deepEqual(tr.setup + tr.notes, '');

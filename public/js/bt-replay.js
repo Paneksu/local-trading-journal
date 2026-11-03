@@ -20,15 +20,18 @@
 import { t, locale } from './i18n.js';
 import { esc, fmtR, WEEKDAYS, weekdayIdx, shortDate } from './format.js';
 import { createBuilder, REPLAY_TFS, visibleCount, isReplayTf, checkCustomTf, tfNeeds1s } from './bt-swieca.js';
-import { nyAt, visibleNews, nextNews, jumpTarget, skrotOf, sanitizeBt, skipGap, stepCursor, hintOf, skrotLabel } from './bt-czas.js';
-import { emptyBook, advance, MULT } from './bt-wypelnienia.js';
-import { toTrade, nextTradeId, mountJournal, todoOf, setupSuggestions } from './bt-journal.js';
+import { nyAt, visibleNews, nextNews, jumpTarget, skrotOf, sanitizeBt, skipGap, stepCursor, hintOf, skrotLabel, STEP_TFS, sanitizeStepTf, stepTfFor, GO_PRICE_DAYS, BT_PRESETS, priceText } from './bt-czas.js';
+import { emptyBook, advance, MULT, TICK, autoBePrice, tpPlan } from './bt-wypelnienia.js';
+import { tpOrder } from './bt-drabinka.js';
+import { toTrade, nextTradeId, mountJournal, todoOf, setupSuggestions, pxText } from './bt-journal.js';
 import { isUnsent, needsUpdate } from './bt-notion.js';
 import { account as accountOf, openPL, riskBalance, commissionOf, createExcursionTracker } from './bt-konto.js';
 import { mountDock } from './bt-szuflada.js';
 import { openJournalWindow, journalMaxT } from './bt-journal-okno.js';
-import { fmtMoney } from './format.js';
-import { mountOrders } from './bt-zlecenia.js';
+import { fmtUsdFull as fmtMoney } from './format.js';
+import { mountOrders, abeInfo, menuItems, menuStillValid } from './bt-zlecenia.js';
+import { setDayRule, isOpen as wdIsOpen } from './wybor-daty.js';
+import { sanitizePresets } from './bt-presety.js';
 import { createSessionClient } from './bt-klient.js';
 import { createReplayChart } from './bt-wykres.js';
 import { createDrawingStore, symOf } from './bt-rysunki.js';
@@ -39,7 +42,8 @@ import { confirmDialog, toast } from './modal.js';
 import { LWC_URL, DRAW_URL, readColors } from './wykres.js';
 import { dayTypeLabel } from './bt-filtr-widok.js';
 import { chartTz, fmtIn, tzLabel } from './podglad.js';
-import { aggregate, parseTf } from './swiece.js';
+import { tzShort } from './strefa.js';
+import { aggregate, parseTf, dayNum, fromDayNum, weekdayOf } from './swiece.js';
 import { FAMILY } from './kontrakty.js';
 
 export const SPEEDS = [1, 10, 60, 100, 300];
@@ -80,8 +84,11 @@ const inside = (ranges, c) => (ranges || []).some(([a, b]) => c >= a && c < b);
 const closeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 
 const MULT_OF = (i) => MULT[i] || 0;
+const ZONE_HINT_KEY = 'thq.bt.hint171.v1';
 // L: krótka data w strefie osi wykresu („12 mar”) przed godziną w szufladzie i Journalu
 const dayLabelShort = (s) => fmtIn(chartTz()).DAY.format(new Date(Math.floor(s) * 1000));
+// 3.11.2026 [U] «Wszędzie, z opisem „NY” (Recommended)»: godzina z podpisem strefy aplikacji (domyślnie NY), taka sama w Historii, Journalu i szybkim panelu
+const hmsTz = (s) => `${fmtIn(chartTz()).HMS.format(new Date(Math.floor(s) * 1000))}\u00a0${tzShort(chartTz(), Math.floor(s) * 1000)}`;
 
 function dayLabel(day) {
   // H2 (ocena wyglądu #7): data dnia w języku aplikacji, nie przeglądarki („Wt, 12 mar 2024”)
@@ -89,7 +96,7 @@ function dayLabel(day) {
 }
 
 // openReplay(root, { sessionId }) → API ekranu. loadRange/loadBounds/loadFeatures podmienia strona testowa (np. syntetyczne newsy).
-export function openReplay(root, { sessionId, client = createSessionClient(), loadRange = null, loadBounds = null, loadFeatures = null, loadDays = null, loadNews = null, loadLwc = () => import(LWC_URL), loadDraw = () => import(DRAW_URL).catch(() => null), getSettings = () => sanitizeBt(null), getSetups = () => [], confirm = (o) => confirmDialog(o), notify = (m, o) => toast(m, o), onStats = null, onClosed = () => {}, onReopen = () => {}, onClose = () => {}, onFavTfs = () => {}, notionEveryMs = NOTION_RETRY_MS, storage = globalThis.localStorage, raf = (f) => globalThis.requestAnimationFrame(f), caf = (id) => globalThis.cancelAnimationFrame(id), now = () => Date.now() } = {}) {
+export function openReplay(root, { sessionId, client = createSessionClient(), loadRange = null, loadBounds = null, loadFeatures = null, loadDays = null, loadNews = null, loadLwc = () => import(LWC_URL), loadDraw = () => import(DRAW_URL).catch(() => null), getSettings = () => sanitizeBt(null), getSetups = () => [], confirm = (o) => confirmDialog(o), notify = (m, o) => toast(m, o), onStats = null, onClosed = () => {}, onReopen = () => {}, onClose = () => {}, onFavTfs = () => {}, onPresets = null, notionEveryMs = NOTION_RETRY_MS, storage = globalThis.localStorage, raf = (f) => globalThis.requestAnimationFrame(f), caf = (id) => globalThis.cancelAnimationFrame(id), now = () => Date.now() } = {}) {
   const el = document.createElement('div');
   el.className = 'bt-screen';
   el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', t('Replay backtestu'));
@@ -113,6 +120,14 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       <button type="button" class="btn sm" data-bt="back" aria-label="${esc(t('Krok wstecz'))}">◀</button>
       <button type="button" class="btn sm primary" data-bt="play" aria-pressed="false">${esc(t('Odtwarzaj'))}</button>
       <button type="button" class="btn sm" data-bt="step" aria-label="${esc(t('Krok w przód'))}">▶</button>
+      <div class="bt-stepw">
+        <button type="button" class="btn sm bt-step-b" data-bt="stepmenu" aria-haspopup="true" aria-expanded="false"><span class="bt-step-k">${esc(t('Krok:'))}</span> <span class="bt-step-n"></span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="bt-step-l" role="group" aria-label="${esc(t('Krok niezależny od interwału wykresu'))}" hidden>
+          <button type="button" data-step="" aria-pressed="true">${esc(t('= wykres'))}</button>${STEP_TFS.map((x) => `<button type="button" data-step="${x}" aria-pressed="false">${x}</button>`).join('')}
+          <form class="bt-step-add"><input class="sp-in" type="text" maxlength="6" placeholder="${esc(t('Własny, np. 7m'))}" spellcheck="false" autocomplete="off" aria-label="${esc(t('Własny krok'))}"><button type="submit" class="btn sm">${esc(t('Ustaw'))}</button></form>
+          <p class="note bt-step-msg" role="status"></p>
+        </div>
+      </div>
       <div class="seg sm bt-speed" role="group" aria-label="${esc(t('Szybkość odtwarzania'))}">${speedBtns}</div>
       <label class="bt-tfl"><span class="lbl">${esc(t('Interwał'))}</span><select class="sp-in sp-sel bt-tf" data-bt="tf">${REPLAY_TFS.map((x) => `<option value="${x}">${x}</option>`).join('')}</select></label>
       <div class="bt-jumpw">
@@ -120,18 +135,42 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
         <div class="bt-jump-l" role="menu" aria-label="${esc(t('Skoki'))}" hidden></div>
         <select class="sp-in sp-sel bt-jump" data-bt="jumpsel" aria-label="${esc(t('Wybrany skok'))}" hidden></select>
       </div>
+      <span class="bt-find" role="status" hidden><span class="bt-find-t"></span><button type="button" class="btn sm" data-bt="findmore" hidden></button><button type="button" class="btn sm" data-bt="findcancel" hidden>${esc(t('Anuluj'))}</button></span>
       <span class="note bt-msg" role="status"></span><button type="button" class="btn ghost sm bt-msg-more" data-bt="msgmore" aria-expanded="false" hidden>${esc(t('więcej'))}</button>
-    </footer>`;
+    </footer>
+    <div class="bt-gd bt-dlg" role="dialog" aria-label="${esc(t('Skocz do daty'))}" hidden>
+      <p class="bt-dlg-t">${esc(t('Skocz do daty'))}</p>
+      <div class="bt-dlg-f">
+        <label class="bt-f"><span class="lbl">${esc(t('Data'))}</span><input class="sp-in" type="text" data-wd="date" name="gdDate" autocomplete="off" data-wd-poza="${esc(t('Poza zakresem danych'))}"></label>
+        <label class="bt-f"><span class="lbl">${esc(t('Godzina (NY)'))}</span><input class="sp-in" type="text" data-wd="time" data-wd-tz="NY" data-wd-presety="${BT_PRESETS}" name="gdTime" autocomplete="off"></label>
+      </div>
+      <p class="note bt-dlg-err bt-gd-err" role="alert"></p>
+      <div class="bt-dlg-a"><button type="button" class="btn sm" data-gd="cancel">${esc(t('Anuluj'))}</button><button type="button" class="btn sm primary" data-gd="go">${esc(t('Skocz'))}</button></div>
+    </div>
+    <div class="bt-gp bt-dlg" role="dialog" aria-label="${esc(t('Skocz do ceny'))}" hidden>
+      <p class="bt-dlg-t">${esc(t('Skocz do ceny'))} <span class="bt-gp-i"></span></p>
+      <div class="bt-dlg-f">
+        <label class="bt-f"><span class="lbl">${esc(t('Cena'))}</span><input class="sp-in" type="text" inputmode="decimal" name="gpPrice" autocomplete="off"></label>
+        <label class="bt-f bt-gp-d">${esc(t('Maks.'))} <input class="sp-in" type="number" name="gpDays" min="${GO_PRICE_DAYS.min}" max="${GO_PRICE_DAYS.max}" step="1" aria-label="${esc(t('Maksymalnie dni handlowych'))}"> ${esc(t('dni handlowych'))}</label>
+      </div>
+      <p class="note bt-gp-dir"></p>
+      <p class="note bt-dlg-err bt-gp-err" role="alert"></p>
+      <div class="bt-dlg-a"><button type="button" class="btn sm" data-gp="cancel">${esc(t('Anuluj'))}</button><button type="button" class="btn sm primary" data-gp="go">${esc(t('Skocz'))}</button></div>
+    </div>`;
   root.appendChild(el);
   const $ = (s) => el.querySelector(s);
 
   let doc = null, data = null, LWC = null, D = null, cursor = 0, startCur = 0, endT = Infinity, speed = speed0, orders = null, stale = false, store = null;
-  let cells = [], activeIdx = 0, posEditFn = null, curDay = '';
+  let cells = [], activeIdx = 0, curDay = '';
   let playing = false, rafId = 0, lastTs = 0, closed = false, colors = null, sendingNotion = false, notionTimer = 0;
   // K: dni z danymi i dni z filtra sesji (indeks cech dnia), do skoków
   let tradingDays = null, filterDays = null;
   // final (ocena wyglądu P1-4): komunikat w stopce najwyżej w 2 liniach; dłuższy rozwija przycisk „więcej” (pełny tekst także w title)
+  // runda 2 (przegląd wyglądu P1-2): komunikat „Po drodze: …” stoi w stopce kilka sekund i nie przegrywa z komunikatem o zapisie do Notion (zamknięcie pozycji po drodze zawsze uruchamia zapis); stan Notion ma własne miejsce w nagłówku
+  let pinText = '', pinUntil = 0;
+  const PIN_MS = 12000;
   const msg = (s) => {
+    if (s !== pinText) pinUntil = 0;
     const m = $('.bt-msg'), more = $('.bt-msg-more');
     m.textContent = s || ''; m.title = s || ''; m.classList.remove('open');
     more.hidden = true; more.setAttribute('aria-expanded', 'false'); more.textContent = t('więcej');
@@ -173,6 +212,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       fav.setAttribute('aria-pressed', String(isFav));
       c.el.querySelector('.bt-tfchips').innerHTML = favs.map((x) => `<span class="swc-chip">${esc(x)}<button type="button" data-tfdel="${esc(x)}" aria-label="${esc(t('Usuń {tf}', { tf: x }))}"${favs.length < 2 ? ' disabled' : ''}>×</button></span>`).join('');
     }
+    // krok „= wykres” podaje interwał aktywnego wykresu
+    paintStep();
   }
   function toggleFav(tf) {
     if (!isReplayTf(tf)) return;
@@ -189,12 +230,15 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (![...s.options].some((o) => o.value === v)) { const o = document.createElement('option'); o.value = v; o.textContent = v; o.dataset.custom = '1'; s.appendChild(o); }
     for (const o of [...s.options]) if (o.dataset.custom && o.value !== v) o.remove();
     s.value = v;
+    paintStep();
   }
   const sessionInstruments = () => (doc?.def?.instruments?.length ? doc.def.instruments : ['NQ']).filter((i) => Object.hasOwn(FAMILY, i));
   // 409 stale (sesja zmieniona w innej karcie) to osobny stan: handel stoi, zapisy ustają, komunikat z przyciskiem „Otwórz ponownie”; inne błędy to zwykły komunikat
   function onSaveError(e) {
     if (closed) return;
     if (e?.code === 'stale') { stale = true; pause(); $('.bt-stale').hidden = false; msg(''); orders?.refresh(); }
+    // 1.7-1: pierwszy zapis sesji w formacie 1.7 wymaga kopii kopie-1.6; gdy się nie uda, sesja NIE jest zapisywana (plik 1.6 bez zmian), a zmiany zostają w oknie do następnej próby
+    else if (e?.code === 'legacy-copy') msg(t('Sesja nie jest zapisywana: nie udało się zrobić kopii sprzed wersji 1.7. Sprawdź miejsce na dysku i czy plik sesji nie jest zablokowany. Zmiany zostają w oknie, następny zapis ponowi próbę.'));
     else if (e?.code === 'corrupt') msg(t('Plik tej sesji jest uszkodzony, więc zmiany nie są zapisywane. Zamknij replay i otwórz sesję ponownie.'));
     else msg(t('Nie udało się zapisać stanu sesji. Sprawdź, czy dashboard działa.'));
   }
@@ -213,15 +257,136 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const st = streamOf(k), n = st ? visibleCount(st, cursor) : 0;
     return { t: effOf(k), price: n > 0 ? st.bars[n - 1][4] : NaN };
   }
+  // runda 2 (decyzja sesji głównej, do pakietu 6): przeglądanie przeszłości (kursor przed znakiem wodnym) nie wycenia pozycji po cenie z przeszłości: konto, szuflada i plakietki liczą po ostatniej
+  // prawdziwej cenie (znak wodny hwi[k], inaczej hw), a pozycje, zlecenia i trade'y z czasem po kursorze nie są rysowane.
+  const isRewound = () => !!doc?.book && cursor < (doc.book.hw || 0);
+  const hwOf = (k) => { const h = doc?.book?.hwi?.[k]; return Number.isFinite(h) ? h : (doc?.book?.hw || 0); };
+  function lastReal(k = curInst()) {
+    if (!isRewound()) return last(k);
+    const st = streamOf(k), n = st ? visibleCount(st, hwOf(k)) : 0;
+    return { t: n > 0 ? st.bars[n - 1][0] + st.len[n - 1] : hwOf(k), price: n > 0 ? st.bars[n - 1][4] : NaN };
+  }
+  // godzina zdarzenia w strefie z Ustawień z podpisem (hmsTz), data przy chwilach spoza dnia kursora; skoki i godzina startu zostają w NY (to czas sesji giełdy)
+  const nyWhen = (sec) => `${dayLabelShort(sec)} ${hmsTz(sec)}`;
+  // ---- 1.7-1: akcje z plakietek i linii na wykresie (SL/TP, usuwanie z „Cofnij”, BE, zamknięcie części) ----
+  const lvlName = (f) => (f === 'tp' ? 'TP' : f === 'abe' ? 'BE' : 'SL');
+  // 1.7-3: usunięcie progu auto-BE (×) tak jak SL/TP: bez potwierdzenia, „Cofnij” przez 5 s przywraca dokładnie poprzedni próg (rodzaj, wartość, offset)
+  function removeAbe(cell) {
+    const k = cell.instrument, p = doc.book.positions[k], prev = p?.autoBe && !p.autoBe.done ? { kind: p.autoBe.kind, value: p.autoBe.value, offsetTicks: p.autoBe.offsetTicks } : null, pid = p?.id;
+    if (!orders || !prev) return;
+    if (!orders.setAutoBe(k, null)) { cell.chart.announce(orders.lastFlash()); return; }
+    const txt = t('Próg BE usunięty');
+    cell.chart.announce(txt);
+    toast(txt, { ms: 5000, action: { label: t('Cofnij'), undo: true, run: () => {
+      if (doc?.book?.positions[k]?.id !== pid) { const m = t('Ta pozycja jest już zamknięta: poziomu nie przywracam.'); cell.chart.announce(m); toast(m, { error: true }); return; }
+      const ok = orders.setAutoBe(k, prev);
+      cell.chart.announce(ok ? `BE ${pxText(autoBePrice(doc.book.positions[k]) ?? prev.value)}` : orders.lastFlash());
+      if (!ok) toast(orders.lastFlash() || t('Nie da się przywrócić poziomu: cena odjechała.'), { error: true });
+    } } });
+  }
+  function removeLevel(cell, field, tpId = null) {
+    if (field === 'abe') { removeAbe(cell); return; }
+    const k = cell.instrument, p = doc.book.positions[k];
+    if (!orders || !p) return;
+    // 1.7-5: × na poziomie drabiny usuwa ten poziom (procent przechodzi na ostatni); „Cofnij” przywraca całą nietrafioną część drabiny z id i procentami sprzed usunięcia
+    const ladderPrev = field === 'tp' ? tpOrder(p.dir, p.tps).filter((x) => !x.hit).map((x) => ({ id: x.id, price: x.price, pct: x.pct })) : null;
+    const prev = field === 'sl' ? p.sl : (tpId ? ladderPrev.find((x) => x.id === tpId)?.price : p.tp), pid = p.id;
+    if (prev == null) return;
+    // [U] 1.11.2026 «Można usunąć oba» (P6): bez potwierdzenia (odwracalne: +SL/+TP), komunikat z „Cofnij” przez 5 s przywraca poprzedni poziom, jeśli jest dalej poprawny wobec ceny
+    if (!orders.setLevel(k, field, null, tpId)) { cell.chart.announce(orders.lastFlash()); return; }
+    const txt = field === 'sl' ? t('SL usunięty') : t('TP usunięty');
+    cell.chart.announce(txt);
+    toast(txt, { ms: 5000, action: { label: t('Cofnij'), undo: true, run: () => {
+      // „Cofnij” dotyczy TEJ pozycji: po jej zamknięciu (i otwarciu nowej) nic się nie zmienia
+      if (doc?.book?.positions[k]?.id !== pid) { const m = t('Ta pozycja jest już zamknięta: poziomu nie przywracam.'); cell.chart.announce(m); toast(m, { error: true }); return; }
+      const ok = field === 'tp' ? orders.setTps(k, ladderPrev) : orders.setLevel(k, field, prev);
+      cell.chart.announce(ok ? `${lvlName(field)} ${pxText(prev)}` : orders.lastFlash());
+      if (!ok) toast(orders.lastFlash() || t('Nie da się przywrócić poziomu: cena odjechała.'), { error: true });
+    } } });
+  }
+  function tradeAction(cell, a) {
+    if (!orders) return;
+    const k = cell.instrument;
+    if (a.kind === 'part') { if (doc.book.positions[k]) orders.closeQty(k, a.n); }
+    else if (a.kind === 'cancel') orders.cancel(a.id);
+    else if (a.kind === 'move') { orders.moveOrder(a.id, a.changes); if (a.focus) cell.chart.focusTag(a.focus); }
+    else if (a.kind === 'level') {
+      const ok = orders.setLevel(k, a.field, a.price, a.tpId || null);
+      cell.chart.announce(ok ? `${lvlName(a.field)} ${pxText(a.price)}` : orders.lastFlash());
+      if (ok && a.focus) cell.chart.focusTag(a.focus);
+    } else if (a.kind === 'tpPct') {
+      // 1.7-5: procent poziomu drabiny z edytora na plakietce; odrzucenie silnika wraca do edytora jako komunikat
+      const ok = orders.setTpPct(k, a.id, a.pct);
+      cell.chart.announce(ok ? `${t('Procent')} ${a.pct}%` : orders.lastFlash());
+      return { ok, text: ok ? '' : orders.lastFlash() };
+    } else if (a.kind === 'rmLevel') removeLevel(cell, a.field, a.id || null);
+    else if (a.kind === 'reverse') { if (doc.book.positions[k]) orders.reverseFor(k); }
+    else if (a.kind === 'be') {
+      const ok = orders.beFor(k);
+      cell.chart.announce(ok ? t('SL na BE') : orders.lastFlash());
+    }
+  }
   const busy = () => !!doc?.book && (Object.values(doc.book.positions || {}).some(Boolean) || (doc.book.orders || []).length > 0);
   function setBook(b) { doc.book = b; doc.hw = b.hw; } // zapis robi wywołujący raz po wszystkich zmianach (book + trade w jednym zapisie)
   // zdarzenie silnika → trade sesji (tylko 'closed' = pełne zamknięcie pozycji): toTrade z migawką rysunków instrumentu, zapis razem z book (wywołujący), panel journalingu,
   // a potem od razu wysyłka do Notion ([U] 31.10.2026 «od razu»)
-  let notionSoon = false;
+  let notionSoon = false, lastReverse = null;
   function onEngine(ev) {
+    // 1.7-4: zdarzenia z trwającego skoku (komunikat „Po drodze: …”)
+    if (trace) trace.push(ev);
+    // 1.7-3: auto BE wyzwolony: komunikat aria-live „Auto BE: SL na 18 290,25 (10:14:35 NY)” i toast; plakietka SL zmienia się w „BE” z księgi (be)
+    if (ev.type === 'be-auto') {
+      const m = t('Auto BE {time} · SL na {px}', { px: pxText(ev.sl), time: hmsTz(ev.at) });
+      (cells.find((c) => c.instrument === ev.instrument) || cur())?.chart.announce(m);
+      toast(m);
+      return;
+    }
+    // R2-3 (runda 3): obcięcie po dokładce wyłączyło przesunięcie SL (poziom BE nie mieści się pod ceną progu): komunikat aria-live i toast, wpis w log silnika ma why 'cap'
+    if (ev.type === 'be-auto-skipped') {
+      const m = t('Auto BE pominięte {time} · poziom BE leży już na cenie progu ({px})', { px: pxText(ev.price), time: hmsTz(ev.at) });
+      (cells.find((c) => c.instrument === ev.instrument) || cur())?.chart.announce(m);
+      toast(m);
+      return;
+    }
+    // 1.7-5: poziom drabiny TP trafiony (wyjście częściowe albo ostatnie): „TP1 10:14:35 · 5 @ 18 330,00 · +1 000 $” w aria-live i toaście; plakietka i linia poziomu znikają z księgi
+    if (ev.type === 'exit' && ev.tp && ev.exit?.reason === 'tp') {
+      const x = ev.exit;
+      const usd = (x.price - x.basis) * (ev.tp.dir === 'Short' ? -1 : 1) * x.qty * MULT_OF(ev.instrument);
+      const m = `${ev.tp.n > 1 ? `TP${ev.tp.rank}` : 'TP'} ${hmsTz(x.t)} · ${x.qty} @ ${pxText(x.price)} · ${fmtMoney(usd)}`;
+      (cells.find((c) => c.instrument === ev.instrument) || cur())?.chart.announce(m);
+      toast(m);
+      return;
+    }
+    // odbiór wyglądu 1.7.0 P2-1: ręczna część (okno ×, „Zamknij n”, przeciwne zlecenie o mniejszej ilości) potwierdza się tak samo jak TP: aria-live i toast „Część 09:43:55 NY · 1 @ 18 362,75 · +610 $”
+    if (ev.type === 'exit' && !ev.tp && (ev.exit?.reason === 'partial' || ev.exit?.reason === 'manual') && Number.isFinite(ev.exit.basis)) {
+      const x = ev.exit, usd = (x.price - x.basis) * (ev.dir === 'Short' ? -1 : 1) * x.qty * MULT_OF(ev.instrument);
+      const m = `${x.reason === 'manual' ? t('Zamknięcie') : t('Część')} ${hmsTz(x.t)} · ${x.qty} @ ${pxText(x.price)} · ${fmtMoney(usd)}`;
+      (cells.find((c) => c.instrument === ev.instrument) || cur())?.chart.announce(m);
+      // trwające „Cofnij” (usunięty SL/TP, próg BE) zostaje: toast z akcją nie jest zastępowany, komunikat niesie aria-live
+      const toastEl = document.getElementById('toast');
+      if (!(toastEl && !toastEl.hidden && toastEl.classList.contains('has-act'))) toast(m);
+      return;
+    }
+    // 1.7-2 (poprawki po przeglądzie P0/P2-2): oczekująca dokładka anulowana, bo leży za SL pozycji albo pozycja się zamknęła: komunikat aria-live i toast (przy odwróceniu mówi o tym komunikat odwrócenia)
+    if (ev.type === 'cancelled' && ev.order?.intent === 'add' && (ev.reason === 'add-beyond-sl' || ev.reason === 'position-closed')) {
+      const px = pxText(ev.order.price), m = ev.reason === 'add-beyond-sl' ? t('Dokładka {px} anulowana: leży za SL', { px }) : t('Dokładka {px} anulowana: pozycja zamknięta', { px });
+      (cells.find((c) => c.instrument === ev.order.instrument) || cur())?.chart.announce(m);
+      toast(m);
+      return;
+    }
+    // 1.7-2 (P3): odwrócenie = dwa trade'y połączone odnośnikiem. Zdarzenia przychodzą w kolejności exit, closed (trade zamkniętej pozycji), filled (nowa pozycja z reverseFrom = id
+    // zamkniętej): nowa pozycja w księdze dostaje reverseOf = id trade'a, a przy jej zamknięciu toTrade przenosi go do trade'a (Historia pokazuje „← t5”, do Notion nie idzie).
+    if (ev.type === 'filled' && ev.position?.reverseFrom) {
+      const lr = lastReverse, p = doc.book?.positions?.[ev.position.instrument];
+      lastReverse = null;
+      if (p) { if (lr && lr.posId === ev.position.reverseFrom) p.reverseOf = lr.tradeId; delete p.reverseFrom; }
+      return;
+    }
     if (ev.type !== 'closed') return;
     const trade = tradeFrom(ev.position);
     (doc.trades ||= []).push(trade);
+    if (trade.reverseOf) { const from = doc.trades.find((x) => x.id === trade.reverseOf); if (from) from.reversedTo = trade.id; }
+    if (ev.position.exits?.[ev.position.exits.length - 1]?.reason === 'reverse') lastReverse = { posId: ev.position.id, tradeId: trade.id };
     doc.tradeSeq = Math.max(Number(doc.tradeSeq) || 0, Number(String(trade.id).slice(1)) || 0);
     onClosed({ ...ev.position, maeR: trade.maeR, mfeR: trade.mfeR, tradeId: trade.id });
     openJournal(trade);
@@ -243,7 +408,6 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     pause();
     if (journal?.id === id) closeJournal();
     if (jw) { jw.show(id); return jw; }
-    const f = fmtIn(chartTz());
     jwDirty = false;
     jw = openJournalWindow({
       trades: () => doc?.trades || [], id,
@@ -251,7 +415,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       fetchRange: loadRange || ((q) => client.range(q)),
       maxTOf: (tr) => journalMaxT(tr, { cursor, real1s: data?.real1s(tr.instrument) || [] }),
       setups: setupSuggestions(getSetups(), doc.trades), known: getSetups(),
-      fmtTime: (s) => (Number.isFinite(s) ? `${dayLabelShort(s)} ${f.HMS.format(new Date(Math.floor(s) * 1000))}` : '–'),
+      fmtTime: (s) => (Number.isFinite(s) ? `${dayLabelShort(s)} ${hmsTz(s)}` : '–'),
       setup,
       onSave: (tid, patch) => {
         const y = (doc.trades || []).find((z) => z.id === tid);
@@ -423,9 +587,9 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const cell = cells.find((c) => c.instrument === trade.instrument) || cells.find((c) => symOf(c.instrument) === symOf(trade.instrument)) || cur();
     const host = cell?.el.querySelector('.bt-stage');
     if (!host) { paintBar(); return; }
-    const id = trade.id, f = fmtIn(chartTz());
+    const id = trade.id;
     const ui = mountJournal(host, {
-      trade, setups: setupSuggestions(getSetups(), doc.trades), known: getSetups(), fmtTime: (s) => f.HMS.format(new Date(Math.floor(s) * 1000)), cursorX: () => curX(cell), bandY: (x0, x1) => bandOf(cell, x0, x1),
+      trade, setups: setupSuggestions(getSetups(), doc.trades), known: getSetups(), fmtTime: (s) => hmsTz(s), cursorX: () => curX(cell), bandY: (x0, x1) => bandOf(cell, x0, x1),
       // M poprawki: pion zamknięcia ostatniej świecy (cena przy kursorze), panel staje po drugiej stronie
       priceY: () => { const bs = cell.chart.bars(), lb = bs[bs.length - 1]; try { return lb ? cell.chart.series.priceToCoordinate(lb[4]) : null; } catch { return null; } },
       // L (J1): „Journal” z szybkiego panelu: klasyczne okno trade'a z wpisanym setupem
@@ -473,8 +637,9 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       for (const x of doc.trades || []) if (x && r?.notion?.[x.id]) x.notion = r.notion[x.id];
       // wiersze Historii pokazują stan wysyłki, więc po odpowiedzi serwera odświeżamy też szufladę (po Cofnij stan wraca do „wysłany” bez ruchu kursora)
       paintDock();
-      if (r?.failed?.length) msg(t('Nie zapisano w Notion: {n}. {err}', { n: r.failed.length, err: r.failed[0].error || '' }));
-      else if (r?.sent) msg(t('Zapisano w Notion: {n}', { n: r.sent }));
+      const note = (x) => { if (Date.now() >= pinUntil) msg(x); };
+      if (r?.failed?.length) note(t('Nie zapisano w Notion: {n}. {err}', { n: r.failed.length, err: r.failed[0].error || '' }));
+      else if (r?.sent) note(t('Zapisano w Notion: {n}', { n: r.sent }));
       return r;
     } catch (e) {
       if (!closed) msg(t('Nie udało się wysłać do Notion: {msg}', { msg: e?.message || '' }));
@@ -516,30 +681,34 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   // „dziś” = od otwarcia sesji CME kursora (18:00 NY dnia poprzedniego); kalendarz sesji liczony raz na sesję
   let dayMemo = { open: -Infinity, until: -Infinity };
   const dayStart = () => { if (!(cursor >= dayMemo.open && cursor < dayMemo.until)) dayMemo = { open: sessionOpenAt(cursor), until: nextOpen(cursor) }; return dayMemo.open; };
-  const computeAccount = () => (account = accountOf({ book: doc.book, trades: doc.trades, def: doc.def, last, dayStart: dayStart() }));
+  const computeAccount = () => (account = accountOf({ book: doc.book, trades: doc.trades, def: doc.def, last: isRewound() ? lastReal : last, dayStart: dayStart() }));
   // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 6: wyniki w $ i % na ekranie replayu i w statystykach sesji; „Backtest kontra Live” dalej w R)
   const pctTxt = (x) => `${x > 1e-9 ? '+' : x < -1e-9 ? '−' : ''}${new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 }).format(Math.abs(x))}%`;
   const cls = (x) => (x > 1e-9 ? 'pos' : x < -1e-9 ? 'neg' : '');
   function paintAcct() {
     const a = account || computeAccount(), box = $('.bt-acct');
     // M (31.10.2026): etykieta nad wartością jak kafle dashboardu; dopisek (R, %) w osobnym elemencie, na wąskim ekranie schowany
-    const item = (k, label, val, c = '', x = '') => `<span class="bt-ac" data-ac="${k}"><span class="lbl">${esc(label)}</span> <span class="bt-ac-v"><b class="${c}">${esc(val)}</b>${x ? ` <span class="bt-ac-x ${c}">${esc(x)}</span>` : ''}</span></span>`;
+    const item = (k, label, val, c = '', x = '', past = '') => `<span class="bt-ac" data-ac="${k}"><span class="lbl">${esc(label)}</span> <span class="bt-ac-v"><b class="${c}">${esc(val)}</b>${x ? ` <span class="bt-ac-x ${c}">${esc(x)}</span>` : ''}${past ? `<span class="bt-ac-past">${esc(past)}</span>` : ''}</span></span>`;
     const html = item('bal', t('Saldo'), fmtMoney(a.balance, { plus: false }))
       + item('eq', t('Equity'), fmtMoney(a.equity, { plus: false }))
-      + item('open', t('Otwarty'), a.open.length ? fmtMoney(a.upl) : '–', cls(a.upl), a.open.length ? fmtR(a.open.reduce((s, o) => s + o.r, 0)) : '')
+      + item('open', t('Otwarty'), a.open.length ? fmtMoney(a.upl) : '–', cls(a.upl), a.open.length ? (a.open.some((o) => Number.isFinite(o.r)) ? fmtR(a.open.reduce((s, o) => s + (Number.isFinite(o.r) ? o.r : 0), 0)) : '') : '', a.open.length && isRewound() ? t('Podgląd przeszłości · P&L z {time}', { time: nyWhen(lastReal().t) }) : '')
       + item('day', t('Dziś'), fmtMoney(a.day.usd), cls(a.day.usd), `${pctTxt(a.day.pct)} · ${fmtR(a.day.r)}`);
     if (box._h !== html) { box._h = html; box.innerHTML = html; }
   }
   function dockModel() {
-    const a = account || computeAccount(), b = doc.book, f = fmtIn(chartTz());
+    const a = account || computeAccount(), b = doc.book;
     const positions = a.open.map((o) => {
       const p = b.positions[o.instrument];
       const ex = excTrack.get(p, streamOf(o.instrument), effOf(o.instrument));
-      return { ...o, sl: p.sl, tp: p.tp, be: p.be, usd: o.usd, maeR: ex.maeR, mfeR: ex.mfeR, held: effOf(o.instrument) - p.entryT };
+      // 1.7-1: ryzyko teraz w $ (|średnia − SL|·otwarta ilość·mnożnik, null bez SL), R null bez SL, notka „ryzyko pierwotne 0”
+      const risk = p.sl != null ? Math.abs(p.avg - p.sl) * MULT_OF(o.instrument) * p.openQty : null;
+      return { ...o, sl: p.sl, tp: p.tp, tps: p.tps, tpPlan: tpPlan(p), be: p.be, abe: abeInfo(p), usd: o.usd, maeR: ex.maeR, mfeR: ex.mfeR, held: effOf(o.instrument) - p.entryT, risk, slSide: p.sl != null ? Math.sign((p.sl - p.avg) * (p.dir === 'Short' ? -1 : 1)) : 0, rUsd: p.rUsd, id: p.id, fills: p.fills, exits: p.exits };
     });
-    const orders = (b.orders || []).map((o) => ({ id: o.id, instrument: o.instrument, side: o.side, type: o.type, qty: o.qty, price: o.price, sl: o.sl, tp: o.tp, risk: o.sl != null ? Math.abs(o.price - o.sl) * (MULT_OF(o.instrument)) * o.qty : null }));
+    // dokładka (intent 'add') ryzykuje do SL pozycji
+    const rwNow = isRewound(), seen = (tm) => !rwNow || !Number.isFinite(tm) || tm <= cursor;
+    const orders = (b.orders || []).filter((o) => seen(o.placedT)).map((o) => { const sl = o.intent === 'add' ? b.positions[o.instrument]?.sl : o.sl; return { id: o.id, instrument: o.instrument, side: o.side, type: o.type, intent: o.intent || 'open', qty: o.qty, price: o.price, sl: o.sl, tp: o.tp, risk: sl != null ? Math.abs(o.price - sl) * (MULT_OF(o.instrument)) * o.qty : null }; });
     const rw = stale || cursor < (b.hw || 0);
-    return { positions, orders, trades: (doc.trades || []).filter((x) => x && Number.isFinite(x.exitT)), rw, fmtTime: (s) => (Number.isFinite(s) ? `${dayLabelShort(s)} ${f.HMS.format(new Date(Math.floor(s) * 1000))}` : '–') };
+    return { positions, orders, trades: (doc.trades || []).filter((x) => x && Number.isFinite(x.exitT) && seen(x.exitT)), rw, fmtTime: (s) => (Number.isFinite(s) ? `${dayLabelShort(s)} ${hmsTz(s)}` : '–') };
   }
   const excTrack = createExcursionTracker();
   function paintDock() { if (dock) dock.paint(dockModel()); }
@@ -554,7 +723,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     // M (31.10.2026): zegar w strefie wykresu ma podpis strefy, a godzina startu i skoki są w NY, więc obok stoi godzina NY (gdy strefa wykresu nie jest NY)
     const tz = chartTz();
     if (tz !== clockTz) { clockTz = tz; $('.bt-clock').title = t('Czas wykresu: {tz}', { tz: tzLabel(tz, cursor) }); }
-    const nyTxt = tz === 'America/New_York' ? '' : `${fmtIn('America/New_York').HMS.format(new Date(Math.floor(cursor) * 1000))} NY`, nyEl = $('.bt-clock-ny');
+    // zegar w NY ma tylko podpis „NY”, w innej strefie obok stoi godzina NY
+    const nyTxt = tz === 'America/New_York' ? 'NY' : `${fmtIn('America/New_York').HMS.format(new Date(Math.floor(cursor) * 1000))} NY`, nyEl = $('.bt-clock-ny');
     if (nyEl.textContent !== nyTxt) nyEl.textContent = nyTxt;
     const trades = doc.trades || [];
     const a = account || computeAccount();
@@ -669,14 +839,12 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       // K: pełna historia: porcje świec interwału wykresu sprzed okna bazowego, do początku danych
       getHistory: (before) => data.history(cell.instrument, cell.tf, before), historyEnd: () => data.baseFrom(), getDaily: () => dailyOf(cell.instrument),
       // L: etykieta otwartego wyniku na linii pozycji (cena bieżąca instrumentu, prowizja sesji) i akcje z warstwy handlu
-      plOf: (p) => openPL(p, last(p.instrument).price, { commission: commissionOf(doc.def) }), fmtUsd: (x) => fmtMoney(x),
-      labels: { close: t('Zamknij część pozycji'), closePart: t('Zamknij część pozycji'), cancel: t('Anuluj zlecenie'), buy: t('Kup'), sell: t('Sprzedaj'), pts: t('pkt') },
-      onTradeAction: (a) => {
-        if (!orders) return;
-        if (a.kind === 'pct') { const p = doc.book.positions[cell.instrument]; if (p) orders.closePct(cell.instrument, a.pct); }
-        else if (a.kind === 'cancel') orders.cancel(a.id);
-        else if (a.kind === 'move') { orders.moveOrder(a.id, a.changes); if (a.focus) cell.chart.focusTag(a.focus); }
-      },
+      plOf: (p) => openPL(p, lastReal(p.instrument).price, { commission: commissionOf(doc.def) }), fmtUsd: (x) => fmtMoney(x),
+      onTradeAction: (a) => tradeAction(cell, a),
+      // 1.7-4: menu prawego kliku (zlecenia po cenie kliknięcia, SL/TP tutaj, skoki) dla instrumentu TEGO wykresu
+      getMenu: (info) => menuFor(cell, info), onMenuPick: (item, info) => menuPick(cell, item, info), onMenuState,
+      // decyzja gustu (wynika z P1, 1.11.2026): rysunek pozycji przestał być uchwytem (SL i TP przesuwa się liniami), więc raz pada podpowiedź
+      onZoneHint: () => { try { if (storage?.getItem(ZONE_HINT_KEY)) return; storage?.setItem(ZONE_HINT_KEY, '1'); } catch { /* localStorage niedostępny: podpowiedź pada za każdym razem */ } toast(t('SL i TP przesuwasz liniami na wykresie.'), { ms: 5000 }); },
       onCrosshair: (time) => { for (const o of cells) if (o !== cell) o.chart.setCursorLine(time); },
       rysunki: D ? {
         bar: sel('.swc-tools'), panel: sel('.swc-style'), stage: sel('.swc-stage'), gear: sel('.swc-gear'), foot: { save: sel('.swc-save'), meter: sel('.swc-meter') },
@@ -716,7 +884,6 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       cell.ext = true;
       try { cell.chart.rysunki?.()?.applyExternal(dd); cell.sig = JSON.stringify(cell.chart.rysunki?.()?.currentDoc().d ?? dd.d); } finally { cell.ext = false; }
     });
-    if (posEditFn) cell.chart.onPositionEdit((pr) => posEditFn(pr, cell.instrument));
     host.addEventListener('pointerdown', () => activate(i), true);
     sel('.bt-ci').addEventListener('change', (ev) => setCell(i, { instrument: ev.target.value }));
     paintTfs(cell);
@@ -896,7 +1063,9 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (!cells.length || moving) return Promise.resolve(false);
     pause();
     const k = curInst();
-    const t1 = stepCursor(cursor, dir, curTf(), streamOf(k), data.real1s(k), { min: minCur(), max: endT });
+    hideFind();
+    // 1.7-4: krok z doc.stepTf (null = interwał aktywnego wykresu)
+    const t1 = stepCursor(cursor, dir, stepTfNow(), streamOf(k), data.real1s(k), { min: minCur(), max: endT });
     return goTo(t1);
   }
 
@@ -916,6 +1085,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   }
   function play() {
     if (!cells.length || playing || cursor >= endT) return;
+    hideFind();
     playing = true; lastTs = 0; playAt = globalThis.performance?.now?.() ?? NaN; msg('');
     $('[data-bt="play"]').setAttribute('aria-pressed', 'true'); $('[data-bt="play"]').textContent = t('Pauza');
     rafId = raf(loop);
@@ -941,7 +1111,9 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     sel.innerHTML = c.jumps.map((j) => '<option value="' + esc(j.id) + '">' + esc(t(j.name)) + (j.skrot ? ' (' + esc(j.skrot) + ')' : '') + '</option>').join('');
     if (c.jumps.some((j) => j.id === want)) sel.value = want;
     // M: menu skoków: wybór w menu skacze od razu i zostaje skokiem przycisku (oraz skrótu „skok wybrany na liście”)
-    $('.bt-jump-l').innerHTML = c.jumps.map((j) => `<button type="button" role="menuitem" data-jumpid="${esc(j.id)}"><span>${esc(t(j.name))}</span>${j.skrot ? `<kbd class="bt-kbd">${esc(skrotLabel(j.skrot))}</kbd>` : ''}</button>`).join('');
+    // 1.7-4: na końcu menu skoków okna „Skocz do daty…” i „Skocz do ceny…” (skróty G i P z Ustawień)
+    const goBtn = (k, label, sk) => `<button type="button" role="menuitem" data-gojump="${k}"><span>${esc(label)}</span>${sk ? `<kbd class="bt-kbd">${esc(skrotLabel(sk))}</kbd>` : ''}</button>`;
+    $('.bt-jump-l').innerHTML = c.jumps.map((j) => `<button type="button" role="menuitem" data-jumpid="${esc(j.id)}"><span>${esc(t(j.name))}</span>${j.skrot ? `<kbd class="bt-kbd">${esc(skrotLabel(j.skrot))}</kbd>` : ''}</button>`).join('') + '<div class="bt-cm-sep" role="separator"></div>' + goBtn('date', t('Skocz do daty…'), c.skroty.goDate) + goBtn('price', t('Skocz do ceny…'), c.skroty.goPrice);
     paintJumpBtn();
     paintHints();
   }
@@ -963,8 +1135,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const sk = cfg().skroty;
     const hint = (sel, label, k) => { const b = $(sel); if (!b) return; b.title = hintOf(label, k); if (k) b.setAttribute('aria-keyshortcuts', k); else b.removeAttribute('aria-keyshortcuts'); };
     hint('[data-bt="play"]', t('Odtwarzaj / pauza'), sk.play);
-    hint('[data-bt="step"]', t('Krok w przód o świecę aktywnego wykresu'), sk.stepFwd);
-    hint('[data-bt="back"]', t('Krok wstecz'), sk.stepBack);
+    paintStep();
     $('.bt-speed').title = `${t('Szybkość odtwarzania')}: ${hintOf(t('wolniej'), sk.speedDown)}, ${hintOf(t('szybciej'), sk.speedUp)}`;
     const todo = $('.bt-todo');
     if (todo) todo.title = t("Trade'y bez opisu: wybierz, żeby otworzyć Journal (Ctrl+J: ostatni zamknięty)");
@@ -977,7 +1148,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   }
   async function runJump(j) {
     if (!j || !cells.length || moving) return false;
-    pause(); msg('');
+    pause(); msg(''); hideFind();
     if ((j.cel?.kind === 'nextDay' || j.cel?.kind === 'filterDay' || j.cel?.kind === 'time') && tradingDays == null) await loadSkipDays();
     let news = data.news();
     if (j.cel?.kind === 'news' && !nextNews(news, cursor, j.cel.minImp)) news = await newsAhead();
@@ -987,6 +1158,267 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   }
   const jumpById = (id) => cfg().jumps.find((j) => j.id === id);
 
+  // ---- 1.7-4: krok niezależny od interwału, skok do daty i do ceny, menu prawego kliku ----
+  // [U] 1.11.2026 «4 Prawy klik i nawigacja (limit/stop po cenie kliknięcia, krok niezależny od interwału, skok do ceny i do daty)».
+  // Krok (doc.stepTf, null = „= wykres”) wyznacza przyciski ◀ ▶ i Shift+←/→; odtwarzanie (szybkość) od niego nie zależy. Skok do daty w przód to zwykłe goTo (silnik widzi każdą świecę po drodze),
+  // wstecz to przeglądanie (do pakietu 1.7-6: nic nie znika, handel zablokowany, „Wróć”). [U] 31.10.2026 «nie powinno byc takiego czegos jak koniec dnia, tylko mozesz przesuwac czas tyle ile chcesz a po prostu jest opcja skokow, dzialanie fx replay ma byc wzorem».
+  const nyHm = (sec) => new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(Math.floor(sec) * 1000));
+  const tickQ = (x) => Math.round(x / TICK) * TICK;
+  const stepTfNow = () => stepTfFor(doc?.stepTf, curTf());
+  function paintStep() {
+    if (!doc || closed) return;
+    const v = sanitizeStepTf(doc.stepTf), sk = cfg().skroty, tf = stepTfNow();
+    $('.bt-step-n').textContent = v || t('= wykres');
+    el.querySelectorAll('.bt-step-l [data-step]').forEach((x) => {
+      const on = (x.dataset.step || null) === v;
+      x.setAttribute('aria-pressed', String(on));
+      // runda 2 (P3-1 wyglądu): „= wykres” podaje, ile to teraz; aktywna pozycja ma ✓ (nie tylko pogrubienie)
+      x.textContent = `${x.dataset.step ? x.dataset.step : `${t('= wykres')} (${curTf()})`}${on ? ' ✓' : ''}`;
+    });
+    $('[data-bt="stepmenu"]').title = t('Krok przycisków i klawiszy: {tf}', { tf });
+    const setHint = (sel, label, k) => { const b = $(sel); b.title = hintOf(label, k); if (k) b.setAttribute('aria-keyshortcuts', k); else b.removeAttribute('aria-keyshortcuts'); };
+    setHint('[data-bt="step"]', t('Krok w przód: {tf}', { tf }), sk.stepFwd);
+    setHint('[data-bt="back"]', t('Krok wstecz: {tf}', { tf }), sk.stepBack);
+  }
+  function stepMenu(open) {
+    const l = $('.bt-step-l'), b = $('[data-bt="stepmenu"]');
+    l.hidden = !open; b.setAttribute('aria-expanded', String(open));
+    if (open) { $('.bt-step-msg').textContent = ''; $('.bt-step-add input').removeAttribute('aria-invalid'); (l.querySelector('[aria-pressed="true"]') || l.querySelector('button'))?.focus(); }
+  }
+  function setStepTf(v) {
+    if (!doc) return;
+    doc.stepTf = sanitizeStepTf(v);
+    persist();
+    paintStep();
+  }
+  // własny krok: te same reguły co własny interwał (checkCustomTf); sekundy poza oknem prawdziwego 1s i tak krokują o minutę (stepSec), więc okno 1s nie jest wymagane
+  $('.bt-step-add').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const inp = $('.bt-step-add input'), note = $('.bt-step-msg'), r = checkCustomTf(inp.value, { sec1s: true });
+    if (r.problem) { const why = `${inp.value.trim()}: ${tfProblemText(r.problem)}`; inp.setAttribute('aria-invalid', 'true'); inp.title = why; note.textContent = why; note.classList.add('err'); return; }
+    inp.removeAttribute('aria-invalid'); inp.title = ''; note.textContent = ''; note.classList.remove('err');
+    setStepTf(r.tf); inp.value = ''; stepMenu(false);
+  });
+
+  // okna „Skocz do daty” i „Skocz do ceny” (płaskie okna nad paskiem sterowania, skróty G i P, menu skoków)
+  const dlg = (n) => $(`.bt-${n}`);
+  // runda 2 (przegląd wyglądu P2-5): okno wyrasta nad przyciskiem „Skocz” jak lista skoków (lewa krawędź przycisku, odbicie od prawej krawędzi ekranu); na telefonie układ z CSS
+  function placeDlg(d) {
+    if (globalThis.matchMedia?.('(max-width: 640px)')?.matches) { d.style.left = ''; d.style.bottom = ''; return; }
+    const jb = $('.bt-jumpw'), er = el.getBoundingClientRect();
+    if (!jb || !er.width) return;
+    const jr = jb.getBoundingClientRect(), w = d.offsetWidth || 320;
+    d.style.bottom = `${Math.round(er.bottom - jr.top + 6)}px`;
+    d.style.left = `${Math.round(Math.max(8, Math.min(jr.left - er.left, er.width - w - 8)))}px`;
+  }
+  function closeDlgs() { for (const n of ['gd', 'gp']) { const d = dlg(n); if (!d.hidden) d.hidden = true; } }
+  const dlgErr = (n, field, text) => {
+    const d = dlg(n), box = d.querySelector(`.bt-${n}-err`), inp = field ? d.querySelector(`[name="${field}"]`) : null;
+    d.querySelectorAll('[aria-invalid]').forEach((x) => x.removeAttribute('aria-invalid'));
+    box.textContent = text || '';
+    if (text && inp) { inp.setAttribute('aria-invalid', 'true'); inp.focus(); }
+    return !text;
+  };
+  function openGoDate({ at = null } = {}) {
+    if (!cells.length || !doc || closed) return;
+    closeDlgs(); jumpMenu(false); stepMenu(false);
+    const d = dlg('gd'), dIn = d.querySelector('[name="gdDate"]'), tIn = d.querySelector('[name="gdTime"]');
+    const s = Number.isFinite(at) ? at : cursor;
+    dIn.min = nyDayOf(startCur);
+    if (Number.isFinite(endT)) dIn.max = nyDayOf(endT - 1); else dIn.removeAttribute('max');
+    dIn.value = nyDayOf(s); tIn.value = nyHm(s);
+    dlgErr('gd', null, '');
+    d.hidden = false;
+    placeDlg(d);
+    dIn.focus();
+  }
+  // dni bez świec przekreślone w kalendarzu (jak w kreatorze); lista dni z indeksu ładuje się raz
+  setDayRule(dlg('gd').querySelector('[name="gdDate"]'), async (a, z) => {
+    if (tradingDays == null) await loadSkipDays();
+    const out = new Map();
+    if (!tradingDays) return out;
+    const ok = new Set(tradingDays), p = (s) => s.split('-').map(Number);
+    for (let n = dayNum(...p(a)); n <= dayNum(...p(z)); n++) {
+      const { y, mo, d } = fromDayNum(n), iso = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      if (!ok.has(iso)) out.set(iso, [0, 6].includes(weekdayOf(n)) ? t('Weekend: giełda zamknięta') : t('Brak świec w tym dniu'));
+    }
+    return out;
+  });
+  async function submitGoDate() {
+    if (moving || !doc) return;
+    const d = dlg('gd'), day = d.querySelector('[name="gdDate"]').value, hm = d.querySelector('[name="gdTime"]').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return void dlgErr('gd', 'gdDate', t('Wpisz datę, np. 12.03.2024.'));
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hm)) return void dlgErr('gd', 'gdTime', t('Wpisz godzinę NY, np. 09:30.'));
+    let target;
+    try { target = nyAt(day, hm); } catch { return void dlgErr('gd', 'gdDate', t('Wpisz datę, np. 12.03.2024.')); }
+    closeDlgs(); pause(); msg(''); hideFind();
+    const before = target < minCur();
+    if (before) target = minCur();
+    await goToTraced(target);
+    // cel przed startem sesji: kursor stoi na starcie z komunikatem (jak minCur przy kroku wstecz)
+    if (before) msg(t('Cel przed startem sesji: kursor stoi na starcie ({time} NY).', { time: nyHm(minCur()) }));
+  }
+
+  // ---- skok do ceny: pierwsza świeca bazowa po kursorze, która dotyka ceny, w limicie dni handlowych (serwer: GET /api/backtest/find-price) ----
+  let findAbort = null, lastClick = null, trace = null, localGoDays = null;
+  const goDays = () => localGoDays ?? cfg().goPriceDays;
+  const saveGoDays = (n) => { if (n === goDays()) return; if (onPresets) onPresets({ goPriceDays: n }); else localGoDays = n; };
+  function showFind({ text = '', more = '', cancel = false } = {}) {
+    const f = $('.bt-find'), m = $('[data-bt="findmore"]'), c = $('[data-bt="findcancel"]');
+    $('.bt-find-t').textContent = text;
+    m.hidden = !more; m.textContent = more;
+    c.hidden = !cancel;
+    f.hidden = !text;
+  }
+  function hideFind() { findAbort?.abort(); findAbort = null; showFind(); }
+  let findAgain = null;
+  async function searchPrice({ instrument, price, days, from, dir }) {
+    findAbort?.abort();
+    const ac = new AbortController();
+    findAbort = ac; findAgain = null;
+    showFind({ text: t('Szukam ceny {price} {dir} (do {n})…', { price: pxText(price), dir: dir === 'up' ? '↑' : '↓', n: t.p('{n} dni (skok do ceny)', days) }), cancel: true });
+    let res = null;
+    try { res = await client.findPrice({ instrument, from, price, dir, days }, { signal: ac.signal }); } catch (e) {
+      if (findAbort === ac) findAbort = null;
+      if (closed) return false;
+      if (ac.signal.aborted) { showFind(); return false; }
+      showFind({ text: t('Nie udało się wyszukać ceny: {msg}', { msg: e?.message || '' }) });
+      return false;
+    }
+    if (findAbort === ac) findAbort = null;
+    if (closed || ac.signal.aborted) return false;
+    if (res?.none) {
+      const until = Number(res.until), date = Number.isFinite(until) ? (() => { const dy = nyDayOf(Math.max(0, until - 1)); return `${WEEKDAYS[weekdayIdx(dy)]} ${shortDate(dy)} ${dy.slice(0, 4)} NY`; })() : '';
+      const px = pxText(price), n = t.p('{n} dni (skok do ceny)', days);
+      if (res.why === 'data-end') { showFind({ text: t('Cena {price} nie padła do końca danych ({date}).', { price: px, date }) }); return false; }
+      findAgain = { instrument, price, days, dir, from: until };
+      showFind({ text: res.why === 'budget' ? t('Szukanie ceny {price} przerwane na {date}: limit czasu.', { price: px, date }) : t('Cena {price} nie padła do {date} ({n})', { price: px, date, n }), more: t('Szukaj dalej (+{n})', { n }) });
+      return false;
+    }
+    if (!res || !Number.isFinite(res.end)) { showFind({ text: t('Nie udało się wyszukać ceny: {msg}', { msg: '' }) }); return false; }
+    showFind();
+    return goToTraced(res.end);
+  }
+  // skok z komunikatem o tym, co silnik zrobił po drodze (SL albo TP trafiony, zlecenie wypełnione): pozycja może się zamknąć, a skok i tak dochodzi do celu
+  async function goToTraced(target) {
+    trace = [];
+    let ok = false;
+    try { ok = await goTo(target); } finally {
+      const evs = trace; trace = null;
+      const hms = (s) => `${hmsTz(s)} (${dayLabelShort(s)})`;
+      const parts = [];
+      for (const e of evs || []) {
+        if (e.type === 'closed') {
+          const x = e.position?.exits?.[e.position.exits.length - 1];
+          if (x?.reason === 'sl') parts.push(t('SL trafiony {time}', { time: hms(x.t) }));
+          else if (x?.reason === 'tp') parts.push(t('TP trafiony {time}', { time: hms(x.t) }));
+        } else if (e.type === 'exit' && e.tp && e.exit?.reason === 'tp' && !(evs || []).some((z) => z.type === 'closed' && z.positionId === e.positionId)) {
+          // 1.7-5: poziom drabiny trafiony po drodze (pozycja zostaje otwarta)
+          parts.push(t('TP{n} trafiony {time}', { n: e.tp.rank, time: hms(e.exit.t) }));
+        } else if (e.type === 'filled' && !e.position?.reverseFrom) parts.push(t('zlecenie {side} {qty} wypełnione @ {px}, {time}', { side: e.position?.dir === 'Short' ? t('Sprzedaj') : t('Kup'), qty: e.position?.qty ?? '', px: pxText(e.position?.entryPrice ?? e.price), time: hms(e.position?.fills?.at(-1)?.t ?? e.position?.entryT) }));
+      }
+      if (parts.length) {
+        const text = `${t('Po drodze:')} ${parts.slice(0, 3).join(', ')}`;
+        msg(text); pinText = text; pinUntil = Date.now() + PIN_MS;
+      }
+    }
+    return ok;
+  }
+  function priceNow(inst) { const p = last(inst).price; return Number.isFinite(p) ? tickQ(p) : NaN; }
+  // cena z menu prawego kliku albo z okna: kierunek z porównania z ceną bieżącą instrumentu
+  function startSearch(instrument, price, days) {
+    const L = priceNow(instrument);
+    if (!Number.isFinite(L)) return false;
+    pause(); msg('');
+    return searchPrice({ instrument, price, days, from: Math.ceil(cursor), dir: price > L ? 'up' : 'down' });
+  }
+  function openGoPrice({ price = null } = {}) {
+    if (!cells.length || !doc || closed) return;
+    closeDlgs(); jumpMenu(false); stepMenu(false);
+    const d = dlg('gp'), inst = curInst(), L = priceNow(inst);
+    const p = Number.isFinite(price) ? price : lastClick && lastClick.instrument === inst ? lastClick.price : L;
+    d.querySelector('.bt-gp-i').textContent = inst;
+    d.querySelector('[name="gpPrice"]').value = Number.isFinite(p) ? pxText(p) : '';
+    d.querySelector('[name="gpDays"]').value = String(goDays());
+    dlgErr('gp', null, '');
+    d.hidden = false;
+    placeDlg(d);
+    paintGpDir();
+    const inp = d.querySelector('[name="gpPrice"]'); inp.focus(); inp.select();
+  }
+  // kierunek wyszukiwania z wpisanej ceny: strzałka i cena bieżąca, od której szukamy (przegląd wyglądu P3-8)
+  function paintGpDir() {
+    const d = dlg('gp'), L = priceNow(curInst());
+    const v = Number(priceText(d.querySelector('[name="gpPrice"]').value, locale()));
+    const arrow = Number.isFinite(v) && Number.isFinite(L) && tickQ(v) !== L ? (tickQ(v) > L ? '↑' : '↓') : '';
+    d.querySelector('.bt-gp-dir').textContent = Number.isFinite(L) ? `${arrow ? `${arrow} ` : ''}${t('od ceny bieżącej')} ${pxText(L)}` : '';
+  }
+  dlg('gp').querySelector('[name="gpPrice"]').addEventListener('input', paintGpDir);
+  function submitGoPrice() {
+    if (moving || !doc) return;
+    const d = dlg('gp'), inst = curInst();
+    const raw = priceText(d.querySelector('[name="gpPrice"]').value, locale());
+    if (!/^\d{1,6}(\.\d{1,4})?$/.test(raw) || !(Number(raw) > 0)) return void dlgErr('gp', 'gpPrice', t('Wpisz cenę, np. 18310,25.'));
+    const days = Number(d.querySelector('[name="gpDays"]').value);
+    if (!Number.isInteger(days) || days < GO_PRICE_DAYS.min || days > GO_PRICE_DAYS.max) return void dlgErr('gp', 'gpDays', t('Dni handlowe: liczba całkowita od {a} do {b}.', { a: GO_PRICE_DAYS.min, b: GO_PRICE_DAYS.max }));
+    const price = tickQ(Number(raw)), L = priceNow(inst);
+    if (!Number.isFinite(L)) return void dlgErr('gp', 'gpPrice', t('Brak ceny bieżącej: kursor jest przed pierwszą świecą.'));
+    if (price === L) return void dlgErr('gp', 'gpPrice', t('To jest cena bieżąca: wpisz inną.'));
+    closeDlgs(); saveGoDays(days);
+    startSearch(inst, price, days);
+  }
+  for (const n of ['gd', 'gp']) {
+    const d = dlg(n);
+    let pickerOpen = false;
+    d.addEventListener('keydown', () => { pickerOpen = wdIsOpen(); }, true);
+    d.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !pickerOpen) { ev.preventDefault(); ev.stopPropagation(); d.hidden = true; focusChart(); }
+      else if (ev.key === 'Enter' && !pickerOpen && ev.target.tagName === 'INPUT') { ev.preventDefault(); ev.stopPropagation(); if (n === 'gd') submitGoDate(); else submitGoPrice(); }
+      else if (ev.key !== 'Tab') ev.stopPropagation();
+    });
+  }
+
+  // fokus wraca na wykres po zamknięciu okna (klawiatura nie zostaje w ukrytym polu)
+  function focusChart() { const h = cur()?.el.querySelector('.bt-plot'); if (!h) return; if (!h.hasAttribute('tabindex')) h.tabIndex = -1; try { h.focus({ preventScroll: true }); } catch { /* wykres zniszczony */ } }
+
+  // ---- menu prawego kliku na wykresie ----
+  function menuFor(cell, info) {
+    if (closed || !orders) return null;
+    lastClick = { instrument: cell.instrument, price: info.price };
+    return menuItems({ ...orders.menuContext(cell.instrument), price: info.price, inMargin: info.inMargin, time: info.time });
+  }
+  // runda 2 (P1-1 kodu): menu otwarte = odtwarzanie wstrzymane i wznowione po zamknięciu (jeśli grało); skróty replayu pod otwartym menu nie działają (flaga menuOpen)
+  let menuOpen = false, menuResume = false;
+  function onMenuState(on) {
+    if (closed) return;
+    menuOpen = on;
+    if (on) { if (playing) { menuResume = true; pause(); } } else if (menuResume) { menuResume = false; play(); }
+  }
+  function menuPick(cell, item, info) {
+    const a = item?.act;
+    if (!a || !orders || closed) return undefined;
+    // pozycja wybrana po zmianie rynku albo księgi: przeliczenie menu ze stanu bieżącego; różnica = odrzucenie z komunikatem i przerysowanie menu (wykres dostaje 'stale')
+    if (a.type === 'order' || a.type === 'level') {
+      const why = menuStillValid(item, menuFor(cell, info));
+      if (why) { cell.chart.announce(why); toast(why, { error: true }); return 'stale'; }
+    }
+    if (a.type === 'jumpPrice' || a.type === 'jumpDate' || a.type === 'backNow') menuResume = false;
+    if (a.type === 'order') {
+      const ok = orders.placeAt(a.order);
+      const text = ok ? item.label : orders.lastFlash() || t('Zlecenie odrzucone.');
+      cell.chart.announce(text);
+      if (!ok) toast(text, { error: true });
+    } else if (a.type === 'level') {
+      const ok = orders.setLevel(cell.instrument, a.field, a.price);
+      const text = ok ? `${lvlName(a.field)} ${pxText(a.price)}` : orders.lastFlash() || t('Zlecenie odrzucone.');
+      cell.chart.announce(text);
+      if (!ok) toast(text, { error: true });
+    } else if (a.type === 'jumpPrice') startSearch(cell.instrument, a.price, goDays());
+    else if (a.type === 'jumpDate') openGoDate({ at: a.time });
+    else if (a.type === 'backNow') { pause(); goTo(doc.book.hw); }
+    return undefined;
+  }
+
   // ---- klawiatura ----
   const norm = (x) => String(x || '').trim().toUpperCase();
   function setSpeedVal(v) {
@@ -995,6 +1427,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   }
   function onKey(ev) {
     if (closed || !el.isConnected) return;
+    // runda 2: pod otwartym menu prawego kliku klawisze należą do menu (bt-wykres.js)
+    if (menuOpen) return;
     // L: otwarty Journal ma własne klawisze, skróty replayu czekają na jego zamknięcie
     if (jw) return;
     // L: Ctrl+J (jak w FX Replay) otwiera Journal ostatniego zamkniętego trade'a (albo trade'a z szybkiego panelu); skrót zarezerwowany (RESERVED_SKROTY)
@@ -1006,10 +1440,12 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     }
     const tg = ev.target;
     if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || tg.isContentEditable)) return; // notatka journalingu i pola panelu
+    // 1.7-4: menu prawego kliku, menu kroku i okna skoków mają własną klawiaturę (strzałki, Enter, Esc)
+    if (tg?.closest?.('.bt-cm, .bt-step-l, .bt-dlg')) return;
     // M (31.10.2026): Enter przy otwartym szybkim panelu przenosi do pola setupu i zatrzymuje odtwarzanie (droga z klawiatury bez myszy); Enter jest zarezerwowany, więc nie koliduje
     if (ev.key === 'Enter' && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && journal?.ui?.isOpen?.() && !(tg && tg.closest?.('button, a, [role="slider"], [role="menuitem"]'))) {
       const inp = journal.ui.el.querySelector('[name="setup"]');
-      if (inp) { ev.preventDefault(); ev.stopImmediatePropagation(); pause(); inp.focus(); return; }
+      if (inp) { ev.preventDefault(); ev.stopImmediatePropagation(); pause(); journal.ui.expand?.(); inp.focus(); return; }
     }
     const sk = norm(skrotOf(ev));
     if (!sk) return;
@@ -1028,6 +1464,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       case 'stepFwd': step(1); break;
       case 'stepBack': step(-1); break;
       case 'jump': runJump(jumpById($('.bt-jump').value)); break;
+      case 'goDate': openGoDate(); break;
+      case 'goPrice': openGoPrice(); break;
       case 'speedUp': case 'speedDown': {
         const i = SPEEDS.indexOf(speed), n = Math.min(SPEEDS.length - 1, Math.max(0, i + (action === 'speedUp' ? 1 : -1)));
         setSpeedVal(SPEEDS[n]); break;
@@ -1038,6 +1476,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       // M (31.10.2026): BE i zamknięcie połowy pozycji instrumentu aktywnego wykresu z klawiatury (te same akcje co BE i 50% w szufladzie)
       case 'be': if (doc.book.positions[curInst()]) orders?.beFor(curInst()); else msg(t('Brak otwartej pozycji.')); break;
       case 'half': if (doc.book.positions[curInst()]) orders?.closePct(curInst(), 50); else msg(t('Brak otwartej pozycji.')); break;
+      // 1.7-2 (G-2.5): Odwróć z klawiatury; bez potwierdzenia, komunikat po akcji mówi, co się stało
+      case 'reverse': if (doc.book.positions[curInst()]) orders?.reverseFor(curInst()); else msg(t('Brak otwartej pozycji.')); break;
       default: break;
     }
   }
@@ -1051,6 +1491,10 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const b = ev.target.closest('button');
     if (!b || b.disabled) return;
     if (b.dataset.speed) { setSpeedVal(Number(b.dataset.speed)); return; }
+    if (b.dataset.gojump) { jumpMenu(false); if (b.dataset.gojump === 'date') openGoDate(); else openGoPrice(); return; }
+    if (b.dataset.step !== undefined) { setStepTf(b.dataset.step || null); stepMenu(false); $('[data-bt="stepmenu"]').focus(); return; }
+    if (b.dataset.gd) { if (b.dataset.gd === 'go') submitGoDate(); else dlg('gd').hidden = true; return; }
+    if (b.dataset.gp) { if (b.dataset.gp === 'go') submitGoPrice(); else dlg('gp').hidden = true; return; }
     if (b.dataset.jumpid) {
       const sel = $('.bt-jump');
       sel.value = b.dataset.jumpid;
@@ -1071,7 +1515,10 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
       case 'notion': sendNotion({ all: true }); break;
       case 'todo': { const l = $('.bt-todo-l'); l.hidden = !l.hidden; b.setAttribute('aria-expanded', String(!l.hidden)); break; }
       case 'jump': runJump(jumpById($('.bt-jump').value)); break;
-      case 'jumpmenu': jumpMenu($('.bt-jump-l').hidden); break;
+      case 'jumpmenu': stepMenu(false); jumpMenu($('.bt-jump-l').hidden); break;
+      case 'stepmenu': jumpMenu(false); stepMenu($('.bt-step-l').hidden); break;
+      case 'findcancel': hideFind(); break;
+      case 'findmore': if (findAgain) { const a = findAgain; findAgain = null; searchPrice(a); } break;
       case 'reopen': { const sid = sessionId; close(); onReopen(sid); break; }
       case 'close': close(); break;
       default: break;
@@ -1081,11 +1528,20 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   $('.bt-jump').addEventListener('change', (ev) => { try { storage?.setItem(JUMP_KEY, ev.target.value); } catch { /* localStorage niedostępny */ } paintJumpBtn(); });
   // menu skoków: Escape zamyka, strzałki przechodzą po pozycjach, klik poza menu zamyka
   $('.bt-jump-l').addEventListener('keydown', (ev) => {
-    const items = [...el.querySelectorAll('.bt-jump-l [data-jumpid]')], i = items.indexOf(document.activeElement);
+    const items = [...el.querySelectorAll('.bt-jump-l [data-jumpid], .bt-jump-l [data-gojump]')], i = items.indexOf(document.activeElement);
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); jumpMenu(false); $('[data-bt="jumpmenu"]').focus(); }
     else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); ev.stopPropagation(); items[(i + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
   });
-  el.addEventListener('pointerdown', (ev) => { if (!$('.bt-jump-l').hidden && !ev.target.closest('.bt-jumpw')) jumpMenu(false); });
+  el.addEventListener('pointerdown', (ev) => {
+    if (!$('.bt-jump-l').hidden && !ev.target.closest('.bt-jumpw')) jumpMenu(false);
+    if (!$('.bt-step-l').hidden && !ev.target.closest('.bt-stepw')) stepMenu(false);
+  });
+  $('.bt-step-l').addEventListener('keydown', (ev) => {
+    const items = [...el.querySelectorAll('.bt-step-l [data-step]')], i = items.indexOf(document.activeElement);
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); stepMenu(false); $('[data-bt="stepmenu"]').focus(); }
+    else if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && i >= 0) { ev.preventDefault(); ev.stopPropagation(); items[(i + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
+    else if (ev.key !== 'Tab') ev.stopPropagation();
+  });
   fillJumps();
   const onHide = () => { if (doc && !stale) { syncDrawings(); doc.cursor = cursor; client.flush({ keepalive: true }).catch(() => {}); } };
   globalThis.addEventListener?.('pagehide', onHide);
@@ -1097,6 +1553,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     jw?.close(); jw = null;
     dock?.destroy(); dock = null;
     clearInterval(notionTimer); notionTimer = 0;
+    findAbort?.abort(); findAbort = null;
     globalThis.removeEventListener?.('pagehide', onHide);
     globalThis.removeEventListener?.('keydown', onKey, true);
     orders?.destroy(); orders = null;
@@ -1131,18 +1588,31 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (closed) return;
     store ||= createDrawingStore({ getSession: () => doc, save: () => persist() });
     doc.book ||= emptyBook();
+    // 1.7-4: krok sesji (brak pola w sesji 1.6.x = „= wykres”)
+    doc.stepTf = sanitizeStepTf(doc.stepTf);
     buildCells();
+    paintStep();
     advanceAll();
     const hub = {
       // pozycje i zlecenia rysują się na każdym wykresie swojego instrumentu; edycja SL/TP wraca z nazwą instrumentu wykresu, na którym ją zrobiono
       setTradingFor(k, st) { for (const c of cells) if (c.instrument === k) c.chart.setTrading(st); },
-      onPositionEdit(fn) { posEditFn = fn; for (const c of cells) c.chart.onPositionEdit(fn ? (pr) => fn(pr, c.instrument) : null); },
     };
+    // 1.7-3: presety z bloku ustawień `bt` (sanitizePresets raz na wersję tablicy), aktywny preset i domyślny offset auto BE; zmiany wracają przez onPresets (aplikacja zapisuje ustawienia),
+    // a bez niego (strona testowa, osadzenie) trzymane są lokalnie
+    const pMemo = new WeakMap();
+    let local = null;
+    const bt = () => local || getSettings() || {};
+    const presetsNow = () => { const raw = bt().presets; if (!Array.isArray(raw)) return []; let s = pMemo.get(raw); if (!s) { s = sanitizePresets(raw); pMemo.set(raw, s); } return s; };
     orders = mountOrders($('.bt-ordhost'), {
+      getPresets: presetsNow, getActivePreset: () => bt().activePreset ?? null, getBeOffset: () => bt().beOffset ?? 0,
+      onPreset: (patch) => { if (onPresets) onPresets(patch); else local = { ...bt(), ...patch }; },
+      say: (m) => { cur()?.chart.announce(m); toast(m); }, clock: (s) => (Number.isFinite(s) ? hmsTz(s) : ''),
+      getRealLast: lastReal, pastNote: () => (isRewound() ? t('Kursor: {a}, chwila bieżąca: {b}.', { a: nyWhen(cursor), b: nyWhen(lastReal().t) }) : ''),
       getBook: () => doc.book, setBook, onCommit: () => { persist({ now: true }); computeAccount(); paintBar(); paintDock(); }, getLast: last,
       lock: () => (stale ? t('Sesja zmieniła się w innej karcie. Otwórz ją ponownie.') : ''), getCursor: () => cursor, instrument: () => curInst(), instruments: () => sessionInstruments(), chart: hub, onEvent: onEngine,
       // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 2: ryzyko % od bieżącego salda, wybór w kreatorze)
       risk: () => ({ ...(doc.def?.risk || { mode: 'usd', value: 0 }), balance: riskBalance({ def: doc.def, trades: doc.trades, book: doc.book }) }),
+      commission: () => commissionOf(doc.def),
       // J (Zakres B): zaznaczony rysunek pozycji na aktywnym wykresie (instrument wykresu = instrument zlecenia) i jego usunięcie po złożeniu zlecenia
       getDrawing: () => cur()?.chart.rysunki?.()?.selectedPosition() || null,
       // przegląd J P2-1: dokument rysunków bez rysunku trafia do sesji od razu (w pamięci), więc onCommit zapisuje zlecenie i usunięcie jednym zapisem
@@ -1161,14 +1631,29 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     // L: szuflada pozycji, zleceń i historii (K zostawił miejsce `.bt-dock`)
     dock = mountDock($('.bt-dock'), {
       storage,
-      onAction: (kind, { instrument: k, id }) => {
+      onAction: (kind, { instrument: k, id, field, price, rows }) => {
         if (kind === 'journal') { openJournalWin(id); return; }
         if (kind === 'delete') { deleteTrade(id); return; }
         if (!orders) return;
         if (kind === 'be') orders.beFor(k);
         else if (kind === 'half') orders.closePct(k, 50);
+        else if (kind === 'reverse') orders.reverseFor(k);
+        else if (kind === 'abeoff') orders.setAutoBe(k, null);
         else if (kind === 'close') orders.closeAll(k);
         else if (kind === 'cancel') orders.cancel(id);
+        // 1.7-1: edycja SL/TP w szufladzie (null usuwa); wynik wraca do komórki, żeby błąd stał pod polem
+        else if (kind === 'level') {
+          const ok = orders.setLevel(k, field, price);
+          return ok ? { ok: true } : { ok: false, text: orders.lastFlash() };
+        } else if (kind === 'tps') {
+          // 1.7-5: edytor listy TP w szufladzie (cena i procent na wiersz, pusta cena usuwa poziom, pusty wiersz dodaje)
+          const ok = orders.setTps(k, rows);
+          return ok ? { ok: true } : { ok: false, text: orders.lastFlash() };
+        } else if (kind === 'part') {
+          const c = cells.find((x) => x.instrument === k && x.i === activeIdx) || cells.find((x) => x.instrument === k);
+          if (c) { activate(c.i); c.chart.openPart(); }
+        }
+        return undefined;
       },
     });
     render();
@@ -1208,8 +1693,10 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     sendNotion,
     goTo,
     accountState: () => (doc ? computeAccount() : null),
+    // wejście zdarzeń silnika dla testów komunikatów auto BE; tylko te dwa zdarzenia, żeby nie dało się z zewnątrz wywołać reszty obsługi (np. zamknięcia trade'a)
+    engineEvent: (ev) => { if (ev?.type === 'be-auto' || ev?.type === 'be-auto-skipped') onEngine(ev); },
     dock: () => dock, journalWindow: () => jw, openJournalWindow: (id) => openJournalWin(id),
-    play, pause, step, setTf, setSpeed: setSpeedVal, runJump: (id) => runJump(jumpById(id)), runJumpDef: (j) => runJump(j), refreshJumps: fillJumps,
+    openGoDate, openGoPrice, play, pause, step, setTf, setSpeed: setSpeedVal, runJump: (id) => runJump(jumpById(id)), runJumpDef: (j) => runJump(j), refreshJumps: fillJumps,
     busy: () => moving || !!prefetching,
     book: () => doc?.book, orders: () => orders, speed: () => speed, journal: () => journal?.ui ?? null, openJournal: (id) => { const x = (doc?.trades || []).find((y) => y.id === id); if (x) openJournal(x); },
   };

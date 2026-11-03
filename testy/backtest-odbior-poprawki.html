@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: odbiór 1.7.0, poprawki wyglądu i komunikatów (strona robocza)</title>
+<!-- Strona robocza testów backtest-odbior (testy/backtest-odbior-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: zlecenia oczekujące w rozsuwaniu plakietek (elementFromPoint środka każdego ×, także 375), notka przeglądania przed komunikatem, jeden format komunikatów zdarzeń z godziną i strefą,
+     poziomy drabiny bez ilości, kwoty w pełnych dolarach, SL na BE po stronie straty, cena z separatorem tysięcy, podpis BE w Journalu.
+     Parametry: ?w=375, ?theme=platinum, ?shots=1. Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const shots = qs.get('shots') === '1';
+const wide = !narrow || shots;
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  const tz = document.getElementById('toast');
+  if (tz) tz.hidden = true;
+  // runda 2: okno „Setup” (panel Journal trade'a) zasłaniało lewy dół wykresu na zrzutach; na czas zrzutu jest ukryte (tylko zrzut, test go nie dotyka), potem wraca
+  const jr = [...document.querySelectorAll('.bt-jr')], jrVis = jr.map((e) => e.style.visibility);
+  for (const e of jr) e.style.visibility = 'hidden';
+  await sleep(150);
+  window.__shot(JSON.stringify({ id, name: `${name}-${qs.get('theme') === 'platinum' ? 'platinum' : 'onyx'}-${narrow ? 375 : 1920}` }));
+  await until(() => window.__done?.[id], 10000);
+  jr.forEach((e, i) => { e.style.visibility = jrVis[i]; });
+};
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
+  const { fmtMoney, fmtR } = await import('/js/format.js');
+  const { visibleCount } = await import('/js/bt-swieca.js');
+  const { pxText } = await import('/js/bt-journal.js');
+  const { tpPlan } = await import('/js/bt-wypelnienia.js');
+  const client = createSessionClient();
+  const mkDef = () => ({ instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] });
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja odbioru', def: mkDef(), now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  let btSet = sanitizeBt(null);
+  const savedPatches = [];
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0, getSettings: () => btSet, onPresets: (patch) => { savedPatches.push(patch); btSet = sanitizeBt({ ...btSet, ...patch }); } });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const trades = () => RP.doc().trades;
+  const ch = () => RP.chart();
+  const host = () => scr().querySelector('.bt-plot');
+  const layer = () => ch().tradeLayer();
+  const tag = (k) => layer().querySelector(`[data-k="${k}"]`);
+  const mainText = (k) => tag(k)?.querySelector('.bt-tag-t')?.textContent ?? '';
+  const live = () => layer().querySelector('.bt-tl-live')?.textContent ?? '';
+  const focusTag = (k) => { const el = tag(k); el.focus(); el.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); };
+  const acts = () => layer().querySelector('[data-k="pos"] .bt-tag-act');
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const num = (s) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+  const center = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const pe = (type, el, x, y, extra = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true, ...extra }));
+  const yPx = (px) => host().getBoundingClientRect().top + ch().series.priceToCoordinate(px);
+  const note = () => P('.bt-ord-note').textContent;
+  const prev = () => { const e = P('.bt-ord-prev'); return e.hidden ? '' : e.textContent; };
+  const btn = (side) => P(`[data-o="${side}"]`);
+  const money = (x) => norm(fmtMoney(x));
+  const rstr = (x) => norm(fmtR(x));
+  const hits = (els) => {
+    const bad = [];
+    let n = 0;
+    for (const b of els) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || getComputedStyle(b).visibility === 'hidden') continue;
+      n++;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!(hit === b || b.contains(hit))) bad.push(`${b.dataset.tl || b.dataset.o || b.name || b.className} → ${hit?.dataset?.tl || hit?.className || hit?.tagName}`);
+    }
+    return { n, bad };
+  };
+  const overlaps = (els) => {
+    const r = els.filter((e) => !e.hidden).map((e) => e.getBoundingClientRect());
+    let n = 0;
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) if (r[i].left < r[j].right && r[j].left < r[i].right && r[i].top < r[j].bottom - 1 && r[j].top < r[i].bottom - 1) n++;
+    return n;
+  };
+  const closeAllNow = async () => { RP.orders().closeAll(); await sleep(80); for (const o of [...RP.book().orders]) RP.orders().cancel(o.id); await sleep(40); };
+  const abeOff = () => { const c = P('[name="abeOn"]'); if (c.checked) c.click(); };
+  const moreOpen = () => { const m = scr().querySelector('.bt-ord-more'); if (m && getComputedStyle(m).display !== 'none' && m.getAttribute('aria-expanded') !== 'true') m.click(); };
+  const tpRows = () => [...P('.bt-ord-tps').querySelectorAll('.bt-ord-tp')].filter((r) => !r.hidden);
+  const addBtn = () => P('.bt-tp-add');
+  const clearTpRows = async () => {
+    for (let i = 0; i < 4 && tpRows().length > 1; i++) { tpRows().at(-1).querySelector('.bt-tp-rm').click(); await sleep(20); }
+    setF('tp', '');
+  };
+  // wejście z biletu: SL (pkt), lista TP w pkt (ceny od wejścia, procenty nie-ostatnich z podziału po równo), ilość ręczna
+  const openLadder = async ({ side = 'buy', sl = 10, tps = [20, 40], qty = 10 } = {}) => {
+    await closeAllNow(); abeOff(); await clearTpRows();
+    setF('sl', sl);
+    setF('tp', tps[0] ?? '');
+    for (let i = 1; i < tps.length; i++) { addBtn().click(); await sleep(20); setF(i === 1 ? 'tp2' : i === 2 ? 'tp3' : 'tp4', tps[i]); }
+    setF('qty', qty);
+    RP.orders().submit(side); await sleep(120);
+  };
+  // krok o 1 s kursora (jedna świeca bazowa 1s w oknie prawdziwych sekund), żeby jeden krok nie obejmował dwóch poziomów
+  const stepsUntil = async (fn, n = 420) => { for (let i = 0; i < n && !fn(); i++) { await RP.goTo(RP.cursor() + 1); await sleep(8); } return fn(); };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(100);
+  document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  if (wide) moreOpen();
+
+  // toasty zdarzeń: nasłuch na #toast (jeden element, tekst nadpisywany), żeby asercje widziały każdy komunikat
+  const toasts = [];
+  new MutationObserver(() => { const t = document.getElementById('toast'); const s = t ? norm(t.textContent) : ''; if (s && toasts.at(-1) !== s) toasts.push(s); }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  const lastToast = () => toasts.at(-1) || '';
+  const toastIdx = () => toasts.length;
+  const toastsSince = (i) => toasts.slice(i);
+  const setType = (ty) => { P(`[data-ot="${ty}"]`).click(); };
+  const lastPx0 = () => { const r = P('[data-o="buy"] .bt-ord-px')?.textContent || ''; return Math.round(Number(r.replace(/\s/g, '').replace(',', '.')) * 4) / 4; };
+  const pxFmt = (v) => Number(v).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // ---------- P1-1: zlecenia oczekujące (dokładki) w rozsuwaniu z pozycją, drabiną i progiem BE; środki × klikalne ----------
+  if (wide) await section('kolizja', async () => {
+    await openLadder({ tps: [20, 40], qty: 12 });
+    const avg = pos().avg;
+    RP.orders().setLevel('NQ', 'abe', q(avg + 0.5)); await sleep(100);
+    // dokładki: limit tuż pod ceną (1 tick) i stop tuż nad nią; trzecie zlecenie to limit z SL i TP (osobne wejście nie jest dozwolone przy pozycji, więc tylko dokładki)
+    setType('limit'); setF('price', String(avg - 0.25)); setF('qty', 3); RP.orders().submit('buy'); await sleep(120);
+    setType('stop'); setF('price', String(avg + 0.5)); setF('qty', 2); RP.orders().submit('buy'); await sleep(120);
+    setType('market');
+    rec('kolizja', RP.book().orders.length === 2 && RP.book().orders.every((o) => o.intent === 'add'), `dwie oczekujące dokładki (${RP.book().orders.map((o) => `${o.type}@${o.price}`).join(', ')})`);
+    await sleep(200);
+    const tags = [...layer().querySelectorAll('.bt-tag')].filter((e) => !e.hidden);
+    const orderTags = tags.filter((e) => String(e.dataset.k).startsWith('o:'));
+    rec('kolizja', orderTags.length >= 2, `plakietki zleceń oczekujących są widoczne (${orderTags.length} z ${tags.length})`);
+    rec('kolizja', overlaps(tags) === 0, `plakietki pozycji i zleceń oczekujących bez nakładania (${overlaps(tags)} nakładek)`);
+    const xs = [...layer().querySelectorAll('.bt-tag-x')];
+    const h = hits(xs);
+    rec('kolizja', h.n >= 5 && h.bad.length === 0, `środki wszystkich × trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    // plakietka leży przy swojej linii: odchyłka od ceny linii najwyżej kilka plakietek (rozsunięcie), a kreska łącząca pokazuje powiązanie
+    // własne znaczniki osi rozsunięte także dla poziomów zleceń oczekujących (R2-P3-2): nie nakładają się, a natywne dla nich są ukryte
+    const ax = [...layer().querySelectorAll('.bt-axt')];
+    rec('kolizja', ax.length >= 1 && overlaps(ax) === 0, `znaczniki osi bliskich poziomów rozsunięte (${ax.length} własnych, ${overlaps(ax)} nakładek: ${ax.map((e) => norm(e.textContent)).join(', ')})`);
+    await shot('kolizja-oczekujace');
+    await closeAllNow();
+  });
+
+  // ---------- P1-2: notka przeglądania ma pierwszeństwo przed zwykłym komunikatem; zwykły komunikat gaśnie ----------
+  if (wide) await section('notka', async () => {
+    await closeAllNow();
+    await openLadder({ tps: [20, 40], qty: 4 });
+    // zwykły komunikat: SL po złej stronie ceny jest odrzucony i zostaje w notce biletu
+    RP.orders().setLevel('NQ', 'sl', q(pos().avg + 50)); await sleep(80);
+    rec('notka', note() !== '' && !/Przeglądasz wstecz/.test(note()), `komunikat odrzucenia w bilecie: «${norm(note())}»`);
+    await sleep(6600);
+    rec('notka', note() === '' || /Ryzyko|SL|Wpisz/.test(note()) === false, `komunikat zgasł po kilku sekundach: «${norm(note())}»`);
+    // odwrócenie nie zostawia komunikatu w bilecie i daje toast z godziną; po skoku wstecz notka mówi o przeglądaniu
+    const i0 = toastIdx();
+    RP.orders().reverseFor('NQ'); await sleep(150);
+    const tr = toastsSince(i0).find((x) => /^Odwrócono/.test(x)) || '';
+    rec('notka', /^Odwrócono \d\d:\d\d:\d\d NY · /.test(tr), `toast odwrócenia z godziną i strefą: «${tr}»`);
+    rec('notka', !/Odwrócono/.test(note()), `odwrócenie nie stoi w bilecie: «${norm(note())}»`);
+    await RP.goTo(RP.cursor() - 600); await sleep(250);
+    rec('notka', /^Przeglądasz wstecz: handel jest zablokowany\./.test(norm(note())), `po skoku wstecz notka mówi o przeglądaniu: «${norm(note())}»`);
+    // komunikat odrzucenia podczas przeglądania nie wypiera notki
+    RP.orders().setLevel('NQ', 'sl', q(100)); await sleep(80);
+    rec('notka', /^Przeglądasz wstecz/.test(norm(note())), `komunikat nie wypiera notki przeglądania: «${norm(note())}»`);
+    // komunikat o innym tekście niż notka (zły próg auto BE w polu pozycji): w trybie przeglądania notka zostaje
+    P('[data-o="abe-ok"]').click(); await sleep(100);
+    rec('notka', /^Przeglądasz wstecz/.test(norm(note())) && !/Wpisz próg/.test(note()), `komunikat „Wpisz próg auto BE.” nie wypiera notki: «${norm(note())}»`);
+    await shot('notka-przegladanie');
+    P('[data-o="back"]').click(); await sleep(1500);
+    rec('notka', !/Przeglądasz wstecz/.test(note()), `po „Wróć do teraz” notka znika («${norm(note())}»)`);
+    await closeAllNow();
+  });
+
+  // ---------- P2-1/P2-2: ręczna część daje toast jak TP, jeden format „nazwa godzina strefa · szczegóły” ----------
+  if (wide) await section('komunikaty', async () => {
+    await closeAllNow();
+    await openLadder({ tps: [4, 8], qty: 12, sl: 6 });
+    let i0 = toastIdx();
+    RP.orders().closeQty('NQ', 3); await sleep(150);
+    const part = toastsSince(i0).find((x) => /^Część/.test(x)) || '';
+    rec('komunikaty', /^Część \d\d:\d\d:\d\d NY · 3 @ [\d\s,.]+ · [+−-]?\d[\d\s]* \$$/.test(part), `ręczna część: «${part}»`);
+    rec('komunikaty', /^Część/.test(live()) , `aria-live niesie ten sam komunikat: «${norm(live())}»`);
+    // TP1 trafione w odtwarzaniu: ten sam format z numerem poziomu
+    i0 = toastIdx();
+    const hit = await stepsUntil(() => pos().exits?.some((e) => e.reason === 'tp') || !pos(), 500);
+    const tp = toastsSince(i0).find((x) => /^TP\d? /.test(x)) || '';
+    rec('komunikaty', !!hit && /^TP1? \d\d:\d\d:\d\d NY · \d+ @ [\d\s,.]+ · \+\d[\d\s]* \$$/.test(tp), `trafienie TP: «${tp}»`);
+    await closeAllNow();
+    // auto BE: ten sam wzorzec
+    await openLadder({ tps: [30], qty: 4, sl: 6 });
+    RP.orders().setAutoBe('NQ', { kind: 'pts', value: 2, offsetTicks: 0 }); await sleep(80);
+    i0 = toastIdx();
+    await stepsUntil(() => pos()?.autoBe?.done || !pos(), 500);
+    const be = toastsSince(i0).find((x) => /^Auto BE/.test(x)) || '';
+    rec('komunikaty', /^Auto BE \d\d:\d\d:\d\d NY · SL na [\d\s,.]+$/.test(be), `auto BE: «${be}»`);
+    // pełne ręczne zamknięcie
+    i0 = toastIdx();
+    RP.orders().closeAll(); await sleep(120);
+    const cl = toastsSince(i0).find((x) => /^Zamknięcie/.test(x)) || '';
+    rec('komunikaty', /^Zamknięcie \d\d:\d\d:\d\d NY · \d+ @ /.test(cl), `zamknięcie ręczne: «${cl}»`);
+    document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  });
+
+  // ---------- P2-4: poziomy bez ilości nie są rysowane; P2-5: kwoty na plakietkach w pełnych dolarach ----------
+  if (wide) await section('ilosci', async () => {
+    await closeAllNow();
+    await openLadder({ tps: [10, 20, 30], qty: 1 });
+    await sleep(150);
+    const texts = [...layer().querySelectorAll('.bt-tag')].filter((e) => !e.hidden).map((e) => norm(e.textContent));
+    rec('ilosci', !texts.some((x) => /0 kontrakt/.test(x)), `brak poziomów „0 kontraktów” (${texts.join(' | ')})`);
+    rec('ilosci', !tag('tp2') || tag('tp2').hidden, 'TP2 bez ilości nie ma plakietki');
+    rec('ilosci', ch().positionMarks().length <= 3, `bez linii poziomów bez ilości (${ch().positionMarks().length} linie: wejście, SL, TP1)`);
+    const pt = tag('pos')?.getAttribute('aria-label') || tag('pos')?.title || '';
+    rec('ilosci', /bez ilości/.test(pt), `podpowiedź wejścia nazywa poziomy bez ilości: «${pt}»`);
+    // menu prawego kliku: „Dodaj TP tutaj” dla ilości 0 nie pokazuje „0 $ · 0R”
+    await closeAllNow();
+    // dokładka po cenie rynkowej: średnia nie leży na siatce ticka, więc kwoty poziomów miałyby grosze
+    await openLadder({ tps: [10, 20], qty: 10 });
+    const lastPx = () => Number(document.querySelector('.bt-ord-px')?.textContent.replace(/\s/g, '').replace(',', '.'));
+    for (let i = 0; i < 200 && Math.abs(lastPx() - pos().avg) < 0.5; i++) { await RP.goTo(RP.cursor() + 1); await sleep(6); }
+    setType('market'); setF('qty', 7); RP.orders().submit('buy'); await sleep(150);
+    const frac = pos().avg * 4 % 1 !== 0;
+    rec('ilosci', pos().qty === 17 && frac, `średnia po dokładce nie leży na siatce ticka (qty ${pos().qty}, avg ${pos().avg})`);
+    const money = [...layer().querySelectorAll('.bt-tag')].filter((e) => !e.hidden).map((e) => norm(e.textContent));
+    rec('ilosci', money.length >= 3 && !money.some((x) => /\d,\d\d\s?\$/.test(x)), `kwoty na plakietkach w pełnych dolarach (${money.join(' | ')})`);
+    await closeAllNow();
+  });
+
+  // ---------- R2-P3-2: znaczniki osi poziomów TP zlecenia oczekującego bez pozycji są rozsunięte tak samo jak poziomów pozycji ----------
+  if (wide) await section('osie', async () => {
+    await closeAllNow(); abeOff(); await clearTpRows();
+    setF('sl', 10); setF('tp', 20); addBtn().click(); await sleep(20); setF('tp2', 20.25); setF('qty', 4);
+    const px0 = lastPx0();
+    setType('limit');
+    setF('price', String(px0 - 3)); RP.orders().submit('buy'); await sleep(200);
+    setType('market');
+    const o = RP.book().orders[0];
+    rec('osie', !!o && !RP.book().positions.NQ && (o.tps || []).length === 2, `zlecenie oczekujące z dwoma TP o 1 tick od siebie (${(o?.tps || []).map((x) => x.price).join(', ')})`);
+    const ax = [...layer().querySelectorAll('.bt-axt')];
+    rec('osie', ax.length >= 2 && overlaps(ax) === 0, `własne znaczniki osi dla poziomów zlecenia oczekującego, bez nakładania (${ax.length}: ${ax.map((e) => norm(e.textContent)).join(', ')})`);
+    await closeAllNow(); await clearTpRows();
+  });
+
+  // ---------- P3-1, P3-8: SL na BE (po wyzwoleniu auto BE) stoi po stronie straty (Long pod wejściem, Short nad nim), bez „+BE” ----------
+  if (wide) await section('drobne', async () => {
+    let side = 'sell';
+    for (const sd of ['sell', 'buy']) {
+      await closeAllNow();
+      await openLadder({ side: sd, tps: [60], qty: 3, sl: 40 });
+      RP.orders().setAutoBe('NQ', { kind: 'pts', value: 1, offsetTicks: 0 }); await sleep(80);
+      await stepsUntil(() => pos()?.autoBe?.done || !pos(), 400);
+      side = sd;
+      if (pos()?.autoBe?.done) break;
+    }
+    await sleep(150);
+    rec('drobne', !!pos() && pos().be === true, `SL stoi na BE (${side}: be ${pos()?.be}, sl ${pos()?.sl}, avg ${pos()?.avg})`);
+    const sl = tag('psl'), en = tag('pos');
+    const sy = sl.getBoundingClientRect().top, ey = en.getBoundingClientRect().top;
+    const lossSide = side === 'sell' ? sy < ey : sy > ey;
+    rec('drobne', sl && en && Math.abs(sy - ey) < 80 && lossSide, `plakietka SL na BE stoi po stronie straty (${side}: SL ${Math.round(sy)}, wejście ${Math.round(ey)})`);
+    focusTag('pos'); await sleep(100);
+    rec('drobne', !acts()?.querySelector('[data-tl="abe+"]'), 'przy SL na BE nie ma „+BE” (próg auto BE)');
+    rec('drobne', P('[data-o="abe-add"]').hidden, 'po wyzwoleniu auto BE nie ma „+ Auto BE” w bilecie');
+    await closeAllNow();
+  });
+
+  // ---------- odbiór r2 (przegląd wyglądu): kierunek w szufladzie po dwóch „Odwróć”, kwoty w pełnych dolarach, „+ Auto BE”, bilet i menu bez poziomów 0, cena progu na tickach, komunikat odwrócenia ----------
+  if (wide) await section('r2', async () => {
+    const noCents = (txt) => !/\d,\d{1,2}\s?\$/.test(txt);
+    // P2-A: po dwóch odwróceniach z rzędu tabela „Pozycje” pokazuje kierunek z księgi
+    await closeAllNow();
+    await openLadder({ tps: [20], qty: 5, sl: 10 });
+    try { RP.dock().setTab('pos'); } catch { /* brak API */ }
+    RP.orders().reverseFor('NQ'); await sleep(250);
+    const row1 = norm(RP.dock().el.querySelector('tr[data-row="NQ"]')?.textContent || '');
+    rec('r2', pos()?.dir === 'Short' && row1.includes('Short') && !row1.includes('Long'), `szuflada po jednym „Odwróć” pokazuje Short: «${row1.slice(0, 60)}»`);
+    RP.orders().reverseFor('NQ'); await sleep(250);
+    const rowTxt = norm(RP.dock().el.querySelector('tr[data-row="NQ"]')?.textContent || '');
+    const dirWord = pos()?.dir === 'Long' ? 'Long' : 'Short', other = pos()?.dir === 'Long' ? 'Short' : 'Long';
+    rec('r2', !!pos() && rowTxt.includes(dirWord) && !rowTxt.includes(other), `szuflada po dwóch „Odwróć” pokazuje kierunek z księgi (${pos()?.dir}): «${rowTxt.slice(0, 80)}»`);
+    // jedna reguła kwot: ułamkowa średnia po dokładce rynkowej, potem ręczna część (toast), nagłówek, szuflada, Journal bez groszy
+    await closeAllNow();
+    await openLadder({ tps: [10, 20], qty: 10, sl: 20 });
+    const lp = () => Number(document.querySelector('.bt-ord-px')?.textContent.replace(/\s/g, '').replace(',', '.'));
+    for (let i = 0; i < 200 && Math.abs(lp() - pos().avg) < 0.5; i++) { await RP.goTo(RP.cursor() + 1); await sleep(6); }
+    setType('market'); setF('qty', 7); RP.orders().submit('buy'); await sleep(150);
+    const i0 = toastIdx();
+    RP.orders().closeQty('NQ', 3); await sleep(200);
+    const part = toastsSince(i0).find((x) => /^Część/.test(x)) || '';
+    rec('r2', pos().avg * 4 % 1 !== 0 && noCents(part), `toast części bez groszy przy ułamkowej średniej: «${part}»`);
+    rec('r2', noCents(norm(scr().querySelector('.bt-stats')?.textContent || '')), `nagłówek (konto) bez groszy: «${norm(scr().querySelector('.bt-stats')?.textContent || '').slice(0, 120)}»`);
+    rec('r2', noCents(norm(RP.dock().el.textContent || '')), 'szuflada (pozycje) bez groszy');
+    // próg auto BE z R na tickach
+    const K = await import('/js/bt-ksiega.js');
+    RP.orders().setAutoBe('NQ', { kind: 'r', value: 1.5, offsetTicks: 0 }); await sleep(100);
+    const abp = K.autoBePrice(pos());
+    rec('r2', Number.isFinite(abp) && abp * 4 % 1 === 0, `cena progu auto BE leży na siatce ticka (${abp})`);
+    // bilet: przy jednym kontrakcie podgląd celu bez „TP2 0 · TP3 0”, menu bez „Dodaj TP tutaj” dla poziomu bez ilości
+    await closeAllNow();
+    await openLadder({ tps: [10, 20, 30], qty: 1, sl: 15 });
+    setF('qty', 1); await sleep(100);
+    rec('r2', !/TP\d 0(\s|·|\)|$)/.test(prev()), `podgląd biletu bez poziomów „TP2 0”: «${prev()}»`);
+    const rightClick = async (px) => {
+      const r = host().getBoundingClientRect(), cx = r.left + 140, cy = yPx(px);
+      (document.elementFromPoint(cx, cy) || host()).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, view: window }));
+      await sleep(100);
+      return scr().querySelector('.bt-cm');
+    };
+    const st = RP.data().stream('NQ'), vc = (await import('/js/bt-swieca.js')).visibleCount(st, RP.cursor());
+    const lastPxNow = st.bars[vc - 1][4];
+    const m = await rightClick(q(pos().avg + 34));
+    rec('r2', !!m && !m.querySelector('[data-mi="tp-here"]'), `menu nie proponuje „Dodaj TP tutaj” dla poziomu bez kontraktu (${m ? [...m.querySelectorAll('[data-mi]')].map((e) => e.dataset.mi).join(',') : 'brak menu'})`);
+    key('Escape', {}, m || document.body); await sleep(60);
+    // komunikat odwrócenia po wyjściu części: „Long 2 zamknięty (trade …)”, nie wielkość całego trade'a
+    await closeAllNow();
+    await openLadder({ tps: [60], qty: 4, sl: 20 });
+    RP.orders().closeQty('NQ', 2); await sleep(150);
+    const j0 = toastIdx();
+    RP.orders().reverseFor('NQ'); await sleep(200);
+    const rv = toastsSince(j0).find((x) => /^Odwrócono/.test(x)) || '';
+    rec('r2', /^Odwrócono \d\d:\d\d:\d\d NY · (Long|Short) 2 zamknięty \(trade /.test(rv), `odwrócenie po części: «${rv}»`);
+    await closeAllNow();
+  });
+
+  // ---------- parsowanie ceny z separatorem tysięcy w szufladzie i w liście TP biletu (R2-P3-1) ----------
+  if (wide) await section('cena', async () => {
+    await closeAllNow();
+    await openLadder({ tps: [20], qty: 2, sl: 8 });
+    const avg = pos().avg;
+    // lista TP z biletu/szuflady idzie przez setTps: cena jako tekst z separatorem tysięcy i przecinkiem dziesiętnym
+    const okTps = RP.orders().setTps('NQ', [{ id: 'tp1', price: pxFmt(avg + 24), pct: 100 }]); await sleep(120);
+    rec('cena', okTps !== false && pos().tps[0]?.price === q(avg + 24), `lista TP: cena „${pxFmt(avg + 24)}” przyjęta jako ${pos().tps[0]?.price} (oczekiwane ${q(avg + 24)})`);
+    // szuflada: edycja SL ceną z separatorem tysięcy
+    const editBtn = document.querySelector('[data-dka="edit"][data-f="sl"]');
+    if (!editBtn) rec('cena', false, 'brak przycisku edycji SL w szufladzie');
+    else {
+      editBtn.click(); await sleep(100);
+      const inp = document.querySelector('input[name="lvl"]');
+      if (!inp) rec('cena', false, 'brak pola edycji SL w szufladzie');
+      else {
+        inp.value = pxFmt(avg - 6); inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await sleep(150);
+        rec('cena', pos().sl === q(avg - 6), `szuflada: SL „${pxFmt(avg - 6)}” przyjęty jako ${pos().sl} (oczekiwane ${q(avg - 6)})`);
+      }
+    }
+    await closeAllNow();
+  });
+
+  // ---------- Journal: nazwa „BE” w marginesie z ceną, nie na świecy (P2-6) ----------
+  if (wide) await section('journal', async () => {
+    for (const sd of ['buy', 'sell']) {
+      await closeAllNow();
+      await openLadder({ side: sd, tps: [60], qty: 2, sl: 40 });
+      RP.orders().setAutoBe('NQ', { kind: 'pts', value: 2, offsetTicks: 0 }); await sleep(80);
+      await stepsUntil(() => pos()?.autoBe?.done || !pos(), 400);
+      if (pos()?.autoBe?.done) break;
+    }
+    RP.orders().closeAll(); await sleep(150);
+    const tr = trades().at(-1);
+    document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+    RP.openJournalWindow(tr.id);
+    await sleep(500);
+    const jw = document.querySelector('.bt-jw');
+    rec('journal', !!jw, 'okno Journal otwarte');
+    if (jw) {
+      const lab = [...jw.querySelectorAll('svg .lvl-l.be')].map((e) => norm(e.textContent));
+      rec('journal', lab.length === 1 && /^BE [\d\s,.]+$/.test(lab[0]), `podpis BE w prawym marginesie z ceną: «${lab.join(' | ')}»`);
+      rec('journal', jw.querySelectorAll('svg .lvl-bet').length === 0, 'bez podpisu „BE” na świecach');
+      const facts = norm(jw.textContent);
+      rec('journal', / NY/.test(facts), 'godziny w Journalu z podpisem strefy');
+      await shot('journal-be-margines');
+    }
+    document.querySelectorAll('.bt-jw').forEach((x) => x.remove());
+  });
+
+  // ---------- 375: tylko minimum (bez poziomego przewijania, środki × zleceń oczekujących nie są przykryte) ----------
+  if (narrow) await section('telefon', async () => {
+    await closeAllNow();
+    await openLadder({ tps: [20, 40], qty: 10, sl: 8 });
+    const avg = pos().avg;
+    setType('limit'); setF('price', String(avg - 0.25)); setF('qty', 2); RP.orders().submit('buy'); await sleep(120);
+    setType('stop'); setF('price', String(avg + 0.5)); setF('qty', 1); RP.orders().submit('buy'); await sleep(120); setType('market');
+    await sleep(250);
+    rec('telefon', document.documentElement.scrollWidth <= innerWidth && scr().scrollWidth <= scr().clientWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth} ≤ ${innerWidth})`);
+    const tags = [...layer().querySelectorAll('.bt-tag')].filter((e) => !e.hidden);
+    rec('telefon', overlaps(tags) === 0, `plakietki bez nakładania (${overlaps(tags)})`);
+    const h = hits(layer().querySelectorAll('.bt-tag-x'));
+    rec('telefon', h.n >= 4 && h.bad.length === 0, `środki wszystkich × (także zleceń oczekujących) trafiają w siebie (${h.n}; ${h.bad.join('; ')})`);
+    await shot('telefon-oczekujace');
+    await closeAllNow();
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

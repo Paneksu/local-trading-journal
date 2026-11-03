@@ -17,7 +17,7 @@ const ROOT = H.ROOT;
 const DATA = path.resolve(process.env.TEST_CONFIG_DIR || 'R:/PROJEKTY/trading-hq-wt/backtest-dane');
 const WYNIKI = path.resolve(process.env.WYNIKI || 'R:/PROJEKTY/trading-hq-wt/backtest-wyniki');
 const PORT = Number(process.env.TEST_PORT || 4331), MOCK = Number(process.env.ATRAPA_PORT || 4399);
-const ONLY = (process.env.ONLY || 'indeks,wydajnosc,scenariusz,L').split(',');
+const ONLY = (process.env.ONLY || 'indeks,wydajnosc,scenariusz,L,171,172,173,174,175').split(',');
 const die = (m) => { console.error(m); process.exit(2); };
 const inside = (p, d) => path.resolve(p).toLowerCase().startsWith(path.resolve(d).toLowerCase() + path.sep) || path.resolve(p).toLowerCase() === path.resolve(d).toLowerCase();
 if (PORT === 4321 || MOCK === 4321) die('Port 4321 to prawdziwy dashboard: odbiór działa tylko na instancji testowej.');
@@ -116,6 +116,98 @@ try {
     ]) tagged(res, tag, name);
   }
 
+  // 1.7-1 (pozycja na wykresie): przebieg na prawdziwych świecach NQ 1s od 10:30 NY (CPI): wejście bez SL → +SL → przeciągnięcie → 50% „od pierwotnej” → BE → zamknięcie, trade w atrapie Notion
+  // z `SL` = pierwszy SL; potem odtwarzanie 100× z pozycją, liniami, plakietkami i szufladą (klatki ≤ 34 ms)
+  if (ONLY.includes('171')) {
+    const res = await page('backtest-171-e2e.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, '1.7.0-p1-e2e.png') });
+    report.p171 = res.info || {};
+    tagged(res, 'przebieg', 'backtest-171: przebieg na prawdziwych świecach (wejście bez SL, +SL, przeciągnięcie, 50% od pierwotnej, BE, zamknięcie)');
+    tagged(res, 'klatki', 'backtest-171: odtwarzanie 100× z pozycją, liniami, plakietkami i szufladą (klatki ≤ 34 ms)');
+    const pages = await A.get('/__test/pages?ds=trades');
+    const txt = (p) => (p?.rich_text || p?.title || []).map((x) => x.plain_text ?? x.text?.content ?? '').join('');
+    const mine = pages.filter((p) => Object.values(p.p).some((v) => v?.type === 'rich_text' && txt(v).includes(`[${res.info?.sessionId}/`)));
+    const pr = mine[0]?.p || {};
+    const tr = (res.info?.trades || [])[0] || {};
+    check('backtest-171: atrapa Notion: strona trade\'a z SL = pierwszy SL, R i P&L jak w sesji',
+      mine.length === 1 && pr.SL?.number === res.info?.firstSl && pr.R?.number === tr.r && pr['P&L $']?.number === tr.pnl,
+      `stron ${mine.length}, SL ${pr.SL?.number} (pierwszy ${res.info?.firstSl}), R ${pr.R?.number}/${tr.r}, P&L ${pr['P&L $']?.number}/${tr.pnl}, BE ${pr.BE?.number ?? 'brak'}`);
+  }
+
+  // 1.7-2 (dokładanie i odwracanie): wejście 2 → dokładka 2 limit → wyjście częściowe 2 → dokładka 1 market → BE → zamknięcie na prawdziwych świecach NQ 1s od 10:30 NY; atrapa Notion dostaje JEDNĄ stronę
+  // trade'a ze średnimi cenami wejścia i wyjścia, P&L i R zgodnymi z sesją; odwrócenie (dwa trade'y, zamknięty od razu do Notion); odtwarzanie 100× z pozycją z trzema dokładkami (≤ 1% klatek > 34 ms, żadna > 100 ms)
+  if (ONLY.includes('172')) {
+    const res = await page('backtest-172-e2e.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, '1.7.0-p2-e2e.png') });
+    report.p172 = res.info || {};
+    tagged(res, 'przebieg', 'backtest-172: przebieg na prawdziwych świecach (wejście, dokładka limit, wyjście częściowe, dokładka market, BE, zamknięcie, niezmiennik wyniku)');
+    tagged(res, 'odwrocenie', 'backtest-172: odwrócenie to dwa trade\'y, zamknięty od razu do Notion');
+    tagged(res, 'klatki', 'backtest-172: odtwarzanie 100× z pozycją z trzema dokładkami, markerami i rozwiniętą szufladą (≤ 1% klatek > 34 ms, żadna > 100 ms)');
+    const pages = await A.get('/__test/pages?ds=trades');
+    const txt = (p) => (p?.rich_text || p?.title || []).map((x) => x.plain_text ?? x.text?.content ?? '').join('');
+    const mine = pages.filter((p) => Object.values(p.p).some((v) => v?.type === 'rich_text' && txt(v).includes(`[${res.info?.sessionId}/`)));
+    const idOf = (p) => Object.values(p).map((v) => (v?.type === 'rich_text' ? txt(v) : '')).join(' ').match(/\[bt-[a-z0-9]+\/(t\d+)\]/)?.[1];
+    const byId = Object.fromEntries(mine.map((p) => [idOf(p.p), p.p]));
+    const want = res.info?.trades || [];
+    const bad = [];
+    for (const tr of want) {
+      const pr = byId[tr.id];
+      if (!pr) { bad.push(`${tr.id}: brak strony`); continue; }
+      if (pr['Cena wejścia']?.number !== tr.entryPrice || pr['Cena wyjścia']?.number !== tr.exitPrice || pr['P&L $']?.number !== tr.pnl || (tr.r != null && pr.R?.number !== tr.r)) {
+        bad.push(`${tr.id}: wejście ${pr['Cena wejścia']?.number}/${tr.entryPrice}, wyjście ${pr['Cena wyjścia']?.number}/${tr.exitPrice}, P&L ${pr['P&L $']?.number}/${tr.pnl}, R ${pr.R?.number}/${tr.r}`);
+      }
+    }
+    check('backtest-172: atrapa Notion: po jednej stronie na pozycję, średnie ceny wejścia i wyjścia, P&L i R jak w sesji',
+      want.length === 3 && mine.length === 3 && bad.length === 0 && new Set(Object.keys(byId)).size === 3,
+      `${bad.length ? 'NIEZGODNE: ' + bad.join('; ') + ' | ' : ''}stron ${mine.length} z ${want.length} oczekiwanych (${want.map((x) => x.id).join(', ')})`);
+  }
+
+  // 1.7-3 (auto BE i presety): preset „Runner” (SL 15 pkt, TP 3R, auto BE 1R) na prawdziwych świecach NQ 1s: wejście jednym kliknięciem, wyzwolenie progu, wyjście po BE (be = true, r = 0, pnl = 0),
+  // pole „BE” strony w atrapie Notion = cena progu; potem odtwarzanie 100× z uzbrojonym progiem (≤ 1% klatek > 34 ms, żadna > 100 ms)
+  if (ONLY.includes('173')) {
+    const res = await page('backtest-173-e2e.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, '1.7.0-p3-e2e.png') });
+    report.p173 = res.info || {};
+    tagged(res, 'przebieg', 'backtest-173: preset Runner na prawdziwych świecach (wejście jednym kliknięciem, wyzwolenie auto BE, wyjście po BE: be = true, r = 0)');
+    tagged(res, 'klatki', 'backtest-173: odtwarzanie 100× z uzbrojonym auto BE, znacznikiem progu i kolumną szuflady (≤ 1% klatek > 34 ms, żadna > 100 ms)');
+    const pages = await A.get('/__test/pages?ds=trades');
+    const txt = (p) => (p?.rich_text || p?.title || []).map((x) => x.plain_text ?? x.text?.content ?? '').join('');
+    const mine = pages.filter((p) => Object.values(p.p).some((v) => v?.type === 'rich_text' && txt(v).includes(`[${res.info?.sessionId}/`)));
+    const pr = mine[0]?.p || {};
+    const tr = (res.info?.trades || [])[0] || {};
+    check('backtest-173: atrapa Notion: strona trade\'a z polem BE = cena progu auto BE (nie cena wejścia), R i P&L jak w sesji',
+      mine.length === 1 && Number.isFinite(tr.beAt) && pr.BE?.number === tr.beAt && pr.BE?.number !== tr.entryPrice && pr.R?.number === tr.r && pr['P&L $']?.number === tr.pnl,
+      `stron ${mine.length}, BE ${pr.BE?.number} (próg ${tr.beAt}, wejście ${tr.entryPrice}), R ${pr.R?.number}/${tr.r}, P&L ${pr['P&L $']?.number}/${tr.pnl}`);
+  }
+
+  // 1.7-4 (prawy klik i nawigacja): krok 15s na wykresie 5m (p95 ≤ 16 ms), prawy klik → Sprzedaj limit po cenie kliknięcia z presetu (wypełnienie po tej cenie), skok do ceny i do daty
+  // ~4 dni handlowych w przód z otwartą pozycją (≤ 1,5 s do wyniku), trasa find-price porównana z przeliczeniem na surowych świecach
+  if (ONLY.includes('174')) {
+    const res = await page('backtest-174-e2e.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, '1.7.0-p4-e2e.png') });
+    report.p174 = res.info || {};
+    tagged(res, 'krok', 'backtest-174: krok 15s na wykresie 5m, p95 czesci synchronicznej kroku ≤ 16 ms');
+    tagged(res, 'menu', 'backtest-174: prawy klik na prawdziwych świecach → limit po cenie kliknięcia z presetu, wypełnienie po tej cenie');
+    tagged(res, 'cena', 'backtest-174: skok do ceny 5 dni w przód z otwartą pozycją (≤ 1,5 s, kursor na końcu świecy z dotknięciem)');
+    tagged(res, 'data', 'backtest-174: skok do daty ~4 dni w przód z otwartą pozycją (≤ 1,5 s)');
+    tagged(res, 'cena20', 'backtest-174: skok do ceny z limitem 20 dni i otwartą pozycją (≤ 5 s), najgorszy przypadek w przeglądarce ≤ 8,5 s');
+    tagged(res, 'notion', 'backtest-174: trade zamknięty po drodze w skoku trafia do atrapy Notion, komunikat Po drodze zostaje');
+  }
+
+  // 1.7-5 (kilka TP z procentem wielkości): preset „Drabina” (SL 15 pkt, TP 1R 50% / 2R 30% / 6R reszta, auto BE 2R) na prawdziwych świecach NQ 1s: wejście jednym kliknięciem, trafienie TP1 i TP2,
+  // auto BE, wyjście reszty po BE; atrapa Notion: jedna strona na trade ze średnią ceną wyjścia, łącznym wynikiem i polem TP = ostatni cel drabiny; potem odtwarzanie 100× z czterema poziomami
+  // (≤ 1% klatek > 34 ms, żadna > 100 ms)
+  if (ONLY.includes('175')) {
+    const res = await page('backtest-175-e2e.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, '1.7.0-p5-e2e.png') });
+    report.p175 = res.info || {};
+    tagged(res, 'przebieg', 'backtest-175: preset Drabina na prawdziwych świecach (wejście jednym kliknięciem, TP1 i TP2, auto BE, wyjście po BE, wynik łączny)');
+    tagged(res, 'klatki', 'backtest-175: odtwarzanie 100× z czterema poziomami TP, progiem auto BE i szufladą (≤ 1% klatek > 34 ms, żadna > 100 ms)');
+    const pages = await A.get('/__test/pages?ds=trades');
+    const txt = (p) => (p?.rich_text || p?.title || []).map((x) => x.plain_text ?? x.text?.content ?? '').join('');
+    const mine = pages.filter((p) => Object.values(p.p).some((v) => v?.type === 'rich_text' && txt(v).includes(`[${res.info?.sessionId}/`)));
+    const pr = mine[0]?.p || {};
+    const tr = (res.info?.trades || [])[0] || {};
+    check('backtest-175: atrapa Notion: jedna strona trade\'a z drabiną: cena wyjścia = średnia ważona wyjść, P&L łączny, pole TP = ostatni cel, R jak w sesji',
+      mine.length === 1 && Number.isFinite(tr.exitPrice) && pr['Cena wyjścia']?.number === tr.exitPrice && pr['P&L $']?.number === tr.pnl && pr.TP?.number === tr.tp && pr.R?.number === tr.r && pr['Cena wejścia']?.number === tr.entryPrice,
+      `stron ${mine.length}, wyjście ${pr['Cena wyjścia']?.number}/${tr.exitPrice}, P&L ${pr['P&L $']?.number}/${tr.pnl}, TP ${pr.TP?.number}/${tr.tp}, R ${pr.R?.number}/${tr.r}`);
+  }
+
   if (ONLY.includes('scenariusz')) {
     const res = await page('backtest-odbior.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, 'H1-scenariusz.png') });
     report.scenario = res.info || {};
@@ -164,8 +256,8 @@ try {
   report.results = results;
   writeFileSync(path.join(WYNIKI, 'H1-e2e.json'), JSON.stringify(report, null, 1));
   const failed = results.filter((r) => !r.ok).length;
-  // trzy liczby (zasada „dowód, nie status”): pominięte to sekcje spoza ONLY (domyślnie wszystkie cztery są uruchamiane, więc 0)
-  const skippedSec = ['indeks', 'wydajnosc', 'scenariusz', 'L'].filter((x) => !ONLY.includes(x));
+  // trzy liczby (zasada „dowód, nie status”): pominięte to sekcje spoza ONLY (domyślnie wszystkie dziewięć sekcji jest uruchamianych, więc 0)
+  const skippedSec = ['indeks', 'wydajnosc', 'scenariusz', 'L', '171', '172', '173', '174', '175'].filter((x) => !ONLY.includes(x));
   console.log(`\n${results.length - failed} passed, ${failed} failed, ${skippedSec.length} skipped${skippedSec.length ? ` (${skippedSec.join(', ')})` : ''} (procesy ${pids.join(', ')} zatrzymane)`);
   process.exit(failed ? 1 : 0);
 }

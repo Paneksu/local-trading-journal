@@ -1,10 +1,12 @@
 // Dane przykładowe dla przewodnika „Jak działa dziennik”. Ten sam kształt co odpowiedź /api/data (pola po rolach, kolory opcji, typy pól),
 // generowane w przeglądarce z ustalonym ziarnem, więc każdy przewodnik wygląda tak samo. Nic nie trafia do Notion.
 // English: deterministic demo dataset in the /api/data shape, generated in the browser for the guided tour.
+import { wallToMs, appTz, dayKeyIn } from './strefa.js';
 
 const COLORS = ['default', 'gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red'];
 const opts = (names) => Object.fromEntries(names.map((n, i) => [n, COLORS[(i + 5) % COLORS.length]]));
 const pad = (n) => String(n).padStart(2, '0');
+// klucz dnia kalendarzowego (data zbudowana z lokalnych składników, więc czytamy te same składniki)
 const keyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 export function demoPayload(lang = 'pl') {
@@ -56,9 +58,12 @@ export function demoPayload(lang = 'pl') {
   ];
 
   const trades = [];
-  const iso = (key, min) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, Math.floor(min / 60), min % 60).toISOString(); };
+  // 3.11.2026: godziny przykładów to zegar strefy aplikacji (domyślnie Nowy Jork: otwarcie sesji 9:30)
+  const iso = (key, min) => new Date(wallToMs(key, `${pad(Math.floor(min / 60))}:${pad(min % 60)}`, appTz())).toISOString();
   for (let back = 0; back < 120; back++) {
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+    // dzień „dziś” według zegara strefy aplikacji (domyślnie NY), nie komputera
+    const [ty, tm, td] = dayKeyIn(now.getTime(), appTz()).split('-').map(Number);
+    const day = new Date(ty, tm - 1, td - back);
     const wd = day.getDay();
     if (wd === 0 || wd === 6 || rnd() < 0.25) continue;
     const key = keyOf(day);
@@ -68,14 +73,14 @@ export function demoPayload(lang = 'pl') {
       const typ = k < 0.62 ? 'Live' : k < 0.86 ? 'Backtest' : 'Niewzięty';
       const win = rnd() < (i === 0 ? 0.6 : 0.45);
       const r = win ? Math.round((0.6 + rnd() * 2.4) * 10) / 10 : rnd() < 0.12 ? 0 : -Math.round((0.5 + rnd() * 0.6) * 10) / 10;
-      const minute = rnd() < 0.85 ? 15 * 60 + 30 + Math.floor(rnd() * 120) : 9 * 60 + Math.floor(rnd() * 300);
+      const minute = rnd() < 0.85 ? 9 * 60 + 30 + Math.floor(rnd() * 120) : 3 * 60 + Math.floor(rnd() * 300);
       const dur = 3 + Math.floor(rnd() * (win ? 60 : 30));
       const instrument = pick(instruments), dir = pick(['Long', 'Short']), setup = pick(setups);
       trades.push(page({
         title: rnd() < 0.5 ? `${instrument} ${dir.toLowerCase()} ${setup}` : '',
         typ: sel(typ, colors.trades.typ), date: iso(key, minute + i * 25), exit: typ === 'Niewzięty' ? null : iso(key, minute + i * 25 + dur),
         instrument: sel(instrument, colors.trades.instrument), dir: sel(dir, colors.trades.dir), setup: sel(setup, colors.trades.setup),
-        session: sel(minute < 14 * 60 ? sessions[1] : sessions[2], colors.trades.session),
+        session: sel(minute < 8 * 60 ? sessions[1] : sessions[2], colors.trades.session),
         r, pnl: typ === 'Live' ? Math.round(r * 240) : null, konta: typ === 'Live' ? [konta[rnd() < 0.7 ? 0 : 1]._id] : [], chart: null,
         manual: null, reason: typ === 'Niewzięty' ? sel(pick(reasons), colors.trades.reason) : null, notes: pick(notes), _imgs: 0,
       }, new Date(`${key}T12:${pad(10 + i)}:00`)));
@@ -96,7 +101,7 @@ export function applyDemoWrite(payload, kind, id, body) {
   row._edited = now;
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   if (kind === 'trades') {
-    const dt = (d, tm) => (d ? (tm ? new Date(`${d}T${tm}:00`).toISOString() : d) : null);
+    const dt = (d, tm) => (d ? (tm ? new Date(wallToMs(d, tm, body.tz || appTz())).toISOString() : d) : null);
     if (has('name')) row.title = body.name;
     if (has('typ')) row.typ = sel('trades', 'typ', body.typ);
     if (has('date')) row.date = dt(body.date, body.time);

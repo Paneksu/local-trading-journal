@@ -6,6 +6,7 @@ import { dayNum, fromDayNum, weekdayOf, parseTf, SESSIONS, sessionBounds } from 
 import { validateFilter } from './bt-filtr.js';
 import { visibleCount, isReplayTf } from './bt-swieca.js';
 import { t } from './i18n.js';
+import { sanitizePresets } from './bt-presety.js';
 
 // ---- czas Nowego Jorku ----
 const pad = (n) => String(n).padStart(2, '0');
@@ -174,6 +175,10 @@ export const DEFAULT_SKROTY = {
   drawEntry: 'D',
   // M (31.10.2026): SL na BE i zamknięcie połowy pozycji z klawiatury (wcześniej tylko myszą); nazwy bez „key” (sanitizeSettings)
   be: 'E', half: 'H',
+  // 1.7-2 (G-2.5): Odwróć pozycję (zamknięcie i pozycja przeciwna tej samej wielkości); podpowiedź skrótu niesie ten sam opis co przycisk
+  reverse: 'R',
+  // 1.7-4 (G-4.5): skok do daty i do ceny (okna), skróty domyślne G i P; nazwy bez „key” (sanitizeSettings)
+  goDate: 'G', goPrice: 'P',
 };
 // Klawisze zajęte przez rysunki (Escape, Ctrl+Z, strzałki: rysunki.js) i podgląd wykresu (strzałki, +, =, −: podglad.js) oraz pola formularzy.
 // L (31.10.2026): Ctrl+J otwiera Journal (jak w FX Replay), więc nie może być skrótem skoku ani akcji.
@@ -236,8 +241,25 @@ const cloneJson = (x) => JSON.parse(JSON.stringify(x));
 export const DEFAULT_FAV_TFS = ['15s', '1m', '5m', '15m', '1h'];
 export const FAV_TFS_MAX = 12;
 export function btDefaults() {
-  return { jumps: cloneJson(DEFAULT_JUMPS), skroty: { ...DEFAULT_SKROTY }, startTime: '09:00', risk: { mode: 'usd', value: 500 }, speed: 100, templates: [], sessionsCopy: [], favTfs: [...DEFAULT_FAV_TFS] };
+  return { jumps: cloneJson(DEFAULT_JUMPS), skroty: { ...DEFAULT_SKROTY }, startTime: '09:00', risk: { mode: 'usd', value: 500 }, speed: 100, templates: [], sessionsCopy: [], favTfs: [...DEFAULT_FAV_TFS], presets: [], activePreset: null, beOffset: 0, goPriceDays: GO_PRICE_DAYS.dflt };
 }
+// ---- 1.7-4: krok niezależny od interwału wykresu i limit skoku do ceny ----
+// [U] 1.11.2026 «4 Prawy klik i nawigacja (limit/stop po cenie kliknięcia, krok niezależny od interwału, skok do ceny i do daty)».
+// Krok sesji (doc.stepTf) to jeden z interwałów replayu albo null („= wykres”: krok o świecę aktywnego wykresu). Zapis sesji 1.6.x nie ma pola, więc znaczy „= wykres”.
+export const STEP_TFS = ['1s', '5s', '15s', '1m', '5m', '15m'];
+export const sanitizeStepTf = (v) => (typeof v === 'string' && isReplayTf(v) ? v : null);
+export const stepTfFor = (stepTf, chartTf) => sanitizeStepTf(stepTf) || chartTf;
+// Limit dni handlowych skoku do ceny (ustawienie bt.goPriceDays): liczba całkowita 1–20, domyślnie 5 (FX Replay: „Max time to skip forward”)
+export const GO_PRICE_DAYS = { min: 1, max: 20, dflt: 5 };
+// runda 2 (przegląd kodu P3-5): tekst ceny z pola okna „Skocz do ceny” → zapis z kropką dziesiętną ('18310.25'). Spacje (także twarde), apostrofy i separator tysięcy według języka (en: przecinek, pl: kropka tylko przy obu separatorach).
+export function priceText(raw, loc = 'pl-PL') {
+  let x = String(raw ?? '').replace(/[\s’']/g, '');
+  const c = x.lastIndexOf(','), d = x.lastIndexOf('.');
+  if (c >= 0 && d >= 0) x = c > d ? x.replace(/\./g, '').replace(',', '.') : x.replace(/,/g, '');
+  else if (c >= 0) x = /^en/i.test(loc) && /^\d{1,3}(,\d{3})+$/.test(x) ? x.replace(/,/g, '') : x.replace(',', '.');
+  return x;
+}
+export const sanitizeGoDays = (v) => (Number.isInteger(v) && v >= GO_PRICE_DAYS.min && v <= GO_PRICE_DAYS.max ? v : GO_PRICE_DAYS.dflt);
 function sanitizeCel(c) {
   if (!c || typeof c !== 'object') return null;
   switch (c.kind) {
@@ -288,6 +310,11 @@ export function sanitizeBt(v) {
     d.templates = [];
     for (const e of o.templates.map(templateOf).filter(Boolean).slice(0, TEMPLATES_MAX)) if (templatesSize([...d.templates, e]) <= TEMPLATES_BUDGET) d.templates.push(e);
   }
+  // 1.7-3: presety zleceń (zły wpis odpada bez psucia pozostałych), aktywny preset tylko istniejący, domyślny offset auto-BE w tickach (0..20)
+  if (Array.isArray(o.presets)) d.presets = sanitizePresets(o.presets);
+  if (typeof o.activePreset === 'string' && d.presets.some((p) => p.id === o.activePreset)) d.activePreset = o.activePreset;
+  if (typeof o.beOffset === 'number' && Number.isInteger(o.beOffset) && o.beOffset >= 0 && o.beOffset <= 20) d.beOffset = o.beOffset;
+  d.goPriceDays = sanitizeGoDays(o.goPriceDays);
   if (Array.isArray(o.sessionsCopy)) d.sessionsCopy = o.sessionsCopy.filter(copyEntryOk).slice(0, COPY_SESSIONS);
   return d;
 }

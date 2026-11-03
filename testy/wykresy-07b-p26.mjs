@@ -169,7 +169,7 @@ export default ({ test, H, assert, ROOT }) => {
     const lv = tradeLevels({ entryPrice: 100, be: 101 }, { be: 'b', fg2: 'f2', fg: 'f', loss: 'l', profit: 'p' });
     assert.deepEqual(lv.find((l) => l.price === 101), { price: 101, color: 'b', title: 'BE' }, 'edytor: linia BE w kolorze --be');
     const pod = src('public/js/podglad.js');
-    assert.match(pod, /hline\(be, 'be'\)/, 'podgląd: linia BE na pozycji');
+    assert.match(pod, /hline\(be, 'be'/, 'podgląd: linia BE na pozycji (od odbioru 1.7.0 z nazwą „BE” w prawym marginesie)');
     assert.match(src('public/styles.css'), /svg \.lvl\.be \{[^}]*var\(--be\)/, 'kolor BE z tokenu --be');
   });
 
@@ -201,7 +201,7 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(Z.setChartTzOverride(''), 'Europe/Warsaw', 'pusta wartość wraca do strefy z Ustawień');
     Z.setChartTzOverride('America/New_York');
     Z.setChartTzDefault('Nie/Ma');
-    assert.equal(Z.chartTz(), Z.BROWSER_TZ, 'zmiana w Ustawieniach zdejmuje nadpisanie; zła strefa = strefa przeglądarki');
+    assert.equal(Z.chartTz(), 'America/New_York', 'zmiana w Ustawieniach zdejmuje nadpisanie; zła strefa = domyślna strefa aplikacji (od 3.11.2026 Nowy Jork, nie strefa przeglądarki)');
     Z.setChartTzDefault('');
     // formatowanie w wybranej strefie
     const t0 = Date.UTC(2026, 9, 26, 13, 30) / 1000;

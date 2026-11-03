@@ -40,7 +40,15 @@ export default ({ test, H, assert, ROOT }) => {
     for (const k of ['pool', 'dayIdx', 'days']) assert.ok(!(k in d), `${k} znika z modelu`);
     assert.equal(d.cursor, 1710854100, 'kursor tam, gdzie był');
     assert.equal(d.hw, 1710854100);
-    assert.deepEqual(d.book, src.book, 'książka zleceń bez zmian (pozycja i zlecenie)');
+    // 1.7-1: księga przechodzi migrateBook (v: 3, fills, tps, hist), a lustro pozycji i pola zleceń z 1.6 zostają bez zmian
+    assert.equal(d.book.v, 3);
+    for (const k of Object.keys(src.book.positions)) {
+      const a = src.book.positions[k], b = d.book.positions[k];
+      if (!a) { assert.equal(b, null); continue; }
+      for (const f of ['id', 'instrument', 'dir', 'qty', 'openQty', 'entryT', 'entryPrice', 'sl', 'tp', 'be', 'orderId']) if (a[f] !== undefined) assert.deepEqual(b[f], a[f], `pozycja ${k}.${f} bez zmian`);
+    }
+    assert.deepEqual(d.book.orders.map(({ intent, tps, hist, ...o }) => o), src.book.orders, 'zlecenia oczekujące bez zmian (poza intent, tps, hist)');
+    assert.equal(d.book.hw, src.book.hw);
     assert.deepEqual(d.trades, src.trades, "trade'y bez zmian");
     assert.deepEqual(d.layout, src.layout, 'układ bez zmian');
     assert.deepEqual(d.def.filter, src.def.filter, 'filtr zostaje (skok „następny dzień z filtra”)');

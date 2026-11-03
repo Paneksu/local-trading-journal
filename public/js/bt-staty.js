@@ -24,6 +24,8 @@ export function summary(trades) {
   return {
     n: c.n, wins: c.wins, losses: c.losses, be: c.be,
     wr: c.winRate, avgR: c.avgR, sumR: c.nR ? c.sumR : 0, nR: c.nR,
+    // 1.7-1: trade bez SL nie ma R (P5): liczy się do $ i liczby trade'ów, nie do metryk R; `noR` to licznik do notki „bez R: n”
+    noR: trades.filter((t) => !isNum(t.r)).length,
     few: c.n < MIN_N,
   };
 }
@@ -140,7 +142,7 @@ function fromNotion(t) {
 }
 // Trade'y Backtest: z Notion + z lokalnych plików sesji. Duplikat po znaczniku [sesja/trade] → wygrywa lokalny (ma powód wyjścia).
 // K (31.10.2026): bez kolejności losowej i ukrytej daty ([U] «Filtr jako skok»), więc każdy zamknięty trade sesji wchodzi do statystyk (zastępuje review G #3).
-const closedLocal = (tr) => !!tr && isNum(tr.r) && isNum(tr.entryT);
+const closedLocal = (tr) => !!tr && (isNum(tr.pnl) || isNum(tr.r)) && isNum(tr.entryT);
 export function mergeBacktest(notionTrades, sessions) {
   const out = [];
   const seen = new Set();

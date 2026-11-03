@@ -2,6 +2,7 @@
 // Logika widoku to czyste funkcje (newsTodayView, earnTodayView); sklep (createNewsCards) pobiera dane z lokalnego serwera raz, potem co minutę
 // przelicza widok BEZ zapytań do sieci i odświeża dane najwyżej co kwadrans albo po zmianie dnia lub strefy. Kolory tylko z tokenów (NEWS_TOKENS, EARN_TOKENS).
 // English: panel cards (today's USD news, earnings) and their settings sections; pure view functions plus a store that refetches rarely and recomputes every minute.
+import { tzShort } from './strefa.js';
 import * as F from './format.js';
 import { t, locale } from './i18n.js';
 import { eventName, impWord, sessionText, NEWS_TOKENS, EARN_TOKENS, NEWS_IMPS, EARN_CLASSES, normNews } from './newsy.js';
@@ -60,6 +61,8 @@ export function newsCardHtml(v, { tz, error = false, loaded = true, limit = 0 } 
   for (const b of v.banners) h += `<p class="nws-ban ${b.kind}">${esc(b.text)}</p>`;
   if (v.rows.length) {
     const pk = pickRows(v.rows, limit);
+    // odbiór r2 P2-1 [U] 3.11.2026 «Wszędzie, z opisem „NY” (Recommended)»: godziny w karcie mają podpis strefy aplikacji
+    h += `<p class="nws-tz">${esc(t('godziny'))} <span class="tz-tag" title="${esc(t('Strefa czasu z Ustawień'))}">${esc(tzShort(tz || undefined))}</span></p>`;
     h += `<ul class="nws-list${limit ? ' compact' : ''}">${pk.shown.map((r) => `<li class="${r.past ? 'past' : ''}${r.next ? ' next' : ''}"${limit ? ` title="${esc(r.name)}"` : ''}><span class="nws-t">${esc(f.format(new Date(r.t * 1000)))}</span>${dot(NEWS_TOKENS[r.imp])}<span class="nws-n"><span class="sr">${esc(impWord(r.imp))}: </span>${esc(r.name)}${r.tentative ? ` <small class="muted">${L('godzina niepewna')}</small>` : ''}</span></li>`).join('')}</ul>${moreBtn(pk.hidden)}`;
   } else if (!v.banners.length) h += `<p class="note">${error ? L('Nie udało się wczytać newsów.') : v.empty ? L('Brak newsów na dziś.') : L('Dziś bez newsów o wybranych wagach.')}</p>`;
   return h;

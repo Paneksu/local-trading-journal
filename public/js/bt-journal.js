@@ -5,7 +5,7 @@
 // L (31.10.2026): panel odchudzony do wyniku, setupu i przycisku „Journal” (notatka i rysunki w klasycznym oknie trade'a, bt-journal-okno.js); trade z prowizją (pnl netto, fee).
 // English: closed-position → Trade mapping and the small journaling panel (result + setup + Journal button); Enter saves, Esc leaves the trade to describe.
 import { t, locale } from './i18n.js';
-import { esc, fmtR, fmtMoney } from './format.js';
+import { esc, fmtR, fmtUsdFull as fmtMoney } from './format.js';
 import { excursions } from './bt-wypelnienia.js';
 import { netResult } from './bt-konto.js';
 import { SETUP_RE, SETUP_MAX, listOf } from './bt-notion.js';
@@ -29,9 +29,17 @@ export function toTrade(position, { day, contract = null, stream = null, drawing
   const ex = stream ? excursions(position, stream) : { maeR: null, mfeR: null };
   return {
     id: id || nextTradeId(trades), day, instrument: position.instrument, contract, dir: position.dir, qty: position.qty,
-    entryT: position.entryT, entryPrice: position.entryPrice, sl0: position.sl0, sl: position.sl, tp: position.tp ?? null, be: !!position.be,
+    // 1.7.0 (model pozycji §2.6): entryPrice = średnia ważona wszystkich wejść, sl0 = PIERWSZY postawiony SL (P5, null gdy SL nigdy nie było), sl = SL w chwili zamknięcia (P6: może być null),
+    // tp = ostatni cel drabinki (null po usunięciu), r = null bez SL; fills, log, tps, sl0T i rUsd niosą zdarzenia pozycji (czytniki liczą brakujące fills w locie)
+    entryT: position.entryT, entryPrice: res.entryAvg ?? position.entryPrice, sl0: position.sl0 ?? null, sl: position.sl ?? null, tp: position.tp ?? null, be: !!position.be,
+    // beAt = cena, przy której trade stał się bez ryzyka (próg auto-BE albo cena bieżąca przy ręcznym BE): do pola „BE” w Notion i do linii BE w Journalu
+    beAt: position.beAt ?? null,
     exits: (position.exits || []).map((x) => ({ ...x })), exitT: res.exitT, exitPrice: res.exitPrice,
     r: res.r, pnl: res.pnl, fee: res.fee, maeR: ex.maeR, mfeR: ex.mfeR,
+    fills: (position.fills || []).map((x) => ({ ...x })), log: (position.log || []).map((x) => ({ ...x })), tps: (position.tps || []).map((x) => ({ ...x })),
+    sl0T: position.sl0T ?? null, rUsd: position.rUsd ?? null, autoBe: position.autoBe ?? null,
+    // 1.7-2: odwrócenie = dwa trade'y połączone odnośnikiem (reverseOf = id trade'a zamkniętego odwróceniem); do Notion nie idzie (brak pola)
+    ...(position.reverseOf ? { reverseOf: position.reverseOf } : {}),
     setup: '', notes: '', journal: 'todo', drawings, notion: { id: null, state: 'pending', error: '' },
   };
 }
@@ -92,7 +100,11 @@ export function mountJournal(host, { trade, setups = [], known = [], onSave = ()
   const px = pxText;
   const opts = setups.map((s) => `<option value="${esc(s)}"></option>`).join('');
   const dl = 'btjr-' + String(trade.id).replace(/\W/g, '');
+  // < 640 px: panel zwinięty do jednego wiersza przy dolnej krawędzi wykresu („Journal trade'a #n · Uzupełnij · Później”), rozwijany stuknięciem; szerzej bez zmian
+  const narrowNow = () => typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
+  el.dataset.compact = narrowNow() ? 'collapsed' : '';
   el.innerHTML = `
+    <div class="bt-jr-bar"><span class="bt-jr-bt" data-jr="expand">${esc(t("Journal trade'a #{n}", { n: String(trade.id).replace(/^t/, '') }))}</span><button type="button" class="btn sm" data-jr="expand">${esc(t('Uzupełnij'))}</button><button type="button" class="btn sm" data-jr="skip">${esc(t('Później'))}</button></div>
     <div class="bt-jr-h"><b>${esc(trade.instrument)} ${esc(trade.dir === 'Short' ? t('Short') : t('Long'))} × ${esc(trade.qty)}</b>
       <span class="bt-jr-r ${cl(r)}">${r == null ? '–' : esc(fmtR(r))}</span><span class="bt-jr-usd ${cl(usd)}">${usd == null ? '' : esc(fmtMoney(usd))}</span></div>
     <p class="bt-jr-px note">${esc(px(trade.entryPrice))} → ${esc(px(trade.exitPrice))} · ${esc(fmtTime(trade.exitT))}</p>
@@ -103,7 +115,9 @@ export function mountJournal(host, { trade, setups = [], known = [], onSave = ()
   const f = (n) => el.querySelector(`[name="${n}"]`);
   const hint = el.querySelector('.bt-jr-hint');
   let closed = false, corner = 'left';
+  const expand = () => { if (el.dataset.compact !== 'collapsed') return; el.dataset.compact = 'expanded'; place(); };
   const place = () => {
+    if (el.dataset.compact === 'collapsed') { el.dataset.v = 'bottom'; return; }
     const w = el.offsetWidth || 300, hw = host.clientWidth || 0;
     corner = pickCorner({ hostW: hw, panelW: w, cursorX: cursorX() });
     el.dataset.corner = corner;
@@ -136,10 +150,10 @@ export function mountJournal(host, { trade, setups = [], known = [], onSave = ()
   f('setup').addEventListener('focus', () => { if (!f('setup').hasAttribute('aria-invalid')) hint.textContent = t('Enter zapisuje, Esc zostawia do opisania'); });
   el.addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-jr]');
-    if (b?.dataset.jr === 'save') save(); else if (b?.dataset.jr === 'skip') skip();
+    if (b?.dataset.jr === 'expand') { expand(); f('setup').focus(); } else if (b?.dataset.jr === 'save') save(); else if (b?.dataset.jr === 'skip') skip();
     // setup wpisany w panelu idzie do Journala (bez zapisu; zapis w oknie)
     else if (b?.dataset.jr === 'journal') { const s = f('setup').value.trim(); close(); onJournal?.({ setup: s }); }
   });
   place();
-  return { close, el, corner: () => corner, place, isOpen: () => !closed, tradeId: trade.id };
+  return { close, el, corner: () => corner, place, expand, isOpen: () => !closed, tradeId: trade.id };
 }

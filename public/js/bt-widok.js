@@ -2,7 +2,7 @@
 // „Statystyki” (miejsce na pakiet G). Działa bez Notion: dane z lokalnego serwera (jak kalendarz). Otwarta sesja wraca po przeładowaniu strony (OPEN_KEY).
 // English: Backtest tab: session list, new-session form and replay launcher; works without Notion.
 import { t } from './i18n.js';
-import { esc, fmtR, fmtMoney, dateTimeShort, shortDate } from './format.js';
+import { esc, fmtR, fmtUsdFull as fmtMoney, dateTimeShort, shortDate } from './format.js';
 import { nyDayOf } from './bt-sesja.js';
 import { createSessionClient } from './bt-klient.js';
 import { openKreator } from './bt-kreator.js';
@@ -15,10 +15,11 @@ function ago(isoStr) {
   if (!isoStr) return '–';
   const d = new Date(isoStr);
   if (Number.isNaN(d.getTime())) return '–';
-  return dateTimeShort(d); // H2 #7: język aplikacji (getLang), nie przeglądarki
+  // H2 #7: język aplikacji (getLang), nie przeglądarki
+  return dateTimeShort(d, new Date(), { withTz: true });
 }
 
-export function createBacktestView({ client = createSessionClient(), getAccounts = () => [], replayRoot = () => document.body, storage = globalThis.localStorage, open = openReplay, getSettings = () => null, onTemplates = () => {}, onFavTfs = () => {}, onRemoved = () => {}, confirm = (o) => confirmDialog(o), notify = (m, o) => toast(m, o), getSetups = () => [], onStats = null, onList = () => {}, getTrades = () => [], loadFeatures = null } = {}) {
+export function createBacktestView({ client = createSessionClient(), getAccounts = () => [], replayRoot = () => document.body, storage = globalThis.localStorage, open = openReplay, getSettings = () => null, onTemplates = () => {}, onFavTfs = () => {}, onPresets = null, onRemoved = () => {}, confirm = (o) => confirmDialog(o), notify = (m, o) => toast(m, o), getSetups = () => [], onStats = null, onList = () => {}, getTrades = () => [], loadFeatures = null } = {}) {
   let root = null, mode = 'list', kreator = null, replay = null, seq = 0, stats = null;
 
   // N1 (1.6.0): bez świec na dysku lista mówi, skąd je wziąć (głęboki link do Ustawień → Źródła danych), zamiast „Utwórz pierwszą”
@@ -83,7 +84,7 @@ export function createBacktestView({ client = createSessionClient(), getAccounts
   }
   function openSession(id) {
     if (replay) return;
-    replay = open(replayRoot(), { sessionId: id, client, storage, getSettings, onFavTfs, getSetups, onStats: onStats || statsFromReplay, onReopen: (sid) => openSession(sid), onClose: () => { replay = null; refresh(); } });
+    replay = open(replayRoot(), { sessionId: id, client, storage, getSettings, onFavTfs, getSetups, onStats: onStats || statsFromReplay, onReopen: (sid) => openSession(sid), onPresets, onClose: () => { replay = null; refresh(); } });
   }
 
   // [U] 1.11.2026 «oraz dodaj mozliwosc usuniecia sesji bo aktualnie sie nie da»: okno potwierdzenia z liczbami i ostrzeżeniem o niewysłanych trade'ach, usunięcie odwracalne („Cofnij”)

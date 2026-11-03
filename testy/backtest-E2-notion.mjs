@@ -111,7 +111,8 @@ export default ({ test, H, assert, ROOT }) => {
       assert.equal(p1.p.Setup.select.name, 'Breakout');
       assert.equal(p1.p.Sesja.select.name, 'Nowy Jork', 'sesja z godziny wejścia (9:55 NY)');
       assert.equal(p1.p.Data.date.start.slice(0, 16), '2024-03-12T09:55');
-      assert.equal(p1.p.Data.date.time_zone, 'America/New_York');
+      // Notion oddaje przy odczycie start Z PRZESUNIĘCIEM i time_zone: null (jeden odczyt z prawdziwego Notion 3.11.2026), więc strefę zapisu sprawdzamy po przesunięciu (NY: −04:00/−05:00, Warszawa: +01:00/+02:00)
+      assert.match(p1.p.Data.date.start, /-0[45]:00$/);
       assert.equal(p1.p['Wyjście'].date.start.slice(0, 16), '2024-03-12T10:00');
       assert.deepEqual([p1.p.R.number, p1.p['P&L $'].number, p1.p['Cena wejścia'].number, p1.p['Cena wyjścia'].number, p1.p.SL.number, p1.p.TP.number], [1, 200, 18001, 18011, 17991, 18021]);
       assert.equal(p1.p.BE?.number ?? null, null, 'bez przesunięcia na BE pole puste');

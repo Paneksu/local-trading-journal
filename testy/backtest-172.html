@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: dokładanie i odwracanie 1.7-2 (strona robocza)</title>
+<!-- Strona robocza testów backtest-172 (testy/backtest-172-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: dokładka z podpisem trybu i podglądem ryzyka, netting (zmniejsz, zamknij, odwróć), „Odwróć” z okna części, szuflady i skrótu R, oczekująca dokładka,
+     szuflada z porcjami, Journal z tabelą wejść i wyjść, markery porcji, brak przykrywania przycisków (elementFromPoint), układ 375 px (tylko brak poziomego przewijania i przykrytych przycisków).
+     Parametry: ?w=375, ?theme=platinum, ?shots=1 (zrzuty przez most CDP window.__shot). Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }.
+     Zasada tej strony: każda asercja może zawieść (żadnych gałęzi „pominięte = zdane”, OR-ów zawsze prawdziwych ani szukania po textContent z ukrytymi spanami). -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const shots = qs.get('shots') === '1';
+const wide = !narrow || shots;
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  const tz = document.getElementById('toast');
+  if (tz) tz.hidden = true;
+  await sleep(150);
+  window.__shot(JSON.stringify({ id, name: `${name}-${qs.get('theme') === 'platinum' ? 'platinum' : 'onyx'}-${narrow ? 375 : 1920}` }));
+  await until(() => window.__done?.[id], 10000);
+};
+
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.removeItem('thq.bt.ord.v1'); localStorage.removeItem('thq.bt.jump.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const { fmtMoney } = await import('/js/format.js');
+  const client = createSessionClient();
+  const mkDef = () => ({ instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] });
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja 172', def: mkDef(), now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const trades = () => RP.doc().trades;
+  const stepN = async (n) => { for (let i = 0; i < n; i++) { await RP.step(1); } await sleep(60); };
+  const ch = () => RP.chart();
+  const host = () => scr().querySelector('.bt-plot');
+  const layer = () => ch().tradeLayer();
+  const tag = (k) => layer().querySelector(`[data-k="${k}"]`);
+  const mainText = (k) => tag(k)?.querySelector('.bt-tag-t')?.textContent ?? '';
+  const focusTag = (k) => { const el = tag(k); el.focus(); el.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); };
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const fmt2 = (x) => new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+  const pe = (type, el, x, y, extra = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true, ...extra }));
+  const yPx = (px) => host().getBoundingClientRect().top + ch().series.priceToCoordinate(px);
+  const modeOf = (side) => P(`[data-o="${side}"] .bt-ord-mode`).textContent;
+  const note = () => P('.bt-ord-note').textContent;
+  const prev = () => { const e = P('.bt-ord-prev'); return e.hidden ? '' : e.textContent; };
+  const btn = (side) => P(`[data-o="${side}"]`);
+  // element trafia sam w siebie: w środku przycisku elementFromPoint zwraca jego samego albo potomka (nic go nie przykrywa)
+  const hits = (els) => {
+    const bad = [];
+    let n = 0;
+    for (const b of els) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || getComputedStyle(b).visibility === 'hidden') continue;
+      n++;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      // pole wyboru w etykiecie (.check) jest niewidocznym natywnym polem: trafia w nie jego etykieta, czyli też element, który je zawiera
+      if (!(hit === b || b.contains(hit) || (b.type === 'checkbox' && b.closest('label')?.contains(hit)))) bad.push(`${b.dataset.tl || b.dataset.dka || b.dataset.o || b.name || b.className} → ${hit?.dataset?.tl || hit?.className || hit?.tagName}`);
+    }
+    return { n, bad };
+  };
+  const closeAllNow = async () => { RP.orders().closeAll(); await sleep(80); };
+  // wejście z panelu: SL i TP w punktach (puste = bez), ilość ręczna albo z ryzyka
+  const openPos = async ({ side = 'buy', sl = 10, tp = 30, qty = null } = {}) => {
+    await closeAllNow();
+    setF('sl', sl); setF('tp', tp);
+    if (qty != null) setF('qty', qty); else setF('qty', '');
+    RP.orders().submit(side); await sleep(80);
+  };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(100);
+  document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+
+  // ---------- dokładka: podpis trybu, podgląd ryzyka, średnia ----------
+  if (wide) await section('dokladka', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 3 });
+    const p0 = pos(), e1 = p0.entryPrice, slPos = p0.sl, tpPos = p0.tp;
+    rec('dokladka', !!p0 && p0.qty === 3 && p0.fills.length === 1 && slPos === q(e1 - 10), `pozycja Long 3 z SL ${slPos}`);
+    // bez pozycji nie ma podpisu trybu (przycisk jak dotąd)
+    setF('qty', 2);
+    rec('dokladka', modeOf('buy') === 'Dołóż 2', `Kup przy Longu: podpis «${modeOf('buy')}»`);
+    rec('dokladka', modeOf('sell') === 'Zmniejsz 2 z 3', `Sprzedaj mniejsze: podpis «${modeOf('sell')}»`);
+    const e2 = q(Number(btn('buy').querySelector('.bt-ord-px').textContent.replace(/\s/g, '').replace(',', '.')));
+    // podgląd: nowa średnia i ryzyko łączne przy jednym SL; liczone w teście niezależnie od panelu
+    const avgAfter = (3 * e1 + 2 * e2) / 5, before = Math.abs(e1 - slPos) * 3 * 20, after = Math.abs(avgAfter - slPos) * 5 * 20;
+    const want = `Dołóż 2 · ryzyko teraz ${fmtMoney(-before)} → ${fmtMoney(-after)} · SL pozycji bez zmian`;
+    rec('dokladka', prev() === want, `podgląd dokładki «${prev()}» (oczekiwany «${want}»)`);
+    rec('dokladka', before === 600 && after > before, `ryzyko rośnie z ${before} do ${after} $`);
+    setF('qty', 3);
+    rec('dokladka', modeOf('sell') === 'Zamknij 3', `Sprzedaj równe: podpis «${modeOf('sell')}»`);
+    setF('qty', 5);
+    rec('dokladka', modeOf('sell') === 'Odwróć: zamknie 3, Short 2', `Sprzedaj większe: podpis «${modeOf('sell')}»`);
+    rec('dokladka', modeOf('buy') === 'Dołóż 5', `Kup przy większej ilości dalej dokłada: «${modeOf('buy')}»`);
+    await shot('panel-odwroc');
+    setF('qty', 2);
+    await shot('panel-dolozenie');
+    btn('buy').click(); await sleep(120);
+    const p1 = pos();
+    rec('dokladka', p1.qty === 5 && p1.openQty === 5 && p1.fills.length === 2, `po kliknięciu LONG 5 z dwiema porcjami (qty ${p1.qty}, porcji ${p1.fills.length})`);
+    const f2 = p1.fills[1].price;
+    rec('dokladka', Math.abs(p1.avg - (3 * e1 + 2 * f2) / 5) < 1e-6 && Math.abs(f2 - e2) <= 0.25, `średnia ${p1.avg} = (3·${e1} + 2·${f2}) / 5`);
+    rec('dokladka', p1.sl === slPos && p1.tp === tpPos, `SL ${p1.sl} i TP ${p1.tp} pozycji bez zmian`);
+    rec('dokladka', /^LONG 5 · /.test(mainText('pos')), `plakietka wejścia: «${mainText('pos')}»`);
+    rec('dokladka', note() === '', `bez komunikatu odrzucenia («${note()}»)`);
+    const mk = ch().fillMarks();
+    rec('dokladka', mk.length === 2 && mk[0].text === '+3' && mk[1].text === '+2' && mk.every((m) => m.shape === 'arrowUp' && m.position === 'belowBar'), `markery porcji: ${mk.map((m) => m.text).join(', ')}`);
+    // ilość z ryzyka sesji do SL POZYCJI (panel bez SL): 500 $ / (odległość · 20 $)
+    setF('sl', ''); setF('qty', '');
+    const d = Math.abs(p1.fills[1].price - slPos), wantQ = Math.floor(500 / (d * 20) + 1e-9);
+    rec('dokladka', wantQ >= 1 && P('[name="qty"]').value === String(wantQ) && modeOf('buy') === `Dołóż ${wantQ}`, `ilość z ryzyka do SL pozycji: ${wantQ} (pole «${P('[name="qty"]').value}», podpis «${modeOf('buy')}»)`);
+    // pozycja bez SL i panel bez SL: wielkość nieznana, przyciski nieaktywne z komunikatem
+    await openPos({ sl: '', tp: '', qty: 3 });
+    setF('qty', '');
+    // zmiana pakietu 1.7-3 (decyzja sesji głównej 2.11.2026, uwaga P3-4): przy otwartej pozycji, pustym SL panelu i braku ręcznej ilości przycisk przeciwny zamyka całą otwartą ilość „Zamknij n”
+    rec('dokladka', note() === 'Wpisz SL albo wielkość.' && btn('buy').disabled && !btn('sell').disabled && modeOf('sell') === 'Zamknij 3', `bez SL pozycji i panelu: «${note()}», Kup nieaktywne, Sprzedaj «${modeOf('sell')}»`);
+    setF('sl', 5);
+    rec('dokladka', P('[name="qty"]').value === '5' && modeOf('buy') === 'Dołóż 5' && prev() === 'Dołóż 5 · pozycja bez SL', `SL z panelu 5 pkt → 5 kontraktów; podgląd «${prev()}»`);
+    setF('sl', 10);
+  });
+
+  // ---------- netting: zmniejsz, zamknij, odwróć ----------
+  if (wide) await section('netting', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 5 });
+    const n0 = trades().length;
+    setF('qty', 2); btn('sell').click(); await sleep(120);
+    let p = pos();
+    rec('netting', p && p.dir === 'Long' && p.openQty === 3 && p.qty === 5 && p.exits.at(-1).reason === 'partial' && p.exits.at(-1).qty === 2 && trades().length === n0, `Sprzedaj 2 z 5: zostaje Long 3, wyjście partial 2, brak trade'a (openQty ${p?.openQty})`);
+    setF('qty', 3); btn('sell').click(); await sleep(120);
+    rec('netting', !pos() && trades().length === n0 + 1 && trades().at(-1).exits.at(-1).reason === 'manual', `Sprzedaj 3 z 3: pozycja zamknięta (manual), jeden trade`);
+    // odwrócenie nettingiem: dwa wyniki
+    await openPos({ sl: 10, tp: 30, qty: 5 });
+    const n1 = trades().length;
+    setF('qty', 7); btn('sell').click(); await sleep(150);
+    p = pos();
+    const t1 = trades().at(-1);
+    rec('netting', trades().length === n1 + 1 && t1.dir === 'Long' && t1.qty === 5 && t1.exits.at(-1).reason === 'reverse', `zamknięty trade ${t1.id}: Long 5, wyjście reverse`);
+    rec('netting', !!p && p.dir === 'Short' && p.qty === 2 && p.sl === q(p.entryPrice + 10) && p.tp === q(p.entryPrice - 30), `nowa pozycja Short 2 z SL ${p?.sl} i TP ${p?.tp} z panelu`);
+    rec('netting', p.reverseOf === t1.id && p.reverseFrom === undefined, `odnośnik reverseOf = ${p.reverseOf}`);
+    // [U] 3.11.2026 «Wszędzie, z opisem „NY” (Recommended)» i odbiór wyglądu 1.7.0 P2-2: jeden format komunikatu zdarzenia „nazwa godzina strefa · szczegóły”; odwrócenie to toast i aria-live, a nie komunikat stojący w bilecie
+    const sp = (s) => String(s).replace(/\s+/g, ' ').trim(), toastTxt = sp(document.getElementById('toast')?.textContent), liveTxt = sp(document.querySelector('.bt-tl-live')?.textContent || '');
+    const wantTail = sp(` · Long 5 zamknięty ${fmtMoney(t1.pnl)}, Short 2 otwarty`);
+    rec('netting', /^Odwrócono \d\d:\d\d:\d\d NY · /.test(toastTxt) && toastTxt.endsWith(wantTail) && /^Odwrócono /.test(liveTxt) && note() === '', `toast «${toastTxt}» (oczekiwany koniec «${wantTail}»), aria-live «${liveTxt}», notka «${note()}»`);
+    await shot('po-odwroceniu');
+    RP.orders().closeAll(); await sleep(150);
+    const t2 = trades().at(-1);
+    rec('netting', t2.id !== t1.id && t2.dir === 'Short' && t2.reverseOf === t1.id && trades().find((x) => x.id === t1.id).reversedTo === t2.id, `trade ${t2.id}: reverseOf ${t2.reverseOf}, trade ${t1.id}: reversedTo ${trades().find((x) => x.id === t1.id).reversedTo}`);
+    RP.dock().setTab('hist'); await sleep(120);
+    const lnk = RP.dock().el.querySelector(`tr[data-row="${t2.id}"] .bt-dk-rev`);
+    rec('netting', !!lnk && lnk.textContent.trim() === `← ${t1.id}`, `Historia: odnośnik «${lnk?.textContent.trim()}» przy ${t2.id}`);
+    rec('netting', !RP.dock().el.querySelector(`tr[data-row="${t1.id}"] .bt-dk-rev`), 'trade bez odwrócenia nie ma odnośnika');
+    await shot('historia-odwrocenie');
+    RP.dock().setTab('pos');
+  });
+
+  // ---------- Odwróć: okno ×, szuflada, skrót R ----------
+  if (wide) await section('odwroc', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 3 });
+    // a) okno części
+    focusTag('pos'); await sleep(40);
+    layer().querySelector('[data-tl="x"]').click(); await sleep(60);
+    const rv = layer().querySelector('.bt-part [data-tl="rev"]');
+    rec('odwroc', !!rv && rv.textContent === 'Odwróć: zamknie 3, Short 3', `okno ×: przycisk «${rv?.textContent}»`);
+    const h = hits(layer().querySelectorAll('.bt-part button, .bt-part input'));
+    rec('odwroc', h.n >= 6 && h.bad.length === 0, `przyciski okna części trafiają w siebie (${h.n} sprawdzonych; ${h.bad.join('; ')})`);
+    await shot('okno-czesci-odwroc');
+    const n0 = trades().length, id0 = pos().id;
+    rv.click(); await sleep(150);
+    rec('odwroc', pos().dir === 'Short' && pos().qty === 3 && pos().id !== id0 && trades().length === n0 + 1 && !layer().querySelector('.bt-part'), `po „Odwróć” w oknie: Short 3, nowy trade, okno zamknięte`);
+    rec('odwroc', pos().sl === q(pos().entryPrice + 10) && pos().tp === q(pos().entryPrice - 30), `SL i TP nowej pozycji z pamięci panelu (${pos().sl}, ${pos().tp})`);
+    // b) szuflada
+    RP.dock().setTab('pos'); await sleep(100);
+    const db = RP.dock().el.querySelector('tr[data-row="NQ"] [data-dka="reverse"]');
+    rec('odwroc', !!db && db.title === 'Odwróć: zamknie 3, Long 3', `szuflada: przycisk, podpowiedź «${db?.title}»`);
+    const hd = hits([db]);
+    rec('odwroc', hd.n === 1 && hd.bad.length === 0, `przycisk w szufladzie trafia w siebie (${hd.bad.join('; ')})`);
+    db.click(); await sleep(150);
+    rec('odwroc', pos().dir === 'Long' && pos().qty === 3 && trades().length === n0 + 2, 'po „Odwróć” w szufladzie: Long 3, kolejny trade');
+    // c) skrót R, przytrzymanie nie mnoży
+    key('r'); await sleep(150);
+    const idR = pos().id;
+    rec('odwroc', pos().dir === 'Short' && trades().length === n0 + 3, 'skrót R odwraca (Short)');
+    key('r', { repeat: true }); await sleep(100);
+    rec('odwroc', pos().id === idR && pos().dir === 'Short' && trades().length === n0 + 3, 'przytrzymany R (repeat) nie odwraca drugi raz');
+    // d) bez pamięci panelu pozycja bez SL i TP, R „—”
+    try { localStorage.removeItem('thq.bt.ord.v1'); } catch { /* bez localStorage */ }
+    key('r'); await sleep(150);
+    rec('odwroc', pos().dir === 'Long' && pos().sl === null && pos().tp === null && pos().rUsd === null && /R —$/.test(mainText('pos')), `bez pamięci: bez SL i TP, R „—” («${mainText('pos')}»)`);
+    // e) bez pozycji: skrót daje komunikat
+    await closeAllNow();
+    key('r'); await sleep(60);
+    rec('odwroc', !pos() && /Brak otwartej pozycji/.test(document.querySelector('.bt-msg')?.textContent || ''), `bez pozycji R mówi, że jej nie ma («${document.querySelector('.bt-msg')?.textContent}»)`);
+    // pamięć SL/TP do dalszych sekcji
+    setF('sl', 10); setF('tp', 30);
+  });
+
+  // ---------- ilość przycisku przeciwnego: od SL panelu, nie od SL pozycji (poprawki po przeglądzie, P1-1) ----------
+  if (wide) await section('wielkosc', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 3 });
+    const px = pos().entryPrice;
+    // SL pozycji 0,25 pkt pod ceną (przykład recenzenta); panel: SL 10 pkt, ryzyko sesji 500 $, pole ilości puste (auto)
+    const okSl = RP.orders().setLevel('NQ', 'sl', q(px - 0.25));
+    rec('wielkosc', okSl && pos().sl === q(px - 0.25), `SL pozycji ${pos().sl} tuż pod ceną ${px}`);
+    setF('sl', 10); setF('qty', ''); await sleep(60);
+    rec('wielkosc', modeOf('sell') === 'Zmniejsz 2 z 3', `Sprzedaj: ilość z SL panelu (500 / (10 · 20) = 2), nie Short 97: «${modeOf('sell')}»`);
+    rec('wielkosc', modeOf('buy') === 'Dołóż 100', `Kup (dokładka) dalej liczy od SL pozycji (500 / (0,25 · 20) = 100): «${modeOf('buy')}»`);
+    rec('wielkosc', !btn('sell').disabled, 'Sprzedaj aktywne bez ręcznej ilości');
+    // pozycja w zysku, SL pozycji daleko (40 pkt): dokładka z ryzyka daje 0, a zmniejszenie przyciskiem przeciwnym dalej działa
+    RP.orders().setLevel('NQ', 'sl', q(px - 40)); await sleep(60);
+    rec('wielkosc', btn('buy').disabled && !btn('sell').disabled && modeOf('sell') === 'Zmniejsz 2 z 3', `SL pozycji 40 pkt: Kup nieaktywne (ryzyko za małe), Sprzedaj «${modeOf('sell')}»`);
+    const n0 = trades().length;
+    btn('sell').click(); await sleep(120);
+    const p = pos(), x = p?.exits?.at(-1);
+    rec('wielkosc', !!p && p.dir === 'Long' && p.openQty === 1 && x.qty === 2 && x.reason === 'partial' && trades().length === n0, `po kliknięciu zostaje Long 1 (wyjście partial 2), bez Shorta i bez nowego trade'a (openQty ${p?.openQty})`);
+    // panel bez SL: ilość przycisku przeciwnego nieznana (jak nowe wejście bez SL)
+    setF('sl', ''); await sleep(60);
+    // zmiana pakietu 1.7-3 (decyzja sesji głównej 2.11.2026, uwaga P3-4): bez SL w panelu i bez ręcznej ilości Sprzedaj zamyka całą otwartą ilość (tu 1), Kup nadal czeka na SL albo wielkość
+    rec('wielkosc', btn('buy').disabled && !btn('sell').disabled && modeOf('sell') === 'Zamknij 1', `panel bez SL: Kup nieaktywne, Sprzedaj «${modeOf('sell')}» (${btn('sell').title})`);
+    setF('sl', 10);
+  });
+
+  // ---------- oczekująca dokładka anulowana: komunikat (aria-live i toast) ----------
+  if (wide) await section('anulowanie', async () => {
+    await openPos({ sl: 40, tp: '', qty: 2 });
+    const e1 = pos().entryPrice, px = q(e1 - 5), px2 = q(e1 - 1);
+    const nz = (s) => s.replace(/\s/g, ' ');
+    P('[data-ot="limit"]').click();
+    setF('price', px); setF('qty', 1);
+    btn('buy').click(); await sleep(100);
+    rec('anulowanie', RP.book().orders.length === 1 && RP.book().orders[0].intent === 'add', `oczekująca dokładka @ ${px}`);
+    // SL pozycji ponad dokładką (e1 − 2 leży nad e1 − 5): dokładka anulowana z komunikatem
+    RP.orders().setLevel('NQ', 'sl', q(e1 - 2)); await sleep(100);
+    const want = `Dokładka ${fmt2(px)} anulowana: leży za SL`;
+    rec('anulowanie', RP.book().orders.length === 0, 'po przesunięciu SL ponad dokładkę zlecenia nie ma');
+    rec('anulowanie', nz(document.getElementById('toast')?.textContent ?? '') === nz(want), `toast «${document.getElementById('toast')?.textContent}»`);
+    rec('anulowanie', nz(layer().querySelector('.bt-tl-live')?.textContent ?? '') === nz(want), `aria-live «${layer().querySelector('.bt-tl-live')?.textContent}»`);
+    // zamknięcie pozycji anuluje oczekującą dokładkę z komunikatem
+    setF('price', px2); setF('qty', 1); btn('buy').click(); await sleep(100);
+    rec('anulowanie', RP.book().orders.length === 1 && RP.book().orders[0].price === px2, `druga dokładka @ ${px2} (nad SL)`);
+    await closeAllNow();
+    const want2 = `Dokładka ${fmt2(px2)} anulowana: pozycja zamknięta`;
+    rec('anulowanie', !pos() && RP.book().orders.length === 0 && nz(document.getElementById('toast')?.textContent ?? '') === nz(want2), `po zamknięciu pozycji: toast «${document.getElementById('toast')?.textContent}»`);
+    P('[data-ot="market"]').click();
+  });
+
+  // ---------- oczekująca dokładka ----------
+  if (wide) await section('oczekujaca', async () => {
+    await openPos({ sl: 40, tp: '', qty: 2 });
+    const e1 = pos().entryPrice;
+    P('[data-ot="limit"]').click();
+    const px = q(e1 - 2);
+    setF('price', px); setF('qty', 2);
+    rec('oczekujaca', btn('sell').disabled && /zamknięcie zaplanuj przez TP/.test(btn('sell').title), `przeciwny limit przy pozycji: Sprzedaj nieaktywne z powodem («${btn('sell').title}»)`);
+    rec('oczekujaca', modeOf('sell') === '' && modeOf('buy') === 'Dołóż 2', `podpis tylko na przycisku, który działa («${modeOf('buy')}» / «${modeOf('sell')}»)`);
+    btn('buy').click(); await sleep(120);
+    const o = RP.book().orders[0];
+    rec('oczekujaca', RP.book().orders.length === 1 && o.intent === 'add' && o.price === px && o.sl === null, `zlecenie oczekujące intent add @ ${o?.price}`);
+    const chip = P('.bt-ord-pend .bt-chip');
+    rec('oczekujaca', !!chip && chip.textContent.startsWith(`Dołóż limit 2× @ ${fmt2(px)}`), `chip «${chip?.textContent}»`);
+    const risk = Math.abs(px - pos().sl) * 2 * 20;
+    const tg = tag(`o:${o.id}:price`);
+    const txt = tg?.querySelector('.bt-tag-t')?.textContent || '';
+    rec('oczekujaca', txt.replace(/\s/g, ' ') === `Dołóż limit 2 @ ${fmt2(px)} · ${fmtMoney(-risk)}`.replace(/\s/g, ' '), `plakietka «${txt}» (ryzyko do SL pozycji ${risk} $)`);
+    await shot('oczekujaca');
+    // przeciągnięcie ceny w dół o 1 pkt: modyfikacja zlecenia
+    const r = tg.getBoundingClientRect(), x0 = r.left + 10, y0 = r.top + r.height / 2, tgt = q(px - 1);
+    pe('pointerdown', tg, x0, y0); pe('pointermove', tg, x0, yPx(tgt)); await sleep(40); pe('pointerup', tg, x0, yPx(tgt)); await sleep(120);
+    rec('oczekujaca', RP.book().orders[0]?.price === tgt, `przeciągnięcie: cena ${px} → ${RP.book().orders[0]?.price}`);
+    // dokładka za SL pozycji odrzucona z komunikatem
+    setF('price', q(pos().sl - 1)); btn('buy').click(); await sleep(80);
+    rec('oczekujaca', RP.book().orders.length === 1 && note() === 'Dokładka leży poza SL pozycji.', `za SL: «${note()}»`);
+    // wypełnienie zmienia średnią: cena limitu = ostatnia, krok po kroku do dotknięcia (maks. 90 min)
+    RP.orders().cancel(RP.book().orders[0].id); await sleep(60);
+    P('[data-ot="market"]').click();
+    await stepN(3);
+    const fillPx = q(Number(btn('buy').querySelector('.bt-ord-px').textContent.replace(/\s/g, '').replace(',', '.')));
+    P('[data-ot="limit"]').click();
+    setF('price', fillPx); setF('qty', 2); btn('buy').click(); await sleep(80);
+    rec('oczekujaca', RP.book().orders.length === 1 && RP.book().orders[0].price === fillPx, `limit na bieżącej cenie ${fillPx}`);
+    const avg0 = pos().avg;
+    rec('oczekujaca', fillPx !== avg0, `cena limitu ${fillPx} różni się od dotychczasowej średniej ${avg0} (inaczej średnia nie mogłaby się zmienić)`);
+    for (let i = 0; i < 90 && RP.book().orders.length && pos(); i++) await RP.step(1);
+    await sleep(80);
+    const p = pos();
+    rec('oczekujaca', !!p && RP.book().orders.length === 0 && p.fills.length === 2 && p.fills[1].price === fillPx && p.qty === 4, `dokładka wypełniona (porcji ${p?.fills.length}, @ ${p?.fills[1]?.price})`);
+    rec('oczekujaca', !!p && Math.abs(p.avg - (avg0 * 2 + fillPx * 2) / 4) < 1e-6 && p.avg !== avg0, `średnia zmieniona: ${avg0} → ${p?.avg}`);
+    P('[data-ot="market"]').click();
+    setF('sl', 10);
+  });
+
+  // ---------- szuflada: porcje, rozwinięcie, markery, Journal ----------
+  if (wide) await section('szuflada', async () => {
+    await openPos({ sl: 40, tp: '', qty: 3 });
+    setF('qty', 2);
+    await stepN(2); btn('buy').click(); await sleep(100);
+    await stepN(2); btn('buy').click(); await sleep(100);
+    RP.orders().closeQty('NQ', 2); await sleep(120);
+    const p = pos();
+    rec('szuflada', !!p && p.qty === 7 && p.openQty === 5 && p.fills.length === 3 && p.exits.length === 1, `pozycja 5 z 7 po trzech wejściach i wyjściu 2 (qty ${p?.qty}, openQty ${p?.openQty}, porcji ${p?.fills.length})`);
+    RP.dock().setTab('pos'); await sleep(120);
+    const row = RP.dock().el.querySelector('tr[data-row="NQ"]');
+    const cell = (c) => row.querySelector(`[data-c="${c}"]`).textContent;
+    rec('szuflada', cell('qty') === '5/7', `kolumna Ilość «${cell('qty')}»`);
+    rec('szuflada', cell('entry') === `śr. ${fmt2(p.avg)} (3)`, `kolumna Wejście «${cell('entry')}» (oczekiwana «śr. ${fmt2(p.avg)} (3)»)`);
+    const mk = ch().fillMarks();
+    rec('markery', mk.length === 4 && mk.filter((m) => m.shape === 'arrowUp').length === 3 && mk.filter((m) => m.shape === 'arrowDown').length === 1, `markery: ${mk.map((m) => `${m.text} ${m.shape}`).join(', ')}`);
+    rec('markery', mk.filter((m) => m.text.startsWith('+')).map((m) => m.text).join() === '+3,+2,+2' && mk.find((m) => m.shape === 'arrowDown').text === '−2' && mk.find((m) => m.shape === 'arrowDown').position === 'aboveBar', 'ilości na markerach +3, +2, +2 i −2 nad świecą');
+    rec('markery', new Set(mk.map((m) => m.color)).size === 1, 'wszystkie markery w kolorze kierunku pozycji');
+    // rozwinięcie
+    const xb = row.querySelector('[data-dka="expand"]');
+    rec('szuflada', xb.getAttribute('aria-expanded') === 'false' && !RP.dock().el.querySelector('.bt-dk-det'), 'domyślnie zwinięte');
+    xb.click(); await sleep(100);
+    const det = RP.dock().el.querySelector('.bt-dk-det');
+    const lists = [...det.querySelectorAll('ul')];
+    rec('szuflada', lists.length === 2 && lists[0].querySelectorAll('li').length === 3 && lists[1].querySelectorAll('li').length === 1, `rozwinięcie: ${lists[0]?.querySelectorAll('li').length} wejścia, ${lists[1]?.querySelectorAll('li').length} wyjście`);
+    const ex = p.exits[0], wantUsd = (ex.price - ex.basis) * 2 * 20;
+    const exLi = lists[1].querySelector('li').textContent.replace(/\s/g, ' ');
+    rec('szuflada', exLi.includes(`−2 @ ${fmt2(ex.price)}`.replace(/\s/g, ' ')) && exLi.includes('część') && exLi.endsWith(fmtMoney(Math.round(wantUsd)).replace(/\s/g, ' ')), `wyjście w rozwinięciu «${exLi}» (wynik porcji ${fmtMoney(Math.round(wantUsd))}, pełne dolary)`);
+    rec('szuflada', RP.dock().el.querySelector('tr[data-row="NQ"] [data-dka="expand"]').getAttribute('aria-expanded') === 'true', 'przycisk ma aria-expanded=true');
+    await shot('szuflada-porcje');
+    // rozwinięcie przeżywa kolejne klatki odtwarzania
+    await stepN(2);
+    rec('szuflada', !!RP.dock().el.querySelector('.bt-dk-det'), 'rozwinięcie zostaje po kolejnych krokach');
+    // zamknięcie i Journal z tabelą
+    RP.orders().closeAll(); await sleep(200);
+    const tr = trades().at(-1);
+    rec('journal', tr.fills.length === 3 && tr.exits.length === 2 && tr.qty === 7, `trade ${tr.id}: 3 wejścia, 2 wyjścia`);
+    const jw = RP.openJournalWindow(tr.id);
+    await until(() => document.querySelector('.bt-jw .bt-jw-ptt'), 4000);
+    const rows = [...document.querySelectorAll('.bt-jw .bt-jw-ptt tbody tr')].map((r) => [...r.children].map((c) => c.textContent.replace(/\s/g, ' ')));
+    rec('journal', rows.length === 5, `tabela: ${rows.length} wierszy (3 wejścia + 2 wyjścia)`);
+    rec('journal', rows.filter((r) => r[1] === 'Wejście' || r[1] === 'Dołóż').length === 3 && rows.filter((r) => r[1] === 'Wyjście').length === 2, `zdarzenia: ${rows.map((r) => r[1]).join(', ')}`);
+    const exRows = rows.filter((r) => r[1] === 'Wyjście');
+    const want2 = tr.exits.map((e) => fmtMoney(Math.round((e.price - e.basis) * e.qty * 20)).replace(/\s/g, ' '));
+    rec('journal', exRows.map((r) => r[5]).join('|') === want2.join('|') && exRows.map((r) => r[4]).join('|') === 'część|ręcznie', `wyniki porcji ${exRows.map((r) => r[5]).join(', ')} (oczekiwane ${want2.join(', ')}), powody ${exRows.map((r) => r[4]).join(', ')}`);
+    rec('journal', Math.abs(tr.exits.reduce((a, e) => a + (e.price - e.basis) * e.qty * 20, 0) - tr.pnl) <= 0.01, `suma wyników porcji = P&L trade'a ${tr.pnl}`);
+    await shot('journal-tabela');
+    jw?.close();
+    await sleep(100);
+  });
+
+  // ---------- nic nie przykrywa przycisków (okno części, panel, szuflada, szybki journal) ----------
+  if (wide) await section('warstwy', async () => {
+    // zamknięty trade zostawia szybki panel journala w rogu; potem pozycja, oczekująca dokładka i otwarte okno części
+    await openPos({ sl: 40, tp: '', qty: 3 });
+    RP.orders().closeAll(); await sleep(150);
+    rec('warstwy', !!scr().querySelector('.bt-jr'), 'szybki panel journala po zamknięciu jest otwarty');
+    await openPos({ sl: 40, tp: '', qty: 3 });
+    const e = pos().entryPrice;
+    P('[data-ot="limit"]').click(); setF('price', q(e - 1)); setF('qty', 2); btn('buy').click(); await sleep(100);
+    P('[data-ot="market"]').click();
+    RP.dock().setTab('pos'); await sleep(100);
+    focusTag('pos'); await sleep(40);
+    layer().querySelector('[data-tl="x"]').click(); await sleep(80);
+    const sets = [
+      ['okno części', layer().querySelectorAll('.bt-part button, .bt-part input'), 6],
+      ['panel zleceń', scr().querySelectorAll('.bt-ord button:not([hidden]), .bt-ord input'), 8],
+      ['szuflada', RP.dock().el.querySelectorAll('tbody button'), 5],
+      ['szybki journal', scr().querySelectorAll('.bt-jr button'), 1],
+    ];
+    for (const [name, els, min] of sets) {
+      const h = hits(els);
+      rec('warstwy', h.n >= min && h.bad.length === 0, `${name}: ${h.n} elementów trafia w siebie (min ${min})${h.bad.length ? '; PRZYKRYTE: ' + h.bad.join('; ') : ''}`);
+    }
+    // przeciwny przycisk Odwróć w oknie części nie wystaje poza pole wykresu
+    const pr = layer().querySelector('.bt-part').getBoundingClientRect(), hr = host().getBoundingClientRect();
+    rec('warstwy', pr.left >= hr.left - 0.5 && pr.right <= hr.right + 0.5 && pr.top >= hr.top - 0.5 && pr.bottom <= hr.bottom + 0.5, `okno części mieści się w polu wykresu (${Math.round(pr.left)}–${Math.round(pr.right)} × ${Math.round(pr.top)}–${Math.round(pr.bottom)})`);
+    key('Escape'); await sleep(40);
+    await closeAllNow();
+  });
+
+  // ---------- telefon: tylko brak poziomego przewijania i przykrytych przycisków ----------
+  if (narrow) await section('telefon', async () => {
+    await openPos({ sl: 10, tp: 30, qty: 3 });
+    setF('qty', 5);
+    rec('telefon', modeOf('sell') === 'Odwróć: zamknie 3, Short 2' && modeOf('buy') === 'Dołóż 5', `podpisy trybu «${modeOf('buy')}» / «${modeOf('sell')}»`);
+    for (const s of ['buy', 'sell']) {
+      const b = btn(s), c = b.querySelector('.bt-ord-mode');
+      rec('telefon', c.scrollWidth <= b.clientWidth + 1 && b.scrollWidth <= b.clientWidth + 1, `podpis ${s} mieści się w przycisku (${c.scrollWidth} / ${b.clientWidth})`);
+    }
+    const hb = hits([btn('buy'), btn('sell')]);
+    rec('telefon', hb.n === 2 && hb.bad.length === 0, `Kup i Sprzedaj trafiają w siebie (${hb.bad.join('; ')})`);
+    focusTag('pos'); await sleep(40);
+    layer().querySelector('[data-tl="x"]').click(); await sleep(80);
+    const pn = layer().querySelector('.bt-part'), pr = pn.getBoundingClientRect(), hr = host().getBoundingClientRect();
+    const hp = hits(layer().querySelectorAll('.bt-part button, .bt-part input'));
+    rec('telefon', hp.n >= 6 && hp.bad.length === 0, `przyciski okna części (z „Odwróć”) trafiają w siebie (${hp.n}; ${hp.bad.join('; ')})`);
+    rec('telefon', pr.left >= hr.left - 0.5 && pr.right <= hr.right + 0.5, 'okno części mieści się w szerokości wykresu');
+    await shot('okno-czesci-odwroc');
+    key('Escape'); await sleep(40);
+    RP.dock().setTab('pos'); await sleep(80);
+    // komórki SL/TP przewijają się pod przyklejoną kolumną akcji (zamierzone, jak w 1.7-1); sprawdzamy rozwinięcie wiersza i cztery akcje: BE, Część, Zamknij, Odwróć
+    const hd = hits(RP.dock().el.querySelectorAll('tbody .bt-dk-a button, tbody .bt-dk-x'));
+    rec('telefon', hd.n === 5 && hd.bad.length === 0, `rozwinięcie i cztery akcje wiersza pozycji w szufladzie (${hd.n}; ${hd.bad.join('; ')})`);
+    rec('telefon', document.documentElement.scrollWidth <= innerWidth, `bez poziomego przewijania (${document.documentElement.scrollWidth} ≤ ${innerWidth})`);
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

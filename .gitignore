@@ -15,3 +15,4 @@ config.local.json.corrupt-*
 screens/
 node_modules/
 chart-data/
+zrzuty-robocze/

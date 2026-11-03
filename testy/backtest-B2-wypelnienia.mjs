@@ -124,25 +124,30 @@ export default ({ test, assert, ROOT }) => {
     assert.equal(res.pnl, 0);
   });
 
-  test('backtest-B2: jedna pozycja na instrument', async () => {
+  // 1.7-2 (P3 «Dokładanie + odwracanie», 1.11.2026): test zastąpiony. Było: druga pozycja odrzucana (position-open), wypełnienie anuluje drugie wejście NQ.
+  // Jest: pozycje ES i NQ niezależne, zlecenie tego samego kierunku przy pozycji to dokładka, wypełnienie wejścia anuluje tylko przeciwne oczekujące wejścia.
+  test('backtest-B2: jedna pozycja na instrument (od 1.7-2: z dokładkami; wypełnienie anuluje tylko przeciwne wejścia)', async () => {
     const W = await mod();
     let { book } = W.placeOrder(W.emptyBook(), long(), { t: T, price: 100 });
-    let r = W.placeOrder(book, { instrument: 'NQ', side: 'buy', type: 'limit', price: 99, qty: 1, sl: 98 }, { t: T, price: 100 });
-    assert.deepEqual(types(r.events), ['rejected']);
-    assert.equal(r.events[0].reason, 'position-open');
+    let r = W.placeOrder(book, { instrument: 'NQ', side: 'buy', type: 'limit', price: 99.5, qty: 1, sl: 98 }, { t: T, price: 100 });
+    assert.deepEqual(types(r.events), [], 'zlecenie tego samego kierunku przy pozycji czeka jako dokładka');
+    assert.deepEqual(r.book.orders.map((o) => o.intent), ['add']);
+    assert.equal(r.book.positions.NQ.fills.length, 1, 'jedna pozycja na instrument');
     r = W.placeOrder(book, { instrument: 'ES', side: 'sell', type: 'market', qty: 1, sl: 5010 }, { t: T, price: 5000 });
     assert.deepEqual(types(r.events), ['filled']);
     assert.equal(r.book.positions.ES.dir, 'Short');
     assert.ok(r.book.positions.NQ);
-    // wypełnienie jednego wejścia anuluje drugie oczekujące wejście NQ (ES zostaje)
+    // wypełnienie jednego wejścia anuluje oczekujące wejście PRZECIWNEGO kierunku NQ; to samo kierunkiem zostaje (ES nietknięte)
     let b = W.emptyBook();
     b = W.placeOrder(b, { instrument: 'NQ', side: 'buy', type: 'limit', price: 99.5, qty: 1, sl: 98 }, { t: T, price: 100 }).book;
     b = W.placeOrder(b, { instrument: 'NQ', side: 'buy', type: 'limit', price: 99, qty: 1, sl: 98 }, { t: T, price: 100 }).book;
+    b = W.placeOrder(b, { instrument: 'NQ', side: 'sell', type: 'limit', price: 101, qty: 1, sl: 102 }, { t: T, price: 100 }).book;
     b = W.placeOrder(b, { instrument: 'ES', side: 'buy', type: 'limit', price: 4990, qty: 1, sl: 4980 }, { t: T, price: 5000 }).book;
     r = W.advance(b, 'NQ', S(bar(T, 100, 100.25, 99.25, 99.75)), T + 60);
     assert.deepEqual(types(r.events), ['filled', 'cancelled']);
+    assert.equal(r.events[1].order.side, 'sell');
     assert.equal(r.book.positions.NQ.entryPrice, 99.5);
-    assert.deepEqual(r.book.orders.map((o) => o.instrument), ['ES']);
+    assert.deepEqual(r.book.orders.map((o) => [o.instrument, o.intent]), [['NQ', 'add'], ['ES', 'open']]);
   });
 
   test('backtest-B2: znak wodny', async () => {

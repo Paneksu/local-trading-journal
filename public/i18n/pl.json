@@ -36,5 +36,9 @@
   "Wyjmie z kosza Notion {n} wpisów.": { "one": "Wyjmie z kosza Notion {n} wpis.", "few": "Wyjmie z kosza Notion {n} wpisy.", "many": "Wyjmie z kosza Notion {n} wpisów.", "other": "Wyjmie z kosza Notion {n} wpisu." },
   "Odtworzy {n} usuniętych wpisów jako nowe (bez relacji z innych baz).": { "one": "Odtworzy {n} usunięty wpis jako nowy (bez relacji z innych baz).", "few": "Odtworzy {n} usunięte wpisy jako nowe (bez relacji z innych baz).", "many": "Odtworzy {n} usuniętych wpisów jako nowe (bez relacji z innych baz).", "other": "Odtworzy {n} usuniętego wpisu jako nowe (bez relacji z innych baz)." },
   "Pokaż wpisy ({n})": { "one": "Pokaż wpisy ({n})", "few": "Pokaż wpisy ({n})", "many": "Pokaż wpisy ({n})", "other": "Pokaż wpisy ({n})" },
-  "Przywrócono {n} wpisów.": { "one": "Przywrócono {n} wpis.", "few": "Przywrócono {n} wpisy.", "many": "Przywrócono {n} wpisów.", "other": "Przywrócono {n} wpisu." }
+  "Przywrócono {n} wpisów.": { "one": "Przywrócono {n} wpis.", "few": "Przywrócono {n} wpisy.", "many": "Przywrócono {n} wpisów.", "other": "Przywrócono {n} wpisu." },
+  "{n} dni (skok do ceny)": {"one":"{n} dzień","few":"{n} dni","many":"{n} dni","other":"{n} dnia"},
+  "Poprawa zmieni strefę w {n} wpisach.": {"one": "Poprawa zmieni strefę w {n} wpisie.", "few": "Poprawa zmieni strefę w {n} wpisach.", "many": "Poprawa zmieni strefę w {n} wpisach.", "other": "Poprawa zmieni strefę w {n} wpisu."},
+  "Popraw {n} wpisów": {"one": "Popraw {n} wpis", "few": "Popraw {n} wpisy", "many": "Popraw {n} wpisów", "other": "Popraw {n} wpisu"},
+  "Poprawiono strefę w {n} wpisach.": {"one": "Poprawiono strefę w {n} wpisie.", "few": "Poprawiono strefę w {n} wpisach.", "many": "Poprawiono strefę w {n} wpisach.", "other": "Poprawiono strefę w {n} wpisu."}
 }

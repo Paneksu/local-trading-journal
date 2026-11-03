@@ -1,5 +1,6 @@
 // Formatowanie liczb, dat i tekstu wg języka interfejsu (pl-PL albo en-US, przez Intl). Bez zależności.
 import { locale, getLang } from './i18n.js';
+import { wallParts, dayKeyIn, tzShort } from './strefa.js';
 
 const EN = getLang() === 'en';
 const nfCache = new Map();
@@ -27,6 +28,8 @@ export function fmtMoney(x, { plus = true, decimals } = {}) {
   const s = plus ? sign(x) : x < -1e-9 ? MINUS : '';
   return s + usd(num(Math.abs(x), d));
 }
+// Backtest (odbiór r2, przegląd wyglądu P3-1): jedna reguła kwot na całym ekranie replayu, pełne dolary (połówka w górę), także w dymkach, nagłówku, tabelach i Journalu
+export const fmtUsdFull = (x, o) => fmtMoney(Number.isFinite(x) ? Math.round(x) || 0 : x, o);
 export function fmtPct(x, d = 0) {
   if (x == null || !isFinite(x)) return DASH;
   return `${num(x, d)}%`;
@@ -65,7 +68,8 @@ export const DAYS_TITLE = wd('long').map((w) => w[0].toUpperCase() + w.slice(1))
 
 export const pad = (n) => String(n).padStart(2, '0');
 export function toKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-export const todayKey = () => toKey(new Date());
+// 3.11.2026: dzisiejszy dzień na zegarze strefy aplikacji (strefa.js), tak samo jak dzień trade'ów z parseDT
+export const todayKey = () => dayKeyIn(Date.now());
 export function parseKey(k) { const [y, m, d] = k.split('-').map(Number); return { y, m, d }; }
 export function addDays(k, n) {
   const { y, m, d } = parseKey(k);
@@ -83,10 +87,10 @@ export function weekdayIdx(k) {
 }
 // „25 paź” / „Oct 25”
 // H2 (ocena wyglądu #7): data i godzina jak w reszcie dashboardu, w języku aplikacji: „30 paź, 15:24” / „Oct 30, 15:24”; rok tylko spoza bieżącego roku.
-export function dateTimeShort(d, now = new Date()) {
+export function dateTimeShort(d, now = new Date(), { withTz = false } = {}) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return DASH;
-  const k = toKey(d), yr = d.getFullYear() !== now.getFullYear() ? ` ${d.getFullYear()}` : '';
-  return `${shortDate(k)}${yr}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const w = wallParts(d.getTime()), y = Number(w.date.slice(0, 4)), yr = y !== Number(wallParts(now.getTime()).date.slice(0, 4)) ? ` ${y}` : '';
+  return `${shortDate(w.date)}${yr}, ${w.time}${withTz ? `${NBSP}${tzShort(undefined, d.getTime())}` : ''}`;
 }
 export function shortDate(k) { const { m, d } = parseKey(k); return EN ? `${MON_SHORT[m - 1]}${NBSP}${d}` : `${d}${NBSP}${MON_SHORT[m - 1]}`; }
 // „25 października 2026” / „October 25, 2026”
@@ -102,15 +106,16 @@ const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 export const cls = (x) => (x > 1e-9 ? 'pos' : x < -1e-9 ? 'neg' : '');
 
-// Data z Notion: „2026-10-25” (bez godziny) albo ISO z godziną i offsetem. Dzień i godzina liczone w czasie lokalnym
-// przeglądarki, więc wpis z godziną 23:30 nie przeskakuje na inny dzień przez strefę (stare slice(0,10) liczyło dzień wg offsetu z Notion).
+// Data z Notion: „2026-10-25” (bez godziny) albo ISO z godziną i offsetem. Dzień i godzina liczone na zegarze strefy aplikacji (strefa.js, domyślnie
+// Nowy Jork: 3.11.2026 «ja wpisuje godziny wedle nowojorskiego czasu»), więc wpis 23:30 nie przeskakuje na inny dzień przez przesunięcie z Notion.
 export function parseDT(s) {
   if (!s) return null;
   const str = String(s);
   if (str.length <= 10) return { date: str, time: null, at: null };
   const d = new Date(str);
   if (Number.isNaN(d.getTime())) return { date: str.slice(0, 10), time: null, at: null };
-  return { date: toKey(d), time: `${pad(d.getHours())}:${pad(d.getMinutes())}`, at: d.getTime() };
+  const w = wallParts(d.getTime());
+  return { date: w.date, time: w.time, at: d.getTime() };
 }
 export const hmToMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
 export const minToHm = (m) => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;

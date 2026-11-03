@@ -85,7 +85,7 @@ try {
       await sleep(50);
       setF('qty', '1');
       P('[data-o="buy"]').click();
-      rec('es', !!R.book().positions.ES, `po „Wróć do bieżącej chwili” Kup ES działa (kursor ${new Date(R.cursor() * 1000).toISOString().slice(11, 19)})`);
+      rec('es', !!R.book().positions.ES, `po „Wróć do teraz” Kup ES działa (kursor ${new Date(R.cursor() * 1000).toISOString().slice(11, 19)})`);
       // K (31.10.2026): zamiast „Zakończ dzień” z pozycją ES: bez końca dnia pozycja ES idzie dalej po 16:00 (zamyka ją tylko SL/TP albo użytkownik)
       R.activate(0); R.step(1); R.step(1);
       await R.goTo(nyAt(DAY1, '16:10'));

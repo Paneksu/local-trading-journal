@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: prawy klik i nawigacja 1.7-4 (strona robocza)</title>
+<!-- Strona robocza testów backtest-174 (testy/backtest-174-strona.mjs), Chrome/Edge headless przez CDP, tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/.
+     Prawdziwy replay na świecach syntetycznych: menu prawego kliku (zlecenia po cenie kliknięcia z presetu i z panelu, Dołóż, SL i TP tutaj, „Użyj 1 kontraktu”, klawiatura, Esc, odbicie od krawędzi,
+     brak menu przy narzędziu rysowania, na rysunku, na osiach i na plakietkach, drugi wykres zleca swój instrument), krok niezależny od interwału (menu kroku, zapis w sesji, klawisze, krok własny),
+     skok do daty (w przód, wstecz jako przeglądanie, przed startem, weekend) i do ceny (znaleziono, SL po drodze z komunikatem, nie znaleziono z „Szukaj dalej”, Anuluj), brak przykrywania
+     (elementFromPoint), 375 px (tylko przytrzymanie otwiera menu, ruch przewija, brak poziomego przewijania).
+     Parametry: ?w=375, ?theme=platinum, ?shots=1 (zrzuty przez most CDP window.__shot). Wynik: pre#wynik z JSON-em { checks: [{ tag, ok, msg }], fatal }.
+     Zasada tej strony: każda asercja może zawieść (żadnych gałęzi „pominięte = zdane”, OR-ów zawsze prawdziwych ani szukania po textContent z ukrytymi spanami). -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.run #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body class="run">
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const narrow = qs.get('w') === '375';
+const shots = qs.get('shots') === '1';
+const wide = !narrow || shots;
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 8000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const section = async (tag, fn) => { try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+const key = (k, extra = {}, target = document.body) => { const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(ev); return ev; };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  const tz = document.getElementById('toast');
+  if (tz) tz.hidden = true;
+  await sleep(150);
+  window.__shot(JSON.stringify({ id, name: `${name}-${qs.get('theme') === 'platinum' ? 'platinum' : 'onyx'}-${narrow ? 375 : 1920}` }));
+  await until(() => window.__done?.[id], 10000);
+};
+
+try {
+  try { for (const k of ['thq.bt.open.v1', 'thq.bt.dock.v1', 'thq.bt.ord.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, sanitizeBt } = await import('/js/bt-czas.js');
+  const { visibleCount } = await import('/js/bt-swieca.js');
+  const { pxText } = await import('/js/bt-journal.js');
+  const client = createSessionClient();
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  const mkDef = (o = {}) => ({ instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 400 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [], ...o });
+  const SCALP = { id: 'scalp', name: 'Scalp', sl: { unit: 'pts', value: 10 }, tps: [{ unit: 'rr', value: 2, pct: 100 }], size: { mode: 'session', value: 0 }, autoBe: { kind: 'r', value: 1, offsetTicks: 0 } };
+  const MIKRO = { id: 'mikro', name: 'Mikro', sl: { unit: 'pts', value: 2 }, tps: [{ unit: 'rr', value: 2, pct: 100 }], size: { mode: 'session', value: 0 }, autoBe: null };
+  // runda 2: presety ze stałym ryzykiem w $ (800 $) i w % salda (2% z 50 000 $), do porównania ilości menu z polem „Wielkość”
+  const USD800 = { id: 'usd800', name: 'Skala 800', sl: { unit: 'pts', value: 10 }, tps: [], size: { mode: 'usd', value: 800 }, autoBe: null };
+  const PCT2 = { id: 'pct2', name: 'Skala 2%', sl: { unit: 'pts', value: 10 }, tps: [], size: { mode: 'pct', value: 2 }, autoBe: null };
+  let btSet = sanitizeBt({ presets: [SCALP, MIKRO, USD800, PCT2] });
+  const patches = [];
+  const open = async (def, name, layout = null) => {
+    const doc = newSessionDoc({ id: newSessionId(), name, def, now: Date.now() });
+    if (layout) doc.layout = layout;
+    await client.create(doc);
+    // nowa sesja dostaje ostatnio użyty układ wykresów (D1): każda zaczyna od jednego wykresu, o ile test nie ustawił układu sam
+    if (!layout) { try { localStorage.removeItem('thq.bt.layout.v1'); } catch { /* bez localStorage */ } }
+    const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0, getSettings: () => btSet, onPresets: (patch) => { patches.push(patch); btSet = sanitizeBt({ ...btSet, ...patch }); } });
+    await RP.ready;
+    return { RP, id: doc.id };
+  };
+  let { RP, id: sid } = await open(mkDef(), 'Sesja 174');
+  // świeża sesja: cofnięcie kursora w poprzedniej zablokowałoby handel („przeglądasz wstecz”)
+  const fresh = async (name, { def = mkDef(), layout = null, at = '10:30', preset = 'scalp' } = {}) => {
+    RP.close(); await sleep(200);
+    ({ RP, id: sid } = await open(def, name, layout));
+    await RP.goTo(nyAt(def.from, at)); await sleep(150);
+    RP.setTf('1m'); await sleep(150);
+    document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+    RP.orders().choosePreset(preset || null); await sleep(100);
+  };
+  const scr = () => document.querySelector('.bt-screen');
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const pos = () => RP.book().positions.NQ;
+  const ch = (i = 0) => RP.charts()[i];
+  const hostOf = (i = 0) => scr().querySelectorAll('.bt-plot')[i];
+  const q = (x) => Math.round(x / 0.25) * 0.25;
+  const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const num = (s) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+  const centerOf = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const lastPx = (inst = 'NQ') => { const st = RP.data().stream(inst); const n = visibleCount(st, RP.cursor()); return st.bars[n - 1][4]; };
+  const menu = () => scr().querySelector('.bt-cm');
+  const item = (id) => menu()?.querySelector(`[data-mi="${id}"]`);
+  const itemIds = () => [...(menu()?.querySelectorAll('[data-mi]') || [])].map((x) => x.dataset.mi);
+  const lab = (id) => norm(item(id)?.querySelector('.bt-cm-l')?.textContent ?? '');
+  const det = (id) => norm(item(id)?.querySelector('.bt-cm-d')?.textContent ?? '');
+  const closeMenu = async () => { if (menu()) { key('Escape', {}, menu()); await sleep(40); } };
+  const closeAllNow = async () => { RP.orders().closeAll(); await sleep(60); for (const o of [...RP.book().orders]) RP.orders().cancel(o.id); await sleep(40); };
+  const yOfPx = (px, i = 0) => hostOf(i).getBoundingClientRect().top + ch(i).series.priceToCoordinate(px);
+  // prawy klik na wykresie i-tym w cenie px (x w polu świec, domyślnie 140 px od lewej); zwraca zdarzenie (defaultPrevented)
+  let cp = null;
+  const rightClick = async (px, { i = 0, x = null, y = null, target = null, inst = null } = {}) => {
+    const r = hostOf(i).getBoundingClientRect();
+    const cx = x ?? r.left + 140, cy = y ?? yOfPx(px, i);
+    const el = target || document.elementFromPoint(cx, cy) || hostOf(i);
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, view: window });
+    el.dispatchEvent(ev);
+    await sleep(70);
+    cp = menu() ? Number(menu().dataset.price) : null;
+    return ev;
+  };
+  const hits = (els) => {
+    const bad = [];
+    let n = 0;
+    for (const b of els) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || getComputedStyle(b).visibility === 'hidden') continue;
+      n++;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!(hit === b || b.contains(hit))) bad.push(`${b.dataset.mi || b.dataset.bt || b.dataset.gojump || b.className} → ${hit?.dataset?.mi || hit?.className || hit?.tagName}`);
+    }
+    return { n, bad };
+  };
+  const msgText = () => norm(scr().querySelector('.bt-msg')?.textContent ?? '');
+  const findEl = () => scr().querySelector('.bt-find');
+  const findText = () => norm(findEl()?.querySelector('.bt-find-t')?.textContent ?? '');
+  const settle = async () => { await until(() => !RP.busy(), 20000); await sleep(120); };
+
+  await RP.goTo(nyAt('2024-03-12', '10:30')); await sleep(150);
+  RP.setTf('1m'); await sleep(150);
+  document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  RP.orders().choosePreset('scalp'); await sleep(120);
+
+  // ---------- menu: zlecenia po cenie kliknięcia z presetu i z panelu ----------
+  if (wide) await section('menu', async () => {
+    await closeAllNow();
+    const L = lastPx();
+    let up = q(L + 3), dn = q(L - 3);
+    rec('menu', !menu(), 'menu zamknięte na starcie');
+    // nad rynkiem: Sprzedaj limit i Kup stop, opis z presetu
+    const ev = await rightClick(up);
+    rec('menu', !!menu() && Math.abs(cp - up) <= 0.5, `cena kliknięcia z menu (${cp}) leży w pół punktu od zamierzonej (${up})`);
+    up = cp;
+    rec('menu', ev.defaultPrevented && !!menu(), `prawy klik otwiera menu własne i wyłącza menu przeglądarki (zdarzenie anulowane: ${ev.defaultPrevented})`);
+    rec('menu', menu()?.getAttribute('role') === 'menu' && !!menu()?.getAttribute('aria-label'), `menu ma role=menu i nazwę («${menu()?.getAttribute('aria-label')}»)`);
+    const ordIds = itemIds().filter((x) => x.startsWith('order-')).sort();
+    rec('menu', ordIds.join() === 'order-buy-stop,order-sell-limit', `nad rynkiem: ${ordIds.join(', ')}`);
+    rec('menu', lab('order-sell-limit').startsWith(`Sprzedaj limit 2 @ ${norm(pxText(up))}`) && /SL 10 pkt/.test(lab('order-sell-limit')) && /−400/.test(lab('order-sell-limit')), `etykieta: «${lab('order-sell-limit')}»`);
+    rec('menu', det('order-sell-limit') === 'preset Scalp', `druga linia: «${det('order-sell-limit')}»`);
+    rec('menu', itemIds().includes('jump-price') && lab('jump-price').startsWith('Skocz do ceny'), `Skocz do ceny jest w menu («${lab('jump-price')}»)`);
+    rec('menu', !itemIds().includes('jump-date'), 'Skocz do daty tylko w marginesie za ostatnią świecą');
+    await shot('menu-bez-pozycji');
+    // klawiatura: strzałki, Home, End, Esc z powrotem fokusu na wykres
+    const items = [...menu().querySelectorAll('[role="menuitem"]')];
+    rec('menu', items.length >= 3 && items.every((b) => b.tagName === 'BUTTON'), `pozycje to przyciski role=menuitem (${items.length})`);
+    // runda 2 (P2-1): po otwarciu fokus stoi na pierwszej aktywnej pozycji (bez żadnego klawisza), strzałka idzie do drugiej
+    rec('menu', document.activeElement === items.find((b) => b.getAttribute('aria-disabled') !== 'true'), `fokus po otwarciu na pierwszej aktywnej pozycji (aktywny: ${document.activeElement?.dataset?.mi ?? document.activeElement?.tagName})`);
+    key('ArrowDown', {}, document.activeElement);
+    rec('menu', document.activeElement === items[1], 'strzałka w dół z pierwszej: druga pozycja');
+    key('End', {}, document.activeElement);
+    rec('menu', document.activeElement === items[items.length - 1], 'End: ostatnia pozycja');
+    key('Home', {}, document.activeElement);
+    rec('menu', document.activeElement === items[0], 'Home: pierwsza pozycja');
+    key('ArrowUp', {}, document.activeElement);
+    rec('menu', document.activeElement === items[items.length - 1], 'strzałka w górę z pierwszej: ostatnia');
+    key('Escape', {}, document.activeElement); await sleep(60);
+    rec('menu', !menu() && hostOf().contains(document.activeElement), `Esc zamyka menu, fokus wraca na wykres (aktywny: ${document.activeElement?.className})`);
+    // klik obok zamyka
+    await rightClick(up); up = cp;
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5, pointerType: 'mouse', button: 0 })); await sleep(50);
+    rec('menu', !menu(), 'klik obok zamyka menu');
+    // wybór Enterem: Sprzedaj limit (dwie akcje: prawy klik i wybór)
+    await rightClick(up); up = cp;
+    const first = document.activeElement;
+    rec('menu', first.dataset.mi?.startsWith('order-'), `pierwsza pozycja z fokusem po otwarciu: ${first.dataset.mi}`);
+    document.querySelector('[data-mi="order-sell-limit"]').focus();
+    key('Enter', {}, document.activeElement); await sleep(120);
+    let o = RP.book().orders[0];
+    rec('menu', !menu() && RP.book().orders.length === 1 && o.side === 'sell' && o.type === 'limit' && o.price === up && o.qty === 2 && o.sl === up + 10 && o.tp === up - 20, `Enter składa Sprzedaj limit: ${JSON.stringify(o && { side: o.side, type: o.type, price: o.price, qty: o.qty, sl: o.sl, tp: o.tp })}`);
+    rec('menu', o.autoBe?.kind === 'r' && o.autoBe.value === 1 && o.intent === 'open', `zlecenie niesie auto BE z presetu: ${JSON.stringify(o.autoBe)}`);
+    // [U] 3.11.2026 «wywalamy to cofniecie czasu usuwa trade, zbedne, mam usuwanie juz manualne wiec jak bede chcial to usune» (pakiet 6 odwołany): order.hist nie jest zapisywane od odbioru 1.7.0
+    rec('menu', !('hist' in o) && Number.isFinite(o.placedT), 'zlecenie ma placedT i nie niesie hist');
+    await closeAllNow();
+    // pod rynkiem: Kup limit i Sprzedaj stop; wybór kliknięciem
+    await rightClick(dn); dn = cp;
+    rec('menu', itemIds().filter((x) => x.startsWith('order-')).sort().join() === 'order-buy-limit,order-sell-stop', `pod rynkiem: ${itemIds().join(', ')}`);
+    item('order-buy-limit').click(); await sleep(120);
+    o = RP.book().orders[0];
+    rec('menu', RP.book().orders.length === 1 && o.side === 'buy' && o.type === 'limit' && o.price === dn && o.sl === dn - 10 && o.tp === dn + 20, `klik składa Kup limit: SL i TP od ceny kliknięcia ${JSON.stringify(o && { price: o.price, sl: o.sl, tp: o.tp })}`);
+    await closeAllNow();
+    // ±1 tick od ceny bieżącej: market po cenie bieżącej
+    const L2 = lastPx();
+    await rightClick(q(L2));
+    rec('menu', itemIds().filter((x) => x.startsWith('order-')).sort().join() === 'order-buy-market,order-sell-market', `±1 tick: ${itemIds().join(', ')}`);
+    rec('menu', lab('order-buy-market').startsWith('Kup market 2'), `etykieta marketu «${lab('order-buy-market')}»`);
+    item('order-buy-market').click(); await sleep(150);
+    rec('menu', !!pos() && pos().dir === 'Long' && pos().qty === 2 && pos().entryPrice === L2 && pos().sl === L2 - 10 && pos().tp === L2 + 20, `market po cenie bieżącej: ${pos()?.dir} ${pos()?.qty} @ ${pos()?.entryPrice} SL ${pos()?.sl} TP ${pos()?.tp} (cena ${L2})`);
+    // z pozycją Long: pod rynkiem Dołóż limit i SL tutaj, nad rynkiem Dołóż stop i TP tutaj, nigdy zleceń przeciwnych
+    const p0 = pos(), Lp = lastPx();
+    let below = q(Lp - 4);
+    await rightClick(below); below = cp;
+    rec('menu', itemIds().filter((x) => !x.startsWith('jump-')).sort().join() === 'add-limit,sl-here', `Long pod rynkiem: ${itemIds().join(', ')}`);
+    rec('menu', /^Dołóż limit \d+ @/.test(lab('add-limit')) && /^SL tutaj/.test(lab('sl-here')) && /−/.test(lab('sl-here')), `etykiety «${lab('add-limit')}» / «${lab('sl-here')}»`);
+    await shot('menu-z-pozycja');
+    item('sl-here').click(); await sleep(120);
+    rec('menu', pos().sl === below, `SL tutaj ustawia SL na cenie kliknięcia (${pos()?.sl} = ${below})`);
+    rec('menu', pos().log.some((x) => x.k === 'sl' && Number.isFinite(x.at) && x.v === below), `zmiana SL ma wpis w log z at (${JSON.stringify(pos().log.slice(-2))})`);
+    let above = q(Lp + 5);
+    await rightClick(above); above = cp;
+    rec('menu', itemIds().filter((x) => !x.startsWith('jump-')).sort().join() === 'add-stop,tp-here', `Long nad rynkiem: ${itemIds().join(', ')}`);
+    item('tp-here').click(); await sleep(120);
+    // 1.7-5: „TP tutaj” → „Dodaj TP tutaj”: dodaje kolejny poziom drabiny (nie zastępuje istniejącego TP)
+    rec('menu', pos().tps.some((x) => x.price === above) && pos().tps.length === 2 && pos().log.some((x) => x.k === 'tps' && Number.isFinite(x.at)), `Dodaj TP tutaj dodaje poziom ${above} do drabiny (${pos()?.tps?.map((x) => x.price)}) z wpisem w log`);
+    // Dołóż limit: oczekująca dokładka (intent add) po cenie kliknięcia
+    let addPx = q(Lp - 2);
+    await rightClick(addPx); addPx = cp;
+    item('add-limit').click(); await sleep(120);
+    o = RP.book().orders[0];
+    rec('menu', RP.book().orders.length === 1 && o.intent === 'add' && o.side === 'buy' && o.price === addPx, `Dołóż limit składa dokładkę: ${JSON.stringify(o && { intent: o.intent, side: o.side, price: o.price, qty: o.qty })}`);
+    await closeAllNow();
+    // opis „z panelu”: bez presetu wartości z pól panelu (SL 10, TP 20, ilość z ryzyka sesji)
+    RP.orders().choosePreset(null); await sleep(80);
+    setF('sl', 10); setF('tp', 20); setF('qty', ''); await sleep(60);
+    const L3 = lastPx();
+    let up3 = q(L3 + 3);
+    await rightClick(up3); up3 = cp;
+    rec('menu', det('order-sell-limit') === 'z panelu' && lab('order-sell-limit').startsWith('Sprzedaj limit 2 @'), `bez presetu: «${lab('order-sell-limit')}» / «${det('order-sell-limit')}»`);
+    item('order-sell-limit').click(); await sleep(100);
+    o = RP.book().orders[0];
+    rec('menu', o?.sl === up3 + 10 && o?.tp === up3 - 20 && o?.price === up3, `z panelu: SL i TP od ceny kliknięcia (${o?.sl}, ${o?.tp})`);
+    await closeAllNow();
+    // ilość 0: SL 400 pkt przy ryzyku 400 $ → pozycja nieaktywna z powodem i „Użyj 1 kontraktu”
+    setF('sl', 400); setF('tp', ''); setF('qty', ''); await sleep(60);
+    await rightClick(up3); up3 = cp;
+    const dis = item('order-sell-limit');
+    rec('menu', !!dis && dis.getAttribute('aria-disabled') === 'true' && /Ryzyko za małe na ten SL/.test(dis.title) && /Ryzyko za małe/.test(det('order-sell-limit')), `ilość 0: nieaktywna z powodem («${dis?.title}»)`);
+    const one = item('order-sell-limit-one');
+    rec('menu', !!one && one.getAttribute('aria-disabled') !== 'true' && /Użyj 1 kontraktu/.test(lab('order-sell-limit-one')), `pozycja „Użyj 1 kontraktu”: «${lab('order-sell-limit-one')}»`);
+    dis.click(); await sleep(60);
+    rec('menu', !!menu() && RP.book().orders.length === 0, 'klik w nieaktywną pozycję nic nie składa i nie zamyka menu');
+    one.click(); await sleep(120);
+    rec('menu', RP.book().orders.length === 1 && RP.book().orders[0].qty === 1, 'Użyj 1 kontraktu składa zlecenie na 1 kontrakt');
+    await closeAllNow();
+    setF('sl', 10); setF('tp', 20); await sleep(40);
+    RP.orders().choosePreset('scalp'); await sleep(80);
+    // odrzucenie przez silnik wraca komunikatem: dokładka poniżej SL pozycji
+    RP.orders().choosePreset(null); await sleep(60);
+    setF('sl', 2); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('buy'); await sleep(120);
+    const slq = pos().sl;
+    await rightClick(q(slq - 1));
+    rec('menu', item('add-limit')?.getAttribute('aria-disabled') === 'true' && /poza SL/.test(item('add-limit').title), `Dołóż za SL pozycji nieaktywne z powodem («${item('add-limit')?.title}»)`);
+    await closeMenu();
+    await closeAllNow();
+    RP.orders().choosePreset('scalp'); await sleep(60);
+  });
+
+  // ---------- brak menu: narzędzie rysowania, rysunek, osie, plakietki ----------
+  if (wide) await section('bezmenu', async () => {
+    await closeAllNow();
+    const L = lastPx(), M = ch().rysunki().manager;
+    M.setTool('trend-line');
+    const ev = await rightClick(q(L + 2));
+    rec('bezmenu', !menu() && !ev.defaultPrevented, `aktywne narzędzie rysowania: brak menu, zdarzenie nietknięte (anulowane: ${ev.defaultPrevented})`);
+    M.setTool(null); await sleep(40);
+    const b = ch().bars(), tl = b[b.length - 1][0], dp = q(L + 2);
+    const did = M.add({ kind: 'horizontal-line', points: [{ time: tl, price: dp }], style: {} });
+    await sleep(200);
+    const ev2 = await rightClick(dp);
+    rec('bezmenu', !menu() && !ev2.defaultPrevented, `prawy klik na kształcie rysunku: brak menu (anulowane: ${ev2.defaultPrevented})`);
+    M.remove(did); await sleep(150);
+    await rightClick(dp);
+    rec('bezmenu', !!menu(), 'po usunięciu rysunku menu znów się otwiera');
+    await closeMenu();
+    const r = hostOf().getBoundingClientRect();
+    const evAx = await rightClick(null, { x: r.right - 8, y: r.top + 120 });
+    rec('bezmenu', !menu() && !evAx.defaultPrevented, 'prawy klik na osi ceny: brak menu');
+    const evTx = await rightClick(null, { x: r.left + 200, y: r.bottom - 6 });
+    rec('bezmenu', !menu() && !evTx.defaultPrevented, 'prawy klik na osi czasu: brak menu');
+    // plakietka pozycji: prawy klik na niej nie otwiera menu zleceń
+    RP.orders().submit('buy'); await sleep(150);
+    const t = ch().tradeLayer().querySelector('[data-k="psl"]');
+    const [tx, ty] = centerOf(t);
+    const evT = await rightClick(null, { x: tx, y: ty, target: t });
+    rec('bezmenu', !!t && !menu() && !evT.defaultPrevented, `prawy klik na plakietce (${t?.dataset.k}): brak menu zleceń, zdarzenie nietknięte`);
+    await closeAllNow();
+  });
+
+  // ---------- drugi wykres zleca swój instrument ----------
+  if (wide) await section('drugi', async () => {
+    RP.close(); await sleep(200);
+    const o2 = await open(mkDef({ instruments: ['NQ', 'ES'] }), 'Sesja 174 dwa wykresy');
+    RP = o2.RP;
+    await RP.goTo(nyAt('2024-03-12', '10:30')); await sleep(150);
+    RP.setLayout('2h'); await sleep(500);
+    RP.orders().choosePreset('mikro'); await sleep(120);
+    rec('drugi', RP.charts().length === 2 && RP.charts()[0].instrument === 'NQ' && RP.charts()[1].instrument === 'ES', `układ 2h: ${RP.charts().map((c) => c.instrument).join(', ')}`);
+    const es = lastPx('ES');
+    let px = q(es + 3);
+    const act0 = RP.activeIndex();
+    await rightClick(px, { i: 1 }); px = cp;
+    rec('drugi', !!menu() && itemIds().includes('order-sell-limit'), `menu na wykresie ES: ${itemIds().join(', ')}`);
+    rec('drugi', RP.activeIndex() === act0, 'zdarzenie contextmenu samo nie zmienia aktywnego wykresu');
+    rec('drugi', lab('order-sell-limit').startsWith(`Sprzedaj limit 4 @ ${norm(pxText(px))}`) && /SL 2 pkt/.test(lab('order-sell-limit')) && /−400/.test(lab('order-sell-limit')), `ES: 400 $ / (2 pkt × 50 $) = 4 kontrakty, «${lab('order-sell-limit')}»`);
+    item('order-sell-limit').click(); await sleep(150);
+    const o = RP.book().orders[0];
+    rec('drugi', RP.book().orders.length === 1 && o.instrument === 'ES' && o.price === px && o.sl === px + 2 && o.qty === 4, `zlecenie na instrumencie wykresu: ${JSON.stringify(o && { instrument: o.instrument, price: o.price, sl: o.sl, qty: o.qty })}`);
+    rec('drugi', !RP.book().orders.some((x) => x.instrument === 'NQ'), 'aktywny instrument (NQ) bez zlecenia');
+    await closeAllNow();
+    RP.orders().choosePreset('scalp'); await sleep(80);
+    await rightClick(q(lastPx('ES') + 3), { i: 1 });
+    rec('drugi', item('order-sell-limit')?.getAttribute('aria-disabled') === 'true' && !!item('order-sell-limit-one'), 'ES przy SL 10 pkt: ryzyko 500 $ > 400 $ → nieaktywne i „Użyj 1 kontraktu”');
+    await closeMenu();
+    await fresh('Sesja 174 (krok)');
+  });
+
+  // ---------- krok niezależny od interwału ----------
+  if (wide) await section('krok', async () => {
+    await closeAllNow();
+    RP.setTf('5m'); await sleep(200);
+    await RP.goTo(nyAt('2024-03-12', '10:30')); await sleep(150);
+    const sb = scr().querySelector('[data-bt="stepmenu"]');
+    rec('krok', !!sb && /Krok:\s*= wykres/.test(norm(sb.textContent)), `przycisk kroku: «${norm(sb?.textContent)}»`);
+    rec('krok', /Krok w przód: 5m/.test(scr().querySelector('[data-bt="step"]').title), `podpowiedź kroku = interwał wykresu («${scr().querySelector('[data-bt="step"]').title}»)`);
+    sb.click(); await sleep(60);
+    const list = scr().querySelector('.bt-step-l');
+    const opts = [...list.querySelectorAll('[data-step]')].map((b) => b.dataset.step);
+    rec('krok', !list.hidden && opts.join('|') === '|1s|5s|15s|1m|5m|15m', `lista kroków: ${opts.map((o) => o || '= wykres').join(' · ')}`);
+    rec('krok', !!list.querySelector('input'), 'jest pole „własny…”');
+    // runda 2 (P3-1, P3-2 wyglądu): „= wykres” mówi, ile to teraz; aktywna pozycja ma znacznik ✓; zmiana kroku nie zmienia szerokości przycisku
+    rec('krok', /^= wykres \(5m\)/.test(norm(list.querySelector('[data-step=""]').textContent)), `„= wykres” podaje interwał: «${norm(list.querySelector('[data-step=""]').textContent)}»`);
+    rec('krok', norm(list.querySelector('[data-step=""]').textContent).includes('✓') && !norm(list.querySelector('[data-step="15s"]').textContent).includes('✓'), 'aktywny krok ma ✓');
+    const w0 = sb.getBoundingClientRect().width;
+    await shot('wybor-kroku');
+    list.querySelector('[data-step="15s"]').click(); await sleep(100);
+    rec('krok', RP.doc().stepTf === '15s' && /Krok:\s*15s/.test(norm(sb.textContent)) && list.hidden, `wybór 15s: doc.stepTf = ${RP.doc().stepTf}, przycisk «${norm(sb.textContent)}»`);
+    rec('krok', Math.abs(sb.getBoundingClientRect().width - w0) < 0.5, `szerokość przycisku kroku stała (${w0} → ${sb.getBoundingClientRect().width})`);
+    rec('krok', /Krok w przód: 15s/.test(scr().querySelector('[data-bt="step"]').title) && /Krok wstecz: 15s/.test(scr().querySelector('[data-bt="back"]').title), `podpowiedzi mają krok («${scr().querySelector('[data-bt="step"]').title}»)`);
+    const c0 = RP.cursor();
+    scr().querySelector('[data-bt="step"]').click(); await settle();
+    rec('krok', RP.cursor() - c0 === 15 && scr().querySelector('.bt-tfs [aria-pressed="true"]').dataset.tf === '5m', `krok 15 s na wykresie 5m (o ${RP.cursor() - c0} s), interwał wykresu zostaje 5m`);
+    key('ArrowRight', { shiftKey: true }); await settle();
+    rec('krok', RP.cursor() - c0 === 30, `Shift+→ też o 15 s (razem ${RP.cursor() - c0})`);
+    scr().querySelector('[data-bt="back"]').click(); await settle();
+    rec('krok', RP.cursor() - c0 === 15, 'krok wstecz o 15 s');
+    // wykres 5m pokazuje świecę 5m w budowie (ostatnia świeca zaczyna się na granicy 5 minut)
+    const lb = ch().bars().at(-1);
+    rec('krok', lb[0] % 300 === 0 && lb[0] === nyAt('2024-03-12', '10:30'), `wykres 5m: świeca w budowie od 10:30 (${new Date(lb[0] * 1000).toISOString()})`);
+    // zapis w sesji przeżywa ponowne otwarcie
+    RP.close(); await sleep(300);
+    const reopened = openReplay(document.body, { sessionId: sid, client, onClosed: () => {}, notionEveryMs: 0, getSettings: () => btSet, onPresets: (patch) => { btSet = sanitizeBt({ ...btSet, ...patch }); } });
+    await reopened.ready; RP = reopened; await sleep(200);
+    rec('krok', RP.doc().stepTf === '15s' && /Krok:\s*15s/.test(norm(scr().querySelector('[data-bt="stepmenu"]').textContent)), `po ponownym otwarciu: stepTf = ${RP.doc().stepTf}`);
+    // = wykres
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(60);
+    scr().querySelector('.bt-step-l [data-step=""]').click(); await sleep(80);
+    const c1 = RP.cursor();
+    scr().querySelector('[data-bt="step"]').click(); await settle();
+    rec('krok', RP.doc().stepTf === null && RP.cursor() - c1 === 300 - (c1 - nyAt('2024-03-12', '10:30')) % 300, `= wykres: krok do granicy 5m (o ${RP.cursor() - c1} s, stepTf ${RP.doc().stepTf})`);
+    // własny 7m: granice liczone od otwarcia sesji CME (18:00 NY): 10:30 = minuta 990 → następna granica 994 = 10:34
+    await RP.goTo(nyAt('2024-03-12', '10:30')); await sleep(120);
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(60);
+    const inp = scr().querySelector('.bt-step-l input');
+    inp.value = '90s'; inp.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await sleep(60);
+    rec('krok', RP.doc().stepTf === null && inp.getAttribute('aria-invalid') === 'true' && !!scr().querySelector('.bt-step-l .note')?.textContent, `zły własny krok (90s) odrzucony z powodem («${norm(scr().querySelector('.bt-step-l .note')?.textContent)}»)`);
+    inp.value = '7m'; inp.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await sleep(80);
+    rec('krok', RP.doc().stepTf === '7m' && /Krok:\s*7m/.test(norm(scr().querySelector('[data-bt="stepmenu"]').textContent)), `własny krok 7m zapisany (${RP.doc().stepTf})`);
+    scr().querySelector('[data-bt="step"]').click(); await settle();
+    rec('krok', RP.cursor() === nyAt('2024-03-12', '10:34'), `krok 7m od otwarcia sesji trafia na granicę 10:34 (${new Date(RP.cursor() * 1000).toISOString()})`);
+    // krok sekundowy poza oknem prawdziwych 1s = 1 min
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(60);
+    scr().querySelector('.bt-step-l [data-step="15s"]').click(); await sleep(60);
+    await RP.goTo(nyAt('2024-03-12', '12:00')); await sleep(150);
+    const c2 = RP.cursor();
+    scr().querySelector('[data-bt="step"]').click(); await settle();
+    rec('krok', RP.cursor() - c2 === 60, `krok 15s poza oknem 1s = 1 min (o ${RP.cursor() - c2} s)`);
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(40);
+    scr().querySelector('.bt-step-l [data-step=""]').click(); await sleep(60);
+    RP.setTf('1m'); await sleep(100);
+    await RP.goTo(nyAt('2024-03-12', '10:30')); await sleep(120);
+  });
+
+  // ---------- skok do daty ----------
+  if (wide) await section('data', async () => {
+    await closeAllNow();
+    key('g'); await sleep(120);
+    const gd = scr().querySelector('.bt-gd');
+    rec('data', !!gd && !gd.hidden, 'skrót G otwiera okno „Skocz do daty”');
+    const dIn = gd?.querySelector('input[name="gdDate"]'), tIn = gd?.querySelector('input[name="gdTime"]');
+    rec('data', !!dIn && !!tIn && dIn.dataset.wd === 'date' && tIn.dataset.wd === 'time' && dIn.value === '2024-03-12', `pola daty i godziny (data ${dIn?.value}, godzina ${tIn?.value})`);
+    rec('data', dIn.min === '2024-03-12' && /^\d{4}-\d{2}-\d{2}$/.test(dIn.max), `zakres dat: ${dIn.min} – ${dIn.max}`);
+    rec('data', tIn.dataset.wdPresety === '09:00,09:30,10:00,11:00', `presety godzin: ${tIn.dataset.wdPresety}`);
+    await shot('okno-skoku-do-daty');
+    dIn.value = '2024-03-13'; tIn.value = '10:00';
+    gd.querySelector('[data-gd="go"]').click(); await settle();
+    rec('data', RP.cursor() === nyAt('2024-03-13', '10:00') && scr().querySelector('.bt-gd').hidden === true, `skok w przód na 13.03 10:00 NY (${new Date(RP.cursor() * 1000).toISOString()})`);
+    const hw = RP.book().hw;
+    // z pozycją i zleceniem: skok wstecz przegląda, nic nie znika, handel zablokowany, „Wróć” wraca do hw
+    RP.orders().submit('buy'); await sleep(150);
+    const p = pos(), pid = p.id;
+    rec('data', !!p, 'pozycja otwarta przed skokiem wstecz');
+    key('g'); await sleep(100);
+    const gd2 = scr().querySelector('.bt-gd');
+    gd2.querySelector('input[name="gdDate"]').value = '2024-03-12'; gd2.querySelector('input[name="gdTime"]').value = '10:00';
+    gd2.querySelector('[data-gd="go"]').click(); await settle();
+    rec('data', RP.cursor() === nyAt('2024-03-12', '10:00'), `skok wstecz na 12.03 10:00 (${new Date(RP.cursor() * 1000).toISOString()})`);
+    rec('data', pos()?.id === pid && RP.book().hw >= hw, `pozycja nie znika po skoku wstecz (hw ${RP.book().hw} ≥ ${hw})`);
+    rec('data', !P('[data-o="back"]').hidden && /Przeglądasz wstecz/.test(P('.bt-ord-note').textContent) && P('[data-o="buy"]').disabled, 'handel zablokowany: „Przeglądasz wstecz”, Kup nieaktywne, jest przycisk „Wróć”');
+    P('[data-o="back"]').click(); await settle();
+    rec('data', RP.cursor() === RP.book().hw && !P('[data-o="buy"]').disabled, `„Wróć” wraca do chwili bieżącej (${RP.cursor()} = hw ${RP.book().hw})`);
+    await closeAllNow();
+    // cel przed startem sesji: przycięty do startu z komunikatem
+    key('g'); await sleep(100);
+    const gd3 = scr().querySelector('.bt-gd');
+    gd3.querySelector('input[name="gdDate"]').value = '2024-03-11'; gd3.querySelector('input[name="gdTime"]').value = '08:00';
+    gd3.querySelector('[data-gd="go"]').click(); await settle();
+    rec('data', RP.cursor() === nyAt('2024-03-12', '09:00') && /przed startem/.test(msgText()), `cel przed startem sesji: kursor na starcie 09:00, komunikat «${msgText()}»`);
+    // zła data: komunikat przy polu, okno zostaje
+    key('g'); await sleep(100);
+    const gd4 = scr().querySelector('.bt-gd');
+    gd4.querySelector('input[name="gdDate"]').value = ''; gd4.querySelector('[data-gd="go"]').click(); await sleep(80);
+    rec('data', !gd4.hidden && !!norm(gd4.querySelector('.bt-gd-err')?.textContent), `pusta data: okno zostaje z komunikatem («${norm(gd4.querySelector('.bt-gd-err')?.textContent)}»)`);
+    key('Escape', {}, gd4); await sleep(60);
+    rec('data', gd4.hidden === true, 'Esc zamyka okno');
+    // pozycja menu skoków
+    scr().querySelector('[data-bt="jumpmenu"]').click(); await sleep(60);
+    const jd = scr().querySelector('.bt-jump-l [data-gojump="date"]'), jp = scr().querySelector('.bt-jump-l [data-gojump="price"]');
+    rec('data', !!jd && !!jp && /Skocz do daty/.test(norm(jd.textContent)) && /Skocz do ceny/.test(norm(jp.textContent)) && /G/.test(jd.querySelector('.bt-kbd')?.textContent) && /P/.test(jp.querySelector('.bt-kbd')?.textContent), 'menu skoków ma „Skocz do daty…” (G) i „Skocz do ceny…” (P)');
+    jd.click(); await sleep(100);
+    rec('data', !scr().querySelector('.bt-gd').hidden, 'pozycja menu skoków otwiera okno daty');
+    key('Escape', {}, scr().querySelector('.bt-gd')); await sleep(60);
+    // z prawego kliku w marginesie: Skocz do daty… z godziną kliknięcia
+    const lastT = ch().bars().at(-1)[0];
+    const x = scr().querySelector('.bt-plot').getBoundingClientRect().left + ch().chart.timeScale().timeToCoordinate(lastT) + 30;
+    await rightClick(null, { x, y: yOfPx(lastPx()) - 40 });
+    rec('data', itemIds().includes('jump-date'), `w marginesie za ostatnią świecą jest „Skocz do daty…” (${itemIds().join(', ')})`);
+    item('jump-date')?.click(); await sleep(120);
+    rec('data', !scr().querySelector('.bt-gd').hidden && /^\d{4}-\d{2}-\d{2}$/.test(scr().querySelector('.bt-gd input[name="gdDate"]').value), 'pozycja z menu otwiera okno daty');
+    key('Escape', {}, scr().querySelector('.bt-gd')); await sleep(60);
+    await fresh('Sesja 174 (cena)');
+  });
+
+  // ---------- skok do ceny ----------
+  if (wide) await section('cena', async () => {
+    await closeAllNow();
+    const realFind = client.findPrice;
+    const L = lastPx();
+    // oczekiwany wynik policzony na surowych świecach z tej samej trasy co replay (pierwsza świeca bazowa po kursorze z high ≥ ceny)
+    const r = await client.range({ instruments: ['NQ'], from: RP.cursor(), to: RP.cursor() + 4 * 3600, tf: 'base' });
+    const { mergeBase } = await import('/js/bt-swieca.js');
+    const b = r.inst.NQ, st = mergeBase(b.m1, b.s1, b.real1s);
+    const cur = RP.cursor();
+    const hi = Math.max(...st.bars.filter((x) => x[0] >= cur + 60).map((x) => x[2]));
+    const target = q(hi - 0.75);
+    rec('cena', target > L + 1, `cena docelowa ${target} leży ponad ceną bieżącą ${L} (najwyższa wysoka cena po kursorze ${hi})`);
+    const idx = st.bars.findIndex((x) => x[0] >= cur && x[2] >= target);
+    const exp = { t: st.bars[idx][0], end: st.bars[idx][0] + st.len[idx] };
+    key('p'); await sleep(120);
+    const gp = scr().querySelector('.bt-gp');
+    rec('cena', !!gp && !gp.hidden, 'skrót P otwiera okno „Skocz do ceny”');
+    const pIn = gp.querySelector('input[name="gpPrice"]'), dIn = gp.querySelector('input[name="gpDays"]');
+    rec('cena', !!pIn && !!dIn && num(pIn.value) === q(L) && dIn.value === '5' && dIn.min === '1' && dIn.max === '20', `domyślnie cena bieżąca (${pIn?.value}) i 5 dni (min ${dIn?.min}, maks ${dIn?.max})`);
+    rec('cena', /dni handlowych/.test(norm(gp.textContent)) && /Maks/.test(norm(gp.textContent)), 'podpis „Maks. … dni handlowych”');
+    await shot('okno-skoku-do-ceny');
+    pIn.value = String(target).replace('.', ','); dIn.value = '7';
+    gp.querySelector('[data-gp="go"]').click(); await until(() => RP.cursor() !== cur, 15000); await settle();
+    rec('cena', RP.cursor() === exp.end, `kursor na końcu pierwszej świecy z dotknięciem ceny ${target} (${RP.cursor()} = ${exp.end})`);
+    rec('cena', patches.some((p) => p.goPriceDays === 7) && btSet.goPriceDays === 7, `limit dni zapamiętany w ustawieniach bt.goPriceDays = ${btSet.goPriceDays}`);
+    const lb = ch().bars().at(-1);
+    rec('cena', lb[2] >= target, `świeca dotknięcia widoczna na wykresie (high ${lb[2]} ≥ ${target})`);
+    // z prawego kliku: skok rusza od razu z zapamiętanym limitem
+    const c1 = RP.cursor(), L1 = lastPx(), tgt2 = q(L1 - 2);
+    await rightClick(tgt2);
+    rec('cena', !!item('jump-price') && lab('jump-price').startsWith('Skocz do ceny'), `menu prawego kliku ma „Skocz do ceny” (${itemIds().join(', ')})`);
+    item('jump-price').click(); await until(() => RP.cursor() !== c1, 15000); await settle();
+    rec('cena', RP.cursor() > c1 && scr().querySelector('.bt-gp').hidden === true, `skok z menu prawego kliku rusza od razu, bez okna (kursor ${RP.cursor()} > ${c1}; status «${findText()}», komunikat «${msgText()}»)`);
+    // SL po drodze: Short z SL tuż nad rynkiem, cena docelowa wyżej: pozycja zamknięta po drodze, skok dochodzi do celu, komunikat
+    await fresh('Sesja 174 (SL po drodze)', { preset: null });
+    const notionReal = client.notion;
+    const notionCalls = [];
+    client.notion = async (a) => { notionCalls.push(a); return { sent: 1, skipped: 0, failed: [], pending: 0, notion: {} }; };
+    const L2 = lastPx();
+    setF('sl', 2); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('sell'); await sleep(150);
+    const trades0 = RP.doc().trades.length, ps = pos();
+    rec('cena', !!ps && ps.dir === 'Short' && ps.sl === L2 + 2, `Short z SL ${ps?.sl} otwarty`);
+    const c2 = RP.cursor(), tgtUp = q(L2 + 7);
+    key('p'); await sleep(100);
+    const gp2 = scr().querySelector('.bt-gp');
+    gp2.querySelector('input[name="gpPrice"]').value = String(tgtUp);
+    gp2.querySelector('[data-gp="go"]').click(); await until(() => RP.cursor() !== c2, 15000); await settle();
+    rec('cena', !pos() && RP.doc().trades.length === trades0 + 1 && RP.doc().trades.at(-1).exits.at(-1).reason === 'sl', `pozycja zamknięta po SL po drodze (trade ${RP.doc().trades.at(-1)?.id}, ${RP.doc().trades.at(-1)?.exits.at(-1)?.reason})`);
+    // runda 2 (P1-2 wyglądu): komunikat z datą i NY zostaje na ekranie mimo zapisu do Notion zamkniętego trade'a (atrapa Notion odpowiada „wysłano 1”) i jest też w rogu (toast)
+    rec('cena', /Po drodze: SL trafiony \d{2}:\d{2}:\d{2} NY \(.*\d{1,2} mar.*\)/.test(msgText()), `komunikat: «${msgText()}»`);
+    await sleep(1500);
+    await shot('r2-po-drodze');
+    rec('cena', /Po drodze: SL trafiony/.test(msgText()) && !/Zapisano w Notion/.test(msgText()), `komunikat „Po drodze” nie znika po 1,5 s i nie przegrywa z Notion: «${msgText()}»`);
+    rec('cena', !/Po drodze/.test(norm(document.getElementById('toast')?.textContent ?? '')), 'komunikat „Po drodze” tylko w stopce, bez powtórzenia w rogu ekranu');
+    // runda 2 (P3-3 kodu): trade zamknięty po drodze trafia do wysyłki do Notion (żądanie dla tej sesji po zamknięciu, przed komunikatem)
+    rec('cena', notionCalls.length >= 1 && notionCalls.every((c) => c.sessionId === sid), `wysyłka do Notion zlecona po zamknięciu trade'a po drodze (${notionCalls.length} żądań dla sesji ${sid})`);
+    client.notion = notionReal;
+    rec('cena', RP.cursor() > c2 && lastPx() > 0 && ch().bars().at(-1)[2] >= tgtUp, `skok doszedł do celu mimo zamknięcia (high ostatniej świecy ${ch().bars().at(-1)[2]} ≥ ${tgtUp})`);
+    document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+    RP.orders().choosePreset('scalp'); await sleep(80);
+    // nie znaleziono w limicie: kursor bez zmian, komunikat z datą, „Szukaj dalej”
+    const calls = [];
+    client.findPrice = async (qq, { signal } = {}) => { calls.push(qq); return calls.length === 1 ? { none: true, until: qq.from + 5 * 86400, why: 'limit' } : { t: qq.from + 120, end: qq.from + 180 }; };
+    const c3 = RP.cursor();
+    key('p'); await sleep(100);
+    const gp3 = scr().querySelector('.bt-gp');
+    gp3.querySelector('input[name="gpPrice"]').value = '99999'; gp3.querySelector('input[name="gpDays"]').value = '5';
+    gp3.querySelector('[data-gp="go"]').click(); await sleep(250);
+    rec('cena', RP.cursor() === c3, 'nie znaleziono: kursor bez zmian');
+    rec('cena', /Cena 99\s?999,00 nie padła do .+ \(5 dni\)/.test(findText()), `komunikat: «${findText()}»`);
+    rec('cena', !/(^|\s)(Pn|Wt|Śr|Czw|Pt|So|Nd),/.test(findText()) && /NY/.test(findText()), `komunikat bez skrótu dnia z przecinkiem, z NY: «${findText()}»`);
+    const more = scr().querySelector('[data-bt="findmore"]');
+    rec('cena', !!more && !more.hidden && /Szukaj dalej \(\+5 dni\)/.test(norm(more.textContent)), `przycisk „Szukaj dalej”: «${norm(more?.textContent)}»`);
+    rec('cena', calls[0].instrument === 'NQ' && calls[0].price === 99999 && calls[0].dir === 'up' && calls[0].days === 5 && calls[0].from === c3, `zapytanie: ${JSON.stringify(calls[0])}`);
+    await shot('szukaj-dalej');
+    more.click(); await until(() => RP.cursor() !== c3, 8000); await settle();
+    rec('cena', calls.length === 2 && calls[1].from === calls[0].from + 5 * 86400 && RP.cursor() > c3, `Szukaj dalej rusza od końca przeszukanego okna (${calls[1]?.from} = ${calls[0].from + 5 * 86400}) i znajduje`);
+    rec('cena', findEl().hidden || !findText(), 'status wyszukiwania znika po znalezieniu');
+    // Anuluj: wyszukiwanie w toku z przyciskiem, żądanie przerwane
+    let sig = null;
+    client.findPrice = (qq, { signal } = {}) => new Promise((res, rej) => { sig = signal; signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))); });
+    const c4 = RP.cursor();
+    key('p'); await sleep(100);
+    const gp4 = scr().querySelector('.bt-gp');
+    gp4.querySelector('input[name="gpPrice"]').value = '99999';
+    gp4.querySelector('[data-gp="go"]').click(); await sleep(150);
+    rec('cena', /Szukam ceny/.test(findText()) && !!scr().querySelector('[data-bt="findcancel"]') && !scr().querySelector('[data-bt="findcancel"]').hidden, `w trakcie: «${findText()}» z przyciskiem Anuluj`);
+    // runda 2 (P2-6, P3-8 wyglądu): status mówi, jakiej ceny szuka, w którą stronę i do ilu dni
+    rec('cena', /Szukam ceny 99\s?999,00 ↑ \(do 5 dni\)/.test(findText()), `status z ceną, kierunkiem i limitem: «${findText()}»`);
+    await shot('szukam-ceny');
+    scr().querySelector('[data-bt="findcancel"]').click(); await sleep(150);
+    rec('cena', sig?.aborted === true && RP.cursor() === c4 && !/Szukam/.test(findText()), `Anuluj przerywa żądanie (signal.aborted ${sig?.aborted}), kursor bez zmian`);
+    // cena równa bieżącej: komunikat zamiast skoku
+    client.findPrice = realFind;
+    key('p'); await sleep(100);
+    const gp5 = scr().querySelector('.bt-gp');
+    gp5.querySelector('input[name="gpPrice"]').value = String(q(lastPx()));
+    gp5.querySelector('[data-gp="go"]').click(); await sleep(150);
+    rec('cena', RP.cursor() === c4 && !gp5.hidden && !!norm(gp5.querySelector('.bt-gp-err')?.textContent), `cena bieżąca: kursor stoi, okno zostaje z komunikatem («${norm(gp5.querySelector('.bt-gp-err')?.textContent)}»)`);
+    key('Escape', {}, scr().querySelector('.bt-gp')); await sleep(60);
+    // zła cena w oknie: komunikat przy polu
+    key('p'); await sleep(100);
+    const gp6 = scr().querySelector('.bt-gp');
+    gp6.querySelector('input[name="gpPrice"]').value = 'abc'; gp6.querySelector('[data-gp="go"]').click(); await sleep(80);
+    rec('cena', !gp6.hidden && gp6.querySelector('input[name="gpPrice"]').getAttribute('aria-invalid') === 'true' && !!norm(gp6.querySelector('.bt-gp-err')?.textContent), `zła cena: komunikat przy polu («${norm(gp6.querySelector('.bt-gp-err')?.textContent)}»)`);
+    key('Escape', {}, gp6); await sleep(60);
+  });
+
+  // ---------- weekend: skok do daty w środku przerwy ląduje na otwarciu niedzieli ----------
+  if (wide) await section('weekend', async () => {
+    RP.close(); await sleep(200);
+    const o3 = await open(mkDef({ instruments: ['ES'], from: '2024-03-15' }), 'Sesja 174 weekend', { kind: '1', active: 0, charts: [{ instrument: 'ES', tf: '1m' }] });
+    RP = o3.RP;
+    await RP.goTo(nyAt('2024-03-15', '10:00')); await sleep(150);
+    key('g'); await sleep(100);
+    const gd = scr().querySelector('.bt-gd');
+    gd.querySelector('input[name="gdDate"]').value = '2024-03-16'; gd.querySelector('input[name="gdTime"]').value = '12:00';
+    gd.querySelector('[data-gd="go"]').click(); await settle();
+    rec('weekend', RP.cursor() === nyAt('2024-03-17', '18:00'), `skok w środku weekendu ląduje na otwarciu niedzieli 18:00 NY (${new Date(RP.cursor() * 1000).toISOString()}, oczekiwane ${new Date(nyAt('2024-03-17', '18:00') * 1000).toISOString()})`);
+    await fresh('Sesja 174 (warstwy)');
+  });
+
+  // ---------- warstwy: nic nie przykrywa pozycji menu ani sterowania kroku i skoków ----------
+  if (wide) await section('warstwy', async () => {
+    await closeAllNow();
+    RP.orders().submit('buy'); await sleep(150);
+    const L = lastPx();
+    await rightClick(q(L - 4));
+    const mi = [...menu().querySelectorAll('[data-mi]')];
+    const h = hits(mi);
+    rec('warstwy', h.n === mi.length && mi.length >= 3 && h.bad.length === 0, `środek każdej pozycji menu trafia w siebie (${h.n}/${mi.length}; ${h.bad.join('; ')})`);
+    const mr = menu().getBoundingClientRect(), hr = hostOf().getBoundingClientRect();
+    rec('warstwy', mr.left >= hr.left - 1 && mr.top >= hr.top - 1 && mr.right <= hr.right + 1 && mr.bottom <= hr.bottom + 1, `menu mieści się w wykresie (${Math.round(mr.left)}–${Math.round(mr.right)} × ${Math.round(mr.top)}–${Math.round(mr.bottom)} w ${Math.round(hr.left)}–${Math.round(hr.right)} × ${Math.round(hr.top)}–${Math.round(hr.bottom)})`);
+    await closeMenu();
+    // przy krawędziach (prawy dolny róg, lewy górny róg) menu odbija się do środka
+    const axW = ch().series.priceScale().width(), axH = ch().chart.timeScale().height();
+    await rightClick(null, { x: hr.right - axW - 20, y: hr.bottom - axH - 20 });
+    let m2 = menu()?.getBoundingClientRect();
+    rec('warstwy', !!m2 && m2.right <= hr.right + 1 && m2.bottom <= hr.bottom + 1 && m2.left >= hr.left - 1 && m2.top >= hr.top - 1, `róg prawy dolny: menu mieści się w wykresie (${m2 && [Math.round(m2.left), Math.round(m2.top), Math.round(m2.right), Math.round(m2.bottom)]})`);
+    // runda 2 (P3-1 kodu): menu przy krawędzi stoi obok punktu kliknięcia, nie na nim (bez odbicia przykrywałoby cenę, w którą kliknięto)
+    const cx = hr.right - axW - 20, cy = hr.bottom - axH - 20;
+    rec('warstwy', !!m2 && m2.right <= cx && m2.bottom <= cy, `róg prawy dolny: menu odbite na lewo i w górę od punktu kliknięcia (prawa krawędź ${Math.round(m2?.right)} ≤ ${Math.round(cx)}, dół ${Math.round(m2?.bottom)} ≤ ${Math.round(cy)})`);
+    await closeMenu();
+    await rightClick(null, { x: hr.left + 4, y: hr.top + 24 });
+    m2 = menu()?.getBoundingClientRect();
+    rec('warstwy', !!m2 && m2.left >= hr.left - 1 && m2.top >= hr.top - 1 && m2.right <= hr.right + 1 && m2.bottom <= hr.bottom + 1, 'róg lewy górny: menu mieści się w wykresie');
+    await closeMenu();
+    await closeAllNow();
+    // pasek sterowania: krok, wybór kroku, skoki, interwał, szybkość
+    const ctl = [...scr().querySelectorAll('.bt-ctl [data-bt="back"], .bt-ctl [data-bt="step"], .bt-ctl [data-bt="stepmenu"], .bt-ctl [data-bt="play"], .bt-ctl [data-bt="jump"], .bt-ctl [data-bt="jumpmenu"], .bt-ctl .bt-tf, .bt-ctl [data-speed]')];
+    const hc = hits(ctl);
+    rec('warstwy', hc.n >= 9 && hc.bad.length === 0, `pasek sterowania: środki ${hc.n} elementów trafiają w siebie (${hc.bad.join('; ')})`);
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(60);
+    const hs = hits([...scr().querySelectorAll('.bt-step-l [data-step], .bt-step-l input, .bt-step-l button[type="submit"]')]);
+    rec('warstwy', hs.n >= 7 && hs.bad.length === 0, `menu kroku: środki ${hs.n} elementów trafiają w siebie (${hs.bad.join('; ')})`);
+    scr().querySelector('[data-bt="stepmenu"]').click(); await sleep(40);
+    scr().querySelector('[data-bt="jumpmenu"]').click(); await sleep(60);
+    const hj = hits([...scr().querySelectorAll('.bt-jump-l button')]);
+    rec('warstwy', hj.n >= 7 && hj.bad.length === 0, `menu skoków: środki ${hj.n} pozycji trafiają w siebie (${hj.bad.join('; ')})`);
+    scr().querySelector('[data-bt="jumpmenu"]').click(); await sleep(40);
+    key('g'); await sleep(100);
+    const hg = hits([...scr().querySelectorAll('.bt-gd button, .bt-gd input')]);
+    rec('warstwy', hg.n >= 4 && hg.bad.length === 0, `okno daty: środki ${hg.n} elementów trafiają w siebie (${hg.bad.join('; ')})`);
+    key('Escape', {}, scr().querySelector('.bt-gd')); await sleep(60);
+    key('p'); await sleep(100);
+    const hp = hits([...scr().querySelectorAll('.bt-gp button, .bt-gp input')]);
+    rec('warstwy', hp.n >= 4 && hp.bad.length === 0, `okno ceny: środki ${hp.n} elementów trafiają w siebie (${hp.bad.join('; ')})`);
+    key('Escape', {}, scr().querySelector('.bt-gp')); await sleep(60);
+    rec('warstwy', document.documentElement.scrollWidth <= document.documentElement.clientWidth, 'bez poziomego przewijania strony');
+  });
+
+  // ---------- runda 2: klawiatura pod otwartym menu (P2-1 kodu, P1-1 wyglądu) ----------
+  const playingNow = () => scr().querySelector('[data-bt="play"]').getAttribute('aria-pressed') === 'true';
+  const isRewound = () => RP.cursor() < RP.book().hw;
+  const toastText = () => norm(document.getElementById('toast')?.textContent ?? '');
+  if (wide) await section('fokus', async () => {
+    await fresh('Sesja 174 (fokus)');
+    const L = lastPx();
+    await rightClick(q(L + 3));
+    const mi = [...menu().querySelectorAll('[role="menuitem"]')];
+    const firstOn = mi.find((b) => b.getAttribute('aria-disabled') !== 'true');
+    rec('fokus', !!firstOn && document.activeElement === firstOn, `po prawym kliku fokus stoi na pierwszej aktywnej pozycji (${document.activeElement?.dataset?.mi ?? document.activeElement?.tagName})`);
+    await shot('r2-menu-fokus');
+    const c0 = RP.cursor(), nOrd = RP.book().orders.length;
+    // skróty replayu pod otwartym menu: Spacja, Shift+→, B i S nic nie robią (zdarzenia na elemencie z fokusem, jak z prawdziwej klawiatury)
+    key(' ', {}, document.activeElement); await sleep(80);
+    rec('fokus', !!menu() && !playingNow(), 'Spacja pod otwartym menu nie włącza odtwarzania i nie zamyka menu');
+    key('ArrowRight', { shiftKey: true }, document.activeElement); await sleep(100);
+    rec('fokus', RP.cursor() === c0, `Shift+→ pod otwartym menu nie przesuwa kursora (${RP.cursor() - c0} s)`);
+    key('b', {}, document.activeElement); key('s', {}, document.activeElement); await sleep(100);
+    rec('fokus', RP.book().orders.length === nOrd && !pos(), 'B i S pod otwartym menu nie składają zleceń');
+    // zdarzenia wysłane na dokument (nie na menu): strzałka, Enter i Esc działają niezależnie od tego, gdzie jest fokus
+    key('ArrowDown', {}, document); await sleep(30);
+    rec('fokus', document.activeElement === mi[1], `strzałka wysłana na dokument przesuwa fokus (aktywny: ${document.activeElement?.dataset?.mi})`);
+    document.activeElement.blur(); await sleep(20);
+    // fokus poza menu (cel zdarzeń: body): skróty replayu dalej nie działają, bo menu jest otwarte (flaga w replayu, nie tylko pomijanie celu wewnątrz menu)
+    const c1 = RP.cursor();
+    key(' ', {}, document.body); key('ArrowRight', { shiftKey: true }, document.body); key('b', {}, document.body); await sleep(150);
+    rec('fokus', !!menu() && !playingNow() && RP.cursor() === c1 && RP.book().orders.length === nOrd && !pos(), `po utracie fokusu Spacja, Shift+→ i B wysłane na body pod otwartym menu nic nie robią (kursor +${RP.cursor() - c1} s, zleceń ${RP.book().orders.length}, odtwarzanie ${playingNow()})`);
+    key('ArrowDown', {}, document); await sleep(30);
+    rec('fokus', menu().contains(document.activeElement), 'po utracie fokusu strzałka na dokumencie wraca do menu');
+    key('Escape', {}, document.body); await sleep(80);
+    rec('fokus', !menu() && hostOf().contains(document.activeElement), `Esc wysłany na body zamyka menu i oddaje fokus wykresowi (${document.activeElement?.className})`);
+    // po zamknięciu skróty działają znów
+    key('ArrowRight', { shiftKey: true }); await settle();
+    rec('fokus', RP.cursor() > c0, 'po zamknięciu menu Shift+→ znów przesuwa kursor');
+    // Enter wysłany na dokument wybiera pozycję z fokusem (kursor tuż za znakiem wodnym po kroku w przód, więc handel nie jest zablokowany)
+    rec('fokus', !isRewound(), 'kursor nie jest cofnięty przed znak wodny');
+    const L2 = lastPx(); let up = q(L2 + 3);
+    await rightClick(up); up = cp;
+    document.activeElement.blur(); key('ArrowDown', {}, document); await sleep(30);
+    const sel = document.activeElement?.dataset?.mi;
+    key('Enter', {}, document); await sleep(120);
+    rec('fokus', !menu() && RP.book().orders.length === 1, `Enter wysłany na dokument wybiera pozycję z fokusem (${sel}): zleceń ${RP.book().orders.length}, menu otwarte: ${!!menu()}, komunikat: «${toastText()}»`);
+    await closeAllNow();
+  });
+
+  // ---------- runda 2: menu nieaktualne (P1-1 kodu): wstrzymanie odtwarzania i odrzucenie zmienionej pozycji ----------
+  if (wide) await section('zmiana', async () => {
+    await fresh('Sesja 174 (zmiana)');
+    RP.setSpeed(10);
+    RP.play(); await sleep(300);
+    rec('zmiana', playingNow(), 'odtwarzanie włączone przed otwarciem menu');
+    await rightClick(q(lastPx() + 3));
+    const cA = RP.cursor(); await sleep(500);
+    rec('zmiana', !!menu() && !playingNow() && RP.cursor() === cA, `otwarcie menu wstrzymuje odtwarzanie (grało: ${playingNow()}, kursor stoi: ${RP.cursor() === cA})`);
+    key('Escape', {}, document); await sleep(200);
+    rec('zmiana', !menu() && playingNow(), 'zamknięcie menu wznawia odtwarzanie, które było włączone');
+    RP.pause(); await sleep(60);
+    await rightClick(q(lastPx() + 3)); key('Escape', {}, document); await sleep(200);
+    rec('zmiana', !menu() && !playingNow(), 'menu otwarte przy pauzie nie włącza odtwarzania po zamknięciu');
+    // wybór pozycji przy grającym odtwarzaniu: zlecenie złożone, odtwarzanie wznowione
+    RP.play(); await sleep(150);
+    await rightClick(q(lastPx() + 3));
+    item('order-sell-limit').click(); await sleep(250);
+    rec('zmiana', RP.book().orders.length === 1 && playingNow(), `wybór pozycji składa zlecenie (${RP.book().orders.length}) i wznawia odtwarzanie (${playingNow()})`);
+    RP.pause(); await sleep(60);
+    await closeAllNow();
+
+    // (a) Dołóż po zamknięciu pozycji w trakcie otwartego menu: nie otwiera nowej pozycji bez SL
+    RP.orders().choosePreset('scalp'); await sleep(80);
+    RP.orders().submit('buy'); await sleep(150);
+    await rightClick(q(lastPx()));
+    rec('zmiana', !!item('add-market') && !!pos(), `menu z pozycją ma Dołóż market («${lab('add-market')}»)`);
+    RP.orders().closeAll(); await sleep(150);
+    rec('zmiana', !pos() && !!menu(), 'pozycja zamknięta przy otwartym menu');
+    item('add-market').click(); await sleep(200);
+    rec('zmiana', !pos() && RP.book().orders.length === 0, `Dołóż po zamknięciu pozycji nic nie otwiera (pozycja: ${JSON.stringify(pos() && { dir: pos().dir, sl: pos().sl })})`);
+    rec('zmiana', !!menu() && !itemIds().includes('add-market') && itemIds().some((x) => x.startsWith('order-')), `menu przerysowane ze stanu bieżącego: ${itemIds().join(', ')}`);
+    rec('zmiana', /otwórz menu ponownie/i.test(toastText()), `komunikat o zmianie: «${toastText()}»`);
+    rec('zmiana', !playingNow(), 'po odrzuceniu menu zostaje otwarte, odtwarzanie wstrzymane');
+    await shot('r2-menu-po-zmianie');
+    await closeMenu();
+    // (b) Kup market po ruchu ceny: SL z etykiety nie może zmienić ryzyka po cichu
+    await rightClick(q(lastPx()));
+    const lab0 = lab('order-buy-market'), p0 = lastPx();
+    for (let i = 0; i < 60 && lastPx() === p0; i++) { RP.step(1); await sleep(40); }
+    rec('zmiana', lastPx() !== p0, `cena ruszyła przy otwartym menu (${p0} → ${lastPx()})`);
+    item('order-buy-market').click(); await sleep(200);
+    rec('zmiana', !pos() && RP.book().orders.length === 0, `market po ruchu ceny nie składa się według starej etykiety («${lab0}»)`);
+    rec('zmiana', !!menu() && itemIds().some((x) => x.startsWith('order-')), `menu przerysowane ze stanu bieżącego: ${itemIds().join(', ')}`);
+    await closeMenu();
+    await rightClick(q(lastPx()));
+    item('order-buy-market').click(); await sleep(200);
+    rec('zmiana', !!pos() && pos().sl === pos().entryPrice - 10, `ponowny wybór z odświeżonego menu przechodzi (SL ${pos()?.sl}, wejście ${pos()?.entryPrice})`);
+    await closeAllNow();
+  });
+
+  // ---------- runda 2: wygląd menu, cena kliknięcia, ilość jak w panelu, okna przy przycisku Skocz ----------
+  if (wide) await section('wyglad', async () => {
+    await fresh('Sesja 174 (wygląd)');
+    const L = lastPx();
+    await rightClick(q(L + 3));
+    const fs = (el) => parseFloat(getComputedStyle(el).fontSize);
+    await shot('r2-menu-kolory');
+    const l1 = menu().querySelector('.bt-cm-l'), d1 = menu().querySelector('.bt-cm-d');
+    rec('wyglad', fs(l1) >= 12 && fs(l1) <= 12.6, `tekst pozycji menu 12–12,5 px (jest ${fs(l1)})`);
+    rec('wyglad', fs(d1) >= 11 && fs(d1) <= 11.6, `opis pozycji menu 11 px (jest ${fs(d1)})`);
+    const probe = (v) => { const s = document.createElement('span'); s.style.color = `var(${v})`; document.body.append(s); const c = getComputedStyle(s).color; s.remove(); return c; };
+    const verbColor = (id) => { const v = item(id)?.querySelector('.bt-cm-v'); return v ? getComputedStyle(v).color : null; };
+    rec('wyglad', verbColor('order-sell-limit') === probe('--loss') && verbColor('order-buy-stop') === probe('--profit'), `słowo kierunku w kolorze: Sprzedaj ${verbColor('order-sell-limit')} (strata ${probe('--loss')}), Kup ${verbColor('order-buy-stop')} (zysk ${probe('--profit')})`);
+    rec('wyglad', item('order-sell-limit').querySelector('.bt-cm-v')?.textContent === 'Sprzedaj' && getComputedStyle(item('order-sell-limit').querySelector('.bt-cm-l')).color !== probe('--loss'), 'kolor ma tylko słowo kierunku, reszta etykiety zostaje');
+    await closeMenu();
+    // cena menu = cena linii kursora: kursor wykresu w trybie normalnym (linia stoi na kursorze, nie na zamknięciu świecy), cena z tego samego zaokrąglonego ticka
+    rec('wyglad', ch().chart.options().crosshair.mode === 0, `kursor wykresu w trybie normalnym (mode ${ch().chart.options().crosshair.mode}), bez magnesu na zamknięciu świecy`);
+    const r = hostOf().getBoundingClientRect();
+    const distinct = new Set();
+    for (const dy of [90, 131, 177, 233, 290]) {
+      await rightClick(null, { y: r.top + dy });
+      const want = q(ch().series.coordinateToPrice(dy));
+      if (!distinct.has(cp)) distinct.add(cp);
+      rec('wyglad', cp === want, `cena menu ${cp} = zaokrąglona cena linii kursora ${want} (y ${dy})`);
+      await closeMenu();
+    }
+    const pfm = ch().chart.options().localization.priceFormatter;
+    rec('wyglad', pfm(18360.57) === pfm(18360.5) && pfm(18360.57) !== pfm(18360.75), `etykieta osi kursora zaokrąglona do ticka (18360,57 → «${pfm(18360.57)}», menu 18360,50 → «${pfm(18360.5)}»)`);
+    rec('wyglad', distinct.size >= 4, `pięć wysokości kliknięcia daje różne ceny (${distinct.size} różnych): linia kursora nie przeskakuje po zamknięciach`);
+    // ilość dokładki: ta sama liczba co w polu „Wielkość” panelu (rynek, preset w $ i w % salda)
+    for (const [pid, qty] of [['scalp', 2], ['usd800', 4], ['pct2', 5]]) {
+      await closeAllNow();
+      RP.orders().choosePreset(pid); await sleep(100);
+      RP.orders().submit('buy'); await sleep(150);
+      await sleep(100);
+      await rightClick(q(lastPx()));
+      const mq = Number(/^Dołóż market (\d+)/.exec(lab('add-market'))?.[1]);
+      const fq = Number(P('[name="qty"]').value);
+      rec('wyglad', mq === fq && fq === qty, `preset ${pid}: ilość w menu ${mq} = pole „Wielkość” ${fq} = ${qty}`);
+      if (pid === 'scalp') rec('wyglad', /ilość z ryzyka/.test(det('add-market')), `opis mówi, skąd ilość: «${det('add-market')}»`);
+      await closeMenu();
+    }
+    await closeAllNow();
+    RP.orders().choosePreset('scalp'); await sleep(60);
+    // okna skoku wyrastają nad przyciskiem „Skocz” i nie przykrywają Kup/Sprzedaj
+    const jb = scr().querySelector('[data-bt="jump"]');
+    for (const [k, n] of [['g', 'gd'], ['p', 'gp']]) {
+      key(k); await sleep(150);
+      await shot(`r2-okno-${n}`);
+      const d = scr().querySelector(`.bt-${n}`), dr = d.getBoundingClientRect(), jr = jb.getBoundingClientRect();
+      rec('wyglad', !d.hidden && dr.bottom <= jr.top + 1 && Math.abs(dr.left - jr.left) <= 10, `okno ${n} nad przyciskiem Skocz (okno ${Math.round(dr.left)}–${Math.round(dr.right)} × ${Math.round(dr.top)}–${Math.round(dr.bottom)}, przycisk ${Math.round(jr.left)} × ${Math.round(jr.top)})`);
+      const by = ['buy', 'sell'].map((s) => P(`[data-o="${s}"]`).getBoundingClientRect());
+      const cover = by.some((b) => dr.left < b.right && dr.right > b.left && dr.top < b.bottom && dr.bottom > b.top);
+      rec('wyglad', !cover, `okno ${n} nie przykrywa Kup/Sprzedaj`);
+      const tt = parseFloat(getComputedStyle(d.querySelector('.bt-dlg-t')).fontSize);
+      rec('wyglad', tt >= 12, `tytuł okna ${n} ma co najmniej 12 px (${tt})`);
+      key('Escape', {}, d); await sleep(60);
+    }
+    // pole ceny w oknie ma spację tysięcy jak reszta ekranu
+    key('p'); await sleep(120);
+    rec('wyglad', /^\d{2} \d{3},\d{2}$/.test(norm(scr().querySelector('.bt-gp input[name="gpPrice"]').value)), `cena w oknie ze spacją tysięcy: «${scr().querySelector('.bt-gp input[name="gpPrice"]').value}»`);
+    const dirTxt = norm(scr().querySelector('.bt-gp .bt-gp-dir')?.textContent ?? '');
+    rec('wyglad', dirTxt.includes(norm(pxText(q(lastPx())))) && /od/.test(dirTxt), `okno ceny mówi, od jakiej ceny bieżącej szuka: «${dirTxt}»`);
+    key('Escape', {}, scr().querySelector('.bt-gp')); await sleep(60);
+  });
+
+  // ---------- runda 2: skok wstecz (przeglądanie przeszłości): nic z przyszłości nie rysuje się ani nie wycenia po cenie z przeszłości ----------
+  if (wide) await section('wstecz', async () => {
+    await fresh('Sesja 174 (wstecz)');
+    RP.orders().choosePreset('scalp'); await sleep(80);
+    // zamknięty trade (po kursorze po cofnięciu) i otwarta pozycja z zleceniem oczekującym
+    RP.orders().submit('buy'); await sleep(150);
+    await RP.goTo(nyAt('2024-03-12', '10:40')); await sleep(150);
+    RP.orders().closeAll(); await sleep(150);
+    const nTr = RP.doc().trades.length;
+    rec('wstecz', nTr === 1, `jeden zamknięty trade (${nTr})`);
+    await RP.goTo(nyAt('2024-03-12', '10:50')); await sleep(150);
+    // SL 200 pkt bez TP, żeby pozycja przeżyła do 11:10 na syntetycznych świecach
+    RP.orders().choosePreset(null); await sleep(60);
+    setF('sl', 200); setF('tp', ''); setF('qty', 1); await sleep(60);
+    RP.orders().submit('sell'); await sleep(150);
+    const entry = pos().entryPrice, dir = pos().dir, qty = pos().openQty;
+    await RP.goTo(nyAt('2024-03-12', '11:10')); await sleep(200);
+    const hwPx = lastPx(), hwT = RP.book().hw;
+    const uplHw = Math.round((hwPx - entry) * -1 * 20 * qty * 100) / 100;
+    rec('wstecz', /SHORT/i.test(ch().tradeLayer().textContent) && P('[data-o="back"]').hidden, `przed cofnięciem pozycja jest rysowana (${dir})`);
+    rec('wstecz', RP.accountState().upl === uplHw, `przed cofnięciem otwarty wynik po cenie bieżącej (${RP.accountState().upl} = ${uplHw})`);
+    // runda 3 (R2-P3-2): księga i trade'y przed przeglądaniem (migawka) muszą być identyczne po „Wróć do teraz”
+    const bookBefore = JSON.stringify(RP.book()), tradesBefore = JSON.stringify(RP.doc().trades);
+    // pozycja otwarta przed kursorem: kursor w środku jej trwania, etykieta P&L na linii pozycji = otwarty wynik z paska konta (po ostatniej prawdziwej cenie), nie po cenie z przeszłości
+    await RP.goTo(nyAt('2024-03-12', '11:00')); await sleep(250);
+    const midPx = lastPx(), uplMid = RP.accountState().upl;
+    const { fmtMoney } = await import('/js/format.js');
+    rec('wstecz', midPx !== hwPx, `kursor w środku trwania pozycji stoi na innej cenie (${midPx}) niż znak wodny (${hwPx})`);
+    rec('wstecz', /SHORT/i.test(ch().tradeLayer().textContent), 'pozycja otwarta przed kursorem jest rysowana');
+    rec('wstecz', norm(ch().tradeLayer().textContent).includes(norm(fmtMoney(uplHw))) && uplMid === uplHw, `etykieta P&L na linii pozycji (${norm(ch().tradeLayer().textContent).slice(0, 60)}) = otwarty wynik po ostatniej prawdziwej cenie ${norm(fmtMoney(uplHw))}`);
+    await RP.goTo(nyAt('2024-03-12', '10:20')); await sleep(250);
+    const past = lastPx();
+    rec('wstecz', past !== hwPx, `kursor stoi na innej cenie (${past}) niż znak wodny (${hwPx})`);
+    rec('wstecz', !/SHORT|LONG/i.test(ch().tradeLayer().textContent), `pozycja otwarta po kursorze nie jest rysowana na wykresie («${norm(ch().tradeLayer().textContent).slice(0, 80)}»)`);
+    rec('wstecz', RP.accountState().upl === uplHw, `otwarty wynik liczony po ostatniej prawdziwej cenie ${hwPx}, nie po cenie z przeszłości ${past} (${RP.accountState().upl} = ${uplHw})`);
+    const acct = norm(scr().querySelector('.bt-acct')?.textContent ?? '');
+    rec('wstecz', /Podgląd przeszłości · P&L z .+ NY/.test(acct), `dopisek w pasku konta: «${acct}»`);
+    const pastEl = scr().querySelector('.bt-ac-past');
+    const probeC = (v) => { const e = document.createElement('span'); e.style.color = `var(${v})`; scr().querySelector('.bt-acct').append(e); const c = getComputedStyle(e).color; e.remove(); return c; };
+    rec('wstecz', !!pastEl && parseFloat(getComputedStyle(pastEl).fontSize) >= 12 && getComputedStyle(pastEl).color === probeC('--warn'), `dopisek podglądu: ${pastEl && getComputedStyle(pastEl).fontSize}, kolor ostrzeżenia (${pastEl && getComputedStyle(pastEl).color} = ${probeC('--warn')})`);
+    const dk = RP.dock();
+    dk.setTab('pos'); await sleep(120);
+    const lastCell = norm(scr().querySelector('.bt-dk-pos [data-c="last"]')?.textContent ?? '');
+    rec('wstecz', lastCell === norm(pxText(hwPx)), `szuflada: cena pozycji ${lastCell} = ostatnia prawdziwa ${norm(pxText(hwPx))}`);
+    dk.setTab('hist'); await sleep(120);
+    rec('wstecz', scr().querySelectorAll('.bt-dk-hist tbody tr').length === 0, `trade zamknięty po kursorze nie jest w historii (${scr().querySelectorAll('.bt-dk-hist tbody tr').length} wierszy)`);
+    dk.setTab('pos');
+    await shot('r2-wstecz');
+    // handel zablokowany z wyjaśnieniem i przyciskiem „Wróć do teraz”
+    rec('wstecz', P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled, 'Kup i Sprzedaj nieaktywne');
+    rec('wstecz', /Przeglądasz wstecz/.test(P('.bt-ord-note').textContent) && /NY/.test(P('.bt-ord-note').textContent), `wyjaśnienie z godziną: «${norm(P('.bt-ord-note').textContent)}»`);
+    rec('wstecz', !P('[data-o="back"]').hidden && /Wróć do teraz/.test(P('[data-o="back"]').textContent), `przycisk: «${norm(P('[data-o="back"]').textContent)}»`);
+    await rightClick(q(past + 3));
+    rec('wstecz', itemIds().slice().sort().join() === 'back-now,jump-price', `menu przy przeglądaniu: tylko skok do ceny i Wróć do teraz (${itemIds().join(', ')})`);
+    rec('wstecz', /^Wróć do teraz/.test(lab('back-now')), `pozycja powrotu: «${lab('back-now')}»`);
+    item('back-now').click(); await settle();
+    rec('wstecz', RP.cursor() === RP.book().hw && !menu(), `„Wróć do teraz” z menu wraca do znaku wodnego (${RP.cursor()} = ${RP.book().hw})`);
+    await RP.goTo(nyAt('2024-03-12', '10:20')); await sleep(250);
+    await closeMenu();
+    P('[data-o="back"]').click(); await settle();
+    rec('wstecz', RP.cursor() === RP.book().hw && /SHORT/i.test(ch().tradeLayer().textContent), 'po „Wróć do teraz” pozycja znów jest rysowana');
+    rec('wstecz', JSON.stringify(RP.book()) === bookBefore && JSON.stringify(RP.doc().trades) === tradesBefore, `księga i trade'y po przeglądaniu i powrocie identyczne co przed (księga ${bookBefore.length} znaków, trade'y ${tradesBefore.length})`);
+    rec('wstecz', !/Podgląd przeszłości/.test(norm(scr().querySelector('.bt-acct')?.textContent ?? '')), 'po powrocie dopisek znika');
+    await closeAllNow();
+  });
+
+  // ---------- telefon: przytrzymanie otwiera menu, ruch przewija ----------
+  if (narrow) await section('telefon', async () => {
+    await closeAllNow();
+    const hr = hostOf().getBoundingClientRect(), L = lastPx(), py = yOfPx(q(L + 3));
+    const tp = (type, x, y) => document.elementFromPoint(x, y).dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1 }));
+    const x0 = hr.left + 100;
+    tp('pointerdown', x0, py); await sleep(250);
+    rec('telefon', !menu(), 'po 250 ms menu jeszcze się nie otwiera');
+    await sleep(350);
+    rec('telefon', !!menu(), 'przytrzymanie 500 ms bez ruchu otwiera menu');
+    tp('pointerup', x0, py); await sleep(60);
+    rec('telefon', !!menu(), 'menu zostaje po puszczeniu palca');
+    const mr = menu().getBoundingClientRect();
+    rec('telefon', getComputedStyle(menu()).position === 'fixed' && Math.abs(mr.bottom - window.innerHeight) <= 2 && mr.left >= -1 && mr.right <= window.innerWidth + 1, `arkusz od dołu (fixed, dół ${Math.round(mr.bottom)} z ${window.innerHeight}, ${Math.round(mr.left)}–${Math.round(mr.right)})`);
+    const h = hits([...menu().querySelectorAll('[data-mi]')]);
+    rec('telefon', h.n >= 3 && h.bad.length === 0, `pozycje arkusza nie są przykryte (${h.n}; ${h.bad.join('; ')})`);
+    await shot('menu-arkusz');
+    await closeMenu();
+    // ruch > 8 px przerywa: przewija wykres, menu się nie otwiera
+    tp('pointerdown', x0, py); await sleep(100);
+    tp('pointermove', x0 + 12, py); await sleep(600);
+    tp('pointerup', x0 + 12, py); await sleep(60);
+    rec('telefon', !menu(), 'ruch o 12 px przed 500 ms: menu się nie otwiera');
+    // ruch ≤ 8 px nie przerywa
+    tp('pointerdown', x0, py); await sleep(100);
+    tp('pointermove', x0 + 5, py); await sleep(520);
+    rec('telefon', !!menu(), 'drżenie o 5 px nie przerywa przytrzymania');
+    tp('pointerup', x0 + 5, py); await closeMenu();
+    // krótkie stuknięcie nie otwiera
+    tp('pointerdown', x0, py); await sleep(80); tp('pointerup', x0, py); await sleep(600);
+    rec('telefon', !menu(), 'krótkie stuknięcie nie otwiera menu');
+    rec('telefon', document.documentElement.scrollWidth <= document.documentElement.clientWidth, 'bez poziomego przewijania strony');
+    const ctl = [...scr().querySelectorAll('.bt-ctl [data-bt="back"], .bt-ctl [data-bt="step"], .bt-ctl [data-bt="stepmenu"], .bt-ctl [data-bt="play"]')];
+    const hc = hits(ctl);
+    rec('telefon', hc.n >= 3 && hc.bad.length === 0, `przyciski kroku nie są przykryte (${hc.n}; ${hc.bad.join('; ')})`);
+  });
+
+  out.textContent = JSON.stringify({ checks });
+} catch (e) {
+  out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) });
+}
+</script>
+</body>
+</html>

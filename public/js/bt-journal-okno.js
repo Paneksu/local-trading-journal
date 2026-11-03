@@ -7,13 +7,16 @@
 // sesji (saveDoc, nie Notion; rysunki sesji bez zmian), ceny, czasy, R i $ tylko do odczytu (pozycja w edytorze bez kłódki), nawigacja po zamkniętych trade'ach sesji.
 // English: backtest trade journal in the classic Live trade window: chart preview + chart editor on session candles cut at the trade's close, drawings snapshot, setup and note.
 import { t } from './i18n.js';
-import { esc, fmtR, fmtMoney } from './format.js';
+import { esc, fmtR, fmtUsdFull as fmtMoney } from './format.js';
 import { createPodglad, tfSec } from './podglad.js';
 import { aggregate } from './swiece.js';
 import { mergeBase, candlesAt, isReplayTf } from './bt-swieca.js';
 import { pxText } from './bt-journal.js';
 import { SETUP_RE, SETUP_MAX, journalState } from './bt-notion.js';
 import { STATE_LABEL, fmtHeld } from './bt-szuflada.js';
+import { MULT } from './bt-wypelnienia.js';
+import { fillsOf, gapUnderBe } from './bt-ksiega.js';
+import { tpOrder } from './bt-drabinka.js';
 import { overlay } from './modal.js';
 
 const HIST_DAYS = 390, SEC_DAYS = 8, MAX_BARS = 50_000;
@@ -81,7 +84,10 @@ export function journalSource({ fetchRange, instrument, maxT }) {
 // trade backtestu → argument podglądu i edytora (jak tradeArg w app.js: czasy w ms, sl = pierwotny SL, be = cena BE)
 export const tradeArgOf = (x) => ({
   at: x.entryT * 1000, exitAt: Number.isFinite(x.exitT) ? x.exitT * 1000 : null, instrument: x.instrument, entryPrice: x.entryPrice, exitPrice: x.exitPrice,
-  sl: x.sl0, tp: x.tp ?? null, be: x.be ? x.entryPrice : null, r: x.r, pnl: x.pnl, contract: '', date: '', time: '',
+  sl: x.sl0, tp: x.tp ?? null,
+  // [U] 2.11.2026 «na backtestingu jak i na normalnym journalingu powinno byc miejsce do wpisania gdzie trade jest juz bez ryzyka»: linia BE jak w dzienniku (ta sama geometria positionExtras)
+  // stoi na cenie, przy której trade stał się bez ryzyka (próg auto-BE albo cena bieżąca przy ręcznym BE); trade bez beAt z BE: cena wejścia, jak dotąd
+  be: Number.isFinite(x.beAt) ? x.beAt : x.be ? x.entryPrice : null, r: x.r, pnl: x.pnl, contract: '', date: '', time: '',
 });
 
 // openJournalWindow(opts) → { close, el, tradeId(), show(id), editing(), view() }
@@ -96,7 +102,7 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
       <div class="lb-navs"><button type="button" class="icon-btn lb-nav prev" data-jw="prev" aria-label="${esc(t('Poprzedni'))}" title="${esc(t('Poprzedni (←)'))}">${I_PREV}</button><button type="button" class="icon-btn lb-nav next" data-jw="next" aria-label="${esc(t('Następny'))}" title="${esc(t('Następny (→)'))}">${I_NEXT}</button></div>
       <div class="lb-tr"><button type="button" class="icon-btn lb-det" data-jw="details" aria-pressed="false">${I_PANEL}</button><button type="button" class="icon-btn lb-close" data-jw="close" aria-label="${esc(t('Zamknij Journal'))}">${I_CLOSE}</button></div></div>
     <div class="lb-stage"><div class="lb-frame is-chart"><div class="lb-chart"></div></div></div>
-    <div class="lb-info"><div class="lb-cap"></div><dl class="lb-facts"></dl>
+    <div class="lb-info"><div class="lb-cap"></div><dl class="lb-facts"></dl><div class="bt-jw-pt"></div><div class="bt-jw-lv"></div>
       <div class="bt-jw-f">
         <label class="bt-jr-f"><span class="lbl">${esc(t('Setup'))}</span><input class="sp-in" name="setup" type="text" list="${dl}" maxlength="${SETUP_MAX}" autocomplete="off"><datalist id="${dl}">${setups.map((s) => `<option value="${esc(s)}"></option>`).join('')}</datalist></label>
         <label class="bt-jr-f bt-jw-n"><span class="lbl">${esc(t('Notatka'))}</span><textarea class="sp-in" name="notes" rows="3" maxlength="2000"></textarea></label>
@@ -111,19 +117,61 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
   const idx = () => list().findIndex((x) => x.id === cur?.id);
   const msg = (s) => { $('.bt-jw-msg').textContent = s || ''; };
 
+  // fakt z logu trade'a: „SL na 18 290,25 · 10:14:35” (wyzwolony; cena progu jest w wierszu BE) albo „nie wyzwolone” (uzbrojony do końca trade'a)
+  function autoBeFact(x) {
+    const e = (Array.isArray(x.log) ? x.log : []).filter((l) => l && l.k === 'be-auto' && l.v && typeof l.v === 'object' && l.v.changed !== false).pop();
+    if (e) return t('SL na {sl} · {time}', { sl: pxText(e.v.sl), time: fmtTime(e.at) });
+    return x.autoBe && typeof x.autoBe === 'object' && !x.autoBe.done ? t('nie wyzwolone') : null;
+  }
   function facts(x) {
     const dur = Number.isFinite(x.exitT) ? x.exitT - x.entryT : null;
     const rows = [
       [t('Wejście'), `${pxText(x.entryPrice)} · ${fmtTime(x.entryT)}`], [t('Wyjście'), `${pxText(x.exitPrice)} · ${fmtTime(x.exitT)}`],
       [t('Czas trwania'), dur != null ? fmtHeld(dur) : null], [t('Instrument'), x.instrument], [t('Kierunek'), x.dir === 'Short' ? t('Short') : t('Long')], [t('Ilość'), String(x.qty)],
-      ['SL / TP', `${pxText(x.sl0)} / ${x.tp != null ? pxText(x.tp) : '–'}${x.be ? ' · BE' : ''}`],
-      ['R', Number.isFinite(x.r) ? fmtR(x.r) : '–', x.r], ['P&L', Number.isFinite(x.pnl) ? fmtMoney(x.pnl) : '–', x.pnl],
+      // 1.7-1 (P5): SL w faktach to PIERWSZY postawiony SL (od niego liczy się R); bez SL „bez SL”
+      [t('SL (pierwszy) / TP'), `${x.sl0 != null ? pxText(x.sl0) : t('bez SL')} / ${x.tp != null ? pxText(x.tp) : '–'}${x.be ? ' · BE' : ''}`],
+      ['R', Number.isFinite(x.r) ? fmtR(x.r) : (x.rUsd === 0 ? `– (${t('ryzyko pierwotne 0')})` : '–'), x.r], ['P&L', Number.isFinite(x.pnl) ? fmtMoney(x.pnl) : '–', x.pnl],
       [t('Prowizja'), x.fee > 0 ? fmtMoney(-x.fee) : null],
       ['MAE / MFE', `${Number.isFinite(x.maeR) ? fmtR(x.maeR) : '–'} / ${Number.isFinite(x.mfeR) ? fmtR(x.mfeR) : '–'}`],
-      [t('Wyjścia'), (x.exits || []).length > 1 ? x.exits.map((e) => `${e.qty}× ${pxText(e.price)}`).join(', ') : null],
+      // 1.7-2: odwrócenie to dwa trade'y; odnośnik do trade'a zamkniętego odwróceniem (do Notion nie idzie)
+      [t('Odwrócenie'), x.reverseOf ? `← ${x.reverseOf}` : null],
+      // 1.7-3: BE = cena, przy której trade jest bez ryzyka (to samo pole co w dzienniku); fakt Auto BE z chwilą wyzwolenia
+      [t('BE (bez ryzyka od ceny)'), Number.isFinite(x.beAt) ? pxText(x.beAt) : null],
+      [t('Auto BE'), autoBeFact(x)],
+      // gust (runda 2 pakietu 1.7-3): stop na BE wykonany po gorszej cenie (luka) mówi o tym wprost, żeby nie wyglądało, że BE nie zadziałał
+      [t('Wyjście z luką pod BE'), (() => { const g = gapUnderBe(x); return g ? t('SL na {sl}, wyjście {exit}', { sl: pxText(g.sl), exit: pxText(g.exit) }) : null; })()],
     ];
     const cl = (v) => (v > 1e-9 ? 'pos' : v < -1e-9 ? 'neg' : '');
     return rows.filter((r) => r[1]).map(([k, v, n]) => `<div><dt>${esc(k)}</dt><dd class="${n != null ? cl(n) : ''}">${esc(v)}</dd></div>`).join('');
+  }
+  // 1.7-2 (P3): tabela wejść i wyjść trade'a z kilkoma porcjami albo wyjściami: czas, zdarzenie, cena, ilość, powód, wynik porcji (brutto, po średnim koszcie w chwili wyjścia)
+  const WHY = () => ({ sl: 'SL', tp: 'TP', manual: t('ręcznie'), partial: t('część'), eod: t('koniec dnia'), reverse: t('odwrócenie') });
+  // 1.7-5: numer poziomu drabiny (TP1…) wg kolejności od najbliższego; pojedynczy TP zostaje „TP”
+  const tpName = (x, id) => { const ord = tpOrder(x.dir, Array.isArray(x.tps) ? x.tps : []); const i = ord.findIndex((l) => l.id === id); return ord.length > 1 && i >= 0 ? `TP${i + 1}` : 'TP'; };
+  // tabela poziomów drabiny (cena, procent, trafiony: czas, ilość, wynik) obok tabeli wejść i wyjść; tylko dla trade'a z kilkoma poziomami
+  function levels(x) {
+    const tps = Array.isArray(x.tps) ? x.tps.filter((l) => l && typeof l === 'object') : [];
+    if (tps.length < 2) return '';
+    const ord = tpOrder(x.dir, tps), exits = Array.isArray(x.exits) ? x.exits.filter((e) => e && typeof e === 'object') : [];
+    const sg = x.dir === 'Short' ? -1 : 1, m = MULT[x.instrument] || 0, cl = (v) => (v > 1e-9 ? 'pos' : v < -1e-9 ? 'neg' : '');
+    const rows = ord.map((l, i) => {
+      const e = l.hit ? exits.find((z) => z.tpId === l.id) : null;
+      const usd = e ? (e.price - (Number.isFinite(e.basis) ? e.basis : x.entryPrice)) * sg * e.qty * m : null;
+      const hitTxt = l.hit ? `${fmtTime(e ? e.t : l.hit.at)} · ${l.hit.qty} @ ${pxText(e ? e.price : l.price)}` : t('nietrafiony');
+      return `<tr><td>TP${i + 1}</td><td class="num">${esc(pxText(l.price))}</td><td class="num">${esc(i === ord.length - 1 ? t('reszta') : `${l.pct}%`)}</td><td>${esc(hitTxt)}</td><td class="num ${usd != null ? cl(usd) : ''}">${esc(usd != null ? fmtMoney(usd) : '–')}</td></tr>`;
+    }).join('');
+    return `<table class="tbl bt-jw-ptt"><thead><tr><th scope="col">${esc(t('Poziom'))}</th><th scope="col" class="num">${esc(t('Cena'))}</th><th scope="col" class="num">${esc(t('Procent'))}</th><th scope="col">${esc(t('Trafiony'))}</th><th scope="col" class="num">${esc(t('Wynik'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function portions(x) {
+    const fills = fillsOf(x), exits = Array.isArray(x.exits) ? x.exits.filter((e) => e && typeof e === 'object') : [];
+    if (fills.length < 2 && exits.length < 2) return '';
+    const sg = x.dir === 'Short' ? -1 : 1, m = MULT[x.instrument] || 0, why = WHY();
+    const cl = (v) => (v > 1e-9 ? 'pos' : v < -1e-9 ? 'neg' : '');
+    const rows = [
+      ...fills.map((p, i) => ({ t: p.t, k: 0, s: p.seq, html: `<td>${esc(fmtTime(p.t))}</td><td>${esc(i === 0 ? t('Wejście') : t('Dołóż'))}</td><td class="num">${esc(pxText(p.price))}</td><td class="num">${esc(p.qty)}</td><td></td><td class="num"></td>` })),
+      ...exits.map((e) => { const usd = (e.price - (Number.isFinite(e.basis) ? e.basis : x.entryPrice)) * sg * e.qty * m; return { t: e.t, k: 1, s: e.seq, html: `<td>${esc(fmtTime(e.t))}</td><td>${esc(t('Wyjście'))}</td><td class="num">${esc(pxText(e.price))}</td><td class="num">${esc(e.qty)}</td><td>${esc(e.tpId ? tpName(x, e.tpId) : why[e.reason] || e.reason || '')}</td><td class="num ${cl(usd)}">${esc(fmtMoney(usd))}</td>` }; }),
+    ].sort((a, b) => a.t - b.t || (Number.isFinite(a.s) && Number.isFinite(b.s) ? a.s - b.s : 0) || a.k - b.k);
+    return `<table class="tbl bt-jw-ptt"><thead><tr><th scope="col">${esc(t('Kiedy'))}</th><th scope="col">${esc(t('Zdarzenie'))}</th><th scope="col" class="num">${esc(t('Cena'))}</th><th scope="col" class="num">${esc(t('Ilość'))}</th><th scope="col">${esc(t('Powód'))}</th><th scope="col" class="num">${esc(t('Wynik porcji'))}</th></tr></thead><tbody>${rows.map((r) => `<tr>${r.html}</tr>`).join('')}</tbody></table>`;
   }
   function paintState() {
     if (!cur) return;
@@ -163,6 +211,8 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
     cur = x;
     f('setup').value = x.setup || ''; f('notes').value = x.notes || ''; f('setup').removeAttribute('aria-invalid'); msg('');
     $('.lb-facts').innerHTML = facts(x);
+    $('.bt-jw-pt').innerHTML = portions(x);
+    $('.bt-jw-lv').innerHTML = levels(x);
     paintState(); paintNav();
     preview(x);
     return true;

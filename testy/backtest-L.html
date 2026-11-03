@@ -95,16 +95,17 @@ try {
       const px = lastClose(), pts = px - p.entryPrice;
       const usd = r2(pts * 20 * p.qty - COM * p.qty), r = r2((pts * 20 * p.qty) / (SL * 20 * p.qty));
       const tx = tagText('pos');
-      rec('pl', tx.includes(`LONG ${p.qty}`) && tx.includes(fmtMoney(usd)) && tx.includes(fmtR(r)), `etykieta na linii pozycji: «${tx}» (ręcznie: ${pts} pkt, ${usd} $, ${r}R)`);
+      // odbiór wyglądu 1.7.0 P2-5: kwoty na plakietkach wykresu są w pełnych dolarach (połówka w górę)
+      rec('pl', tx.includes(`LONG ${p.qty}`) && tx.includes(fmtMoney(Math.round(usd))) && tx.includes(fmtR(r)), `etykieta na linii pozycji: «${tx}» (ręcznie: ${pts} pkt, ${usd} $, ${r}R)`);
       const a = acct();
       rec('pl', a.upl === usd && a.equity === r2(a.balance + a.upl), `equity = saldo + otwarty (${a.equity} = ${a.balance} + ${a.upl}; ręcznie ${usd})`);
       const eq = scr().querySelector('.bt-acct [data-ac="eq"] b')?.textContent;
-      rec('pl', eq === fmtMoney(a.equity, { plus: false }), `pasek konta: equity ${eq}`);
+      rec('pl', eq === fmtMoney(Math.round(a.equity), { plus: false }), `pasek konta: equity ${eq}`);
       // przy każdym ruchu kursora
       const before = tagText('pos');
       await stepN(3);
       const px2 = lastClose(), usd2 = r2((px2 - p.entryPrice) * 20 * p.qty - COM * p.qty);
-      rec('pl', tagText('pos').includes(fmtMoney(usd2)) && (px2 === px || tagText('pos') !== before), `etykieta po kroku: «${tagText('pos')}» (${usd2})`);
+      rec('pl', tagText('pos').includes(fmtMoney(Math.round(usd2))) && (px2 === px || tagText('pos') !== before), `etykieta po kroku: «${tagText('pos')}» (${usd2})`);
     });
 
     await section('szuflada', async () => {
@@ -112,7 +113,7 @@ try {
       rec('szuflada', d && !d.hidden && d.querySelector('[data-dk="pos"]')?.getAttribute('aria-selected') === 'true', 'szuflada widoczna, zakładka Pozycje');
       const row = d.querySelector('[data-row="NQ"]');
       const a = acct();
-      rec('szuflada', row && row.querySelector('[data-c="usd"]').textContent === fmtMoney(a.open[0].usd), `wiersz pozycji: P&L ${row?.querySelector('[data-c="usd"]').textContent} (${a.open[0].usd})`);
+      rec('szuflada', row && row.querySelector('[data-c="usd"]').textContent === fmtMoney(Math.round(a.open[0].usd)), `wiersz pozycji: P&L ${row?.querySelector('[data-c="usd"]').textContent} (${a.open[0].usd})`);
       rec('szuflada', /R$/.test(row?.querySelector('[data-c="r"]').textContent || '') && / \/ /.test(row?.querySelector('[data-c="exc"]').textContent || ''), `R i MAE / MFE na żywo (${row?.querySelector('[data-c="r"]').textContent}, ${row?.querySelector('[data-c="exc"]').textContent})`);
       const b0 = row.querySelector('[data-dka="be"]');
       await stepN(1);
@@ -123,7 +124,7 @@ try {
       const p0 = pos(), q0 = p0.openQty;
       ch().tradeLayer().querySelector('[data-tl="x"]').click(); await sleep(40);
       const b50 = ch().tradeLayer().querySelector('[data-tl="pct"][data-pct="50"]');
-      rec('procent', !!b50 && /50% \(\d+\)/.test(b50.textContent), `X na linii pozycji: menu 25/50/75/100% («${b50?.textContent}»)`);
+      rec('procent', !!b50 && /50% · \d+ z \d+/.test(b50.textContent), `X na linii pozycji: menu 25/50/75/100% («${b50?.textContent}»)`);
       b50.click(); await sleep(60);
       const p1 = pos(), want = Math.min(q0, Math.max(1, Math.round(q0 / 2)));
       rec('procent', want < q0 ? p1 && p1.openQty === q0 - want && p1.exits[0].qty === want && p1.exits[0].reason === 'partial' : !p1, `zamknięcie 50% z linii: ${q0} → ${p1?.openQty} (wyjście ${p1?.exits?.[0]?.qty})`);
@@ -152,7 +153,7 @@ try {
       rec('ryzyko', p && p.qty === want && bal !== 50000, `ryzyko ${RISK}% od bieżącego salda ${bal}: ${p?.qty} kontr. (oczekiwane ${want})`);
       await stepN(2);
       const px = lastClose(), usd = r2((p.entryPrice - px) * 20 * p.qty - COM * p.qty);
-      rec('ryzyko', tagText('pos').startsWith(`SHORT ${p.qty}`) && tagText('pos').includes(fmtMoney(usd)), `short: «${tagText('pos')}» (${usd})`);
+      rec('ryzyko', tagText('pos').startsWith(`SHORT ${p.qty}`) && tagText('pos').includes(fmtMoney(Math.round(usd))), `short: «${tagText('pos')}» (${usd})`);
       P('[data-o="close"]').click(); await sleep(80);
       scr().querySelector('.bt-jr [data-jr="skip"]')?.click(); await sleep(30);
     });

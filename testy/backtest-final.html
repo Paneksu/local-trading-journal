@@ -113,9 +113,9 @@ try {
     const marks = RP.chart().positionMarks();
     const t = marks.map((m) => m.title);
     const p = RP.book().positions.NQ;
-    // na wąskim wykresie znaczniki osi bez tytułów (tytuł niesie krótka plakietka obok osi)
-    const okT = narrow ? t.every((x) => x === '') : t.includes('LONG') && t.includes('SL') && t.includes('TP');
-    rec('pozycja', marks.length === 3 && okT && marks.every((m) => m.axis), `znaczniki pozycji przy osi cen: ${JSON.stringify(t)}`);
+    // [U] 2.11.2026 «Sama cena (Recommended)» (1.7-1): znaczniki osi bez tytułów na każdej szerokości (tytuł niesie plakietka przy osi, a tytuł znacznika leżałby dokładnie pod nią), sama cena wejścia, SL i TP
+    const okT = t.every((x) => x === '');
+    rec('pozycja', marks.length === 3 && okT && marks.every((m) => m.axis) && [p.entryPrice, p.sl, p.tp].every((px) => marks.some((m) => m.price === px)), `znaczniki pozycji przy osi cen: ${JSON.stringify(marks.map((m) => m.price))}`);
     const prices = marks.map((m) => m.price);
     rec('pozycja', p && prices.includes(p.entryPrice) && prices.includes(p.sl) && prices.includes(p.tp), 'znaczniki na cenie wejścia, SL i TP');
     if (narrow) {

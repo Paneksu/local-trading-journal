@@ -88,8 +88,10 @@ try {
       const d = orderDraw().position;
       const pr = d && positionPrices(d, 0.25);
       rec('market', d && d.kind === 'long-position' && pr.entryPrice === px && pr.sl === px - 10 && pr.tp === px + 20, `rysunek long-position z cenami: ${JSON.stringify(pr)}`);
-      rec('market', d && d.locked === false, 'rysunek odblokowany (SL/TP przeciągane)');
-      rec('market', P('[data-o="buy"]').disabled && P('[data-o="sell"]').disabled && !P('.bt-ord-pos').hidden, 'Buy/Sell wyłączone, panel pozycji widoczny');
+      // 1.7-1: rysunek pozycji jest tylko tłem stref (zablokowany), SL i TP przesuwa się liniami i plakietkami ([U] 1.11.2026 «… będą one po prawej, a nie po lewej.»)
+      rec('market', d && d.locked === true, 'rysunek pozycji zablokowany (tło stref)');
+      // 1.7-2 (P3 «Dokładanie + odwracanie»): test zastąpiony; było: Buy/Sell wyłączone przy otwartej pozycji (jedna pozycja na instrument), jest: aktywne, bo dokładają albo robią netting
+      rec('market', !P('[data-o="buy"]').disabled && !P('[data-o="sell"]').disabled && !P('.bt-ord-pos').hidden && P('[data-o="buy"]').dataset.mode === 'add' && P('[data-o="sell"]').dataset.mode !== 'add', 'Buy/Sell aktywne przy otwartej pozycji (Kup dokłada), panel pozycji widoczny');
       // stan w pliku sesji: natychmiast (bez opóźnienia kursora 1 s)
       const disk = await until(async () => { const x = await sessionOnDisk(doc.id); return x.book?.positions?.NQ ? x : null; }, 700);
       rec('zapis', disk && disk.book.positions.NQ.qty === 2 && performance.now() - t0 < 900, `book zapisany od razu: ${disk ? Math.round(performance.now() - t0) : 'brak'} ms`);
@@ -98,9 +100,11 @@ try {
 
     await section('sl', async () => {
       const p0 = pos();
-      const mgr = R.chart().manager();
-      const d = orderDraw().position;
-      mgr.update({ ...d, style: { ...d.style, stopLevel: 7.1 } }); // przeciągnięcie SL w rysunku: 7,1 pkt od wejścia → 7,0 (tick 0,25)
+      // 1.7-1: przeciągnięcie SL plakietką na wykresie: cena myszy 7,1 pkt od wejścia → 7,0 (tick 0,25)
+      const lay = R.chart().tradeLayer(), hostEl = lay.parentElement, hr = hostEl.getBoundingClientRect(), el = lay.querySelector('[data-k="psl"]'), er = el.getBoundingClientRect();
+      const pev = (type, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: er.left + 8, clientY: y, pointerId: 5, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true }));
+      const yy = hr.top + R.chart().series.priceToCoordinate(p0.entryPrice - 7.1);
+      pev('pointerdown', er.top + er.height / 2); pev('pointermove', yy); pev('pointerup', yy);
       await sleep(400);
       const p = pos();
       rec('sl', p && p.sl === p0.entryPrice - 7, `SL po przeciągnięciu zaokrąglony do ticka: ${p?.sl} (oczekiwane ${p0.entryPrice - 7})`);
@@ -109,16 +113,15 @@ try {
       rec('sl', pr.sl === p0.entryPrice - 7 && pr.tp === p0.tp, `rysunek zgodny z book: ${JSON.stringify(pr)}`);
       const disk = await until(async () => { const x = await sessionOnDisk(doc.id); return x.book?.positions?.NQ?.sl === p0.entryPrice - 7 ? x : null; }, 700);
       rec('sl', disk, 'zmiana SL zapisana od razu');
-      // przesunięcie wejścia w rysunku wraca na miejsce (wejście jest faktem)
-      const d2 = orderDraw().position;
-      mgr.update({ ...d2, points: d2.points.map((q) => ({ ...q, price: q.price + 5 })) });
-      await sleep(400);
-      const pr2 = positionPrices(orderDraw().position, 0.25);
-      rec('sl', pos().entryPrice === p0.entryPrice && pr2.entryPrice === p0.entryPrice, `wejście nie przesuwa się: ${pr2.entryPrice} vs ${p0.entryPrice}`);
-      // TP usunięty przez rysunek (profitLevel 0) → modifyPosition tp: null
-      const d3 = orderDraw().position;
-      mgr.update({ ...d3, style: { ...d3.style, profitLevel: 0 } });
-      await sleep(400);
+      // wejście jest faktem: plakietka wejścia nie jest przeciągana
+      const ent = lay.querySelector('[data-k="pos"]'), nr = ent.getBoundingClientRect();
+      const pev2 = (type, y) => ent.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: nr.left + 8, clientY: y, pointerId: 6, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true }));
+      pev2('pointerdown', nr.top + nr.height / 2); pev2('pointermove', nr.top + 60); pev2('pointerup', nr.top + 60);
+      await sleep(200);
+      rec('sl', pos().entryPrice === p0.entryPrice, `wejście nie przesuwa się: ${pos().entryPrice} vs ${p0.entryPrice}`);
+      // TP usunięty przyciskiem × na plakietce TP ([U] 1.11.2026 «Można usunąć oba») → modifyPosition tp: null
+      lay.querySelector('[data-k="ptp"] [data-tl="rm"]').click();
+      await sleep(300);
       rec('sl', pos().tp === null, `TP usunięty: ${pos().tp}`);
       clickO('close');
       rec('sl', !pos() && closedLog.length === 1, 'pozycja zamknięta ręcznie');
@@ -243,7 +246,7 @@ try {
       rec('wstecz', ['be', 'partial', 'close'].every((o) => P(`[data-o="${o}"]`).disabled), 'BE/część/zamknij wyłączone');
       rec('wstecz', /Przeglądasz wstecz/.test(P('.bt-ord-note').textContent), `notka: ${P('.bt-ord-note').textContent}`);
       const back = P('[data-o="back"]');
-      rec('wstecz', back && !back.hidden && /Wróć do bieżącej chwili/.test(back.textContent), 'przycisk „Wróć do bieżącej chwili”');
+      rec('wstecz', back && !back.hidden && /Wróć do teraz/.test(back.textContent), 'przycisk „Wróć do teraz”');
       rec('wstecz', !!pos() && !!orderDraw().position, 'pozycja nadal widoczna (book i rysunek)');
       const snap = JSON.stringify(pos());
       btn('step').click();
@@ -519,7 +522,7 @@ try {
       const q$ = (s) => pop().querySelector(s);
       const rows = () => pop().querySelectorAll('.bt-sj');
       rec('ustawienia', q$('[data-fk="tab-backtest"]') && q$('[data-fk="tab-backtest"]').getAttribute('aria-selected') === 'true', 'zakładka „Backtest” w popoverze');
-      rec('ustawienia', rows().length === 5 && pop().querySelectorAll('[data-bts^="skroty:"]').length === 12, `5 skoków domyślnych i 12 skrótów akcji (J: drawEntry; K: bez endDay; M: be, half) (${rows().length})`);
+      rec('ustawienia', rows().length === 5 && pop().querySelectorAll('[data-bts^="skroty:"]').length === 15, `5 skoków domyślnych i 15 skrótów akcji (1.7-4: goDate, goPrice; J: drawEntry; K: bez endDay; M: be, half; 1.7-2: reverse) (${rows().length})`);
       rec('ustawienia', q$('[data-btd="startTime"]').value === '09:00' && q$('[data-btd="speed"]').value === '100' && q$('[data-btd="risk"]').value === '500', 'domyślna godzina startu, ryzyko, szybkość');
       // dodaj
       q$('[data-act="bt-add"]').click();
@@ -557,8 +560,8 @@ try {
       rec('ustawienia', st2.bt.jumps[i].skrot === '' && !pop().querySelector('[aria-invalid="true"]') && q$('.bt-serr').hidden, 'Backspace czyści skrót i zdejmuje kolizję');
       key('k', {}, sk());
       // skrót akcji
-      key('p', {}, q$('[data-bts="skroty:play"]'));
-      rec('ustawienia', st2.bt.skroty.play === 'P', `skrót akcji zmieniony: ${st2.bt.skroty.play}`);
+      key('y', {}, q$('[data-bts="skroty:play"]'));
+      rec('ustawienia', st2.bt.skroty.play === 'Y', `skrót akcji zmieniony: ${st2.bt.skroty.play}`);
       // domyślne wartości
       const stt = q$('[data-btd="startTime"]'); stt.value = '10:00'; stt.dispatchEvent(new Event('change', { bubbles: true }));
       q$('[data-act="bt-risk-mode"][data-v="pct"]').click();
@@ -580,8 +583,8 @@ try {
       rec('ustawienia', kr.form.querySelector('[name="startTime"]').value === '10:00' && kr.form.querySelector('[name="risk"]').value === '1' && kr.form.querySelector('[data-k="riskMode"] [aria-pressed="true"]').dataset.v === 'pct', 'kreator sesji używa domyślnej godziny i ryzyka z Ustawień');
       kr.destroy(); host.remove();
       // sanitizeBt: złe dane wracają do domyślnych
-      const sx = sanitizeBt({ jumps: [{ id: 'a', name: 'x', cel: { kind: 'time', at: '25:99' }, skrot: 'Q' }, { id: 'b', name: 'y', cel: { kind: 'offset', sec: 60 }, skrot: 'W' }], startTime: '18:00', speed: 7, skroty: { play: 'P', nieznany: 'X' } });
-      rec('ustawienia', sx.jumps.length === 1 && sx.jumps[0].id === 'b' && sx.startTime === '09:00' && sx.speed === 100 && sx.skroty.play === 'P' && !('nieznany' in sx.skroty), `sanitizeBt odrzuca złe pola: ${JSON.stringify({ j: sx.jumps.length, s: sx.startTime, v: sx.speed })}`);
+      const sx = sanitizeBt({ jumps: [{ id: 'a', name: 'x', cel: { kind: 'time', at: '25:99' }, skrot: 'Q' }, { id: 'b', name: 'y', cel: { kind: 'offset', sec: 60 }, skrot: 'W' }], startTime: '18:00', speed: 7, skroty: { play: 'Y', nieznany: 'X' } });
+      rec('ustawienia', sx.jumps.length === 1 && sx.jumps[0].id === 'b' && sx.startTime === '09:00' && sx.speed === 100 && sx.skroty.play === 'Y' && !('nieznany' in sx.skroty), `sanitizeBt odrzuca złe pola: ${JSON.stringify({ j: sx.jumps.length, s: sx.startTime, v: sx.speed })}`);
       rec('ustawienia', collisions(btDefaults().skroty, btDefaults().jumps).length === 0, 'domyślne skróty i skoki bez kolizji');
     });
     out.textContent = JSON.stringify({ checks });

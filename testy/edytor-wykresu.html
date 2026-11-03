@@ -150,7 +150,7 @@ try {
   tzBtn.value = 'America/New_York'; tzBtn.dispatchEvent(new Event('change', { bubbles: true }));
   ok(P.chartTz() === 'America/New_York', `edytor: wybór strefy z listy (${P.chartTz()})`);
   const tf = ed.chart.options().localization.timeFormatter(candles[90][0]);
-  ok(tf === P.fmtIn('America/New_York').FULL.format(new Date(candles[90][0] * 1000)), `edytor: czas w strefie Nowego Jorku (${tf})`);
+  ok(tf === `${P.fmtIn('America/New_York').FULL.format(new Date(candles[90][0] * 1000))}\u00a0NY`, `edytor: czas w strefie Nowego Jorku z podpisem NY (${tf})`);
   P.setChartTzDefault('UTC');
   ok(ed.chart.timeScale().options().minBarSpacing >= ed.chart.timeScale().width() / 1500 - 1e-9, 'edytor: limit oddalenia 1 500 świec (minBarSpacing)');
 

@@ -17,6 +17,7 @@ import { createGuide } from './przewodnik.js';
 import { createSync, createDevices } from './urzadzenia.js';
 import { createShare, sanitizeShare } from './udostepnij.js';
 import { bindShots, buttonHtml as shotButtonHtml, statusHtml as shotStatusHtml } from './shots.js';
+import { appTz, tzShort } from './strefa.js';
 import { createPodglad, setChartTzDefault, setBadjDefault, validTz, observeMinis, miniEligible, useOverlayBackend, notifyOverlays } from './podglad.js';
 import { sanitizeChart, setChartSettings, applyChartVars, migrateLegacyOverlays } from './styl-wykresu.js';
 import { createNewsCards } from './newsy-karty.js';
@@ -86,7 +87,9 @@ function loadSettings() {
     if (o.custom) out.custom = sanitizeCustom(o.custom);
     out.customSeeded = o.customSeeded === true;
     out.share = sanitizeShare(o.share); // karty „Udostępnij”: nick, format, jednostka, kolor liczby
-    if (validTz(o.chartTz)) out.chartTz = o.chartTz; // P26: stała strefa osi wykresu ('' = strefa przeglądarki)
+    // P26: stała strefa czasu aplikacji ('' = domyślna, Nowy Jork; od 3.11.2026 nie strefa przeglądarki); u użytkownika chartTz nie było zapisane (sprawdzone), więc bez migracji:
+    // zapisana własna strefa zostaje jego wyborem (Decyzja sesji głównej 3.11.2026)
+    if (validTz(o.chartTz)) out.chartTz = o.chartTz;
     if (typeof o.chartBadj === 'boolean') out.chartBadj = o.chartBadj; // P38: B-ADJ domyślnie włączony
     out.chart = sanitizeChart(o.chart); // etap 14: Ustawienia → Wykresy (biała lista)
     out.bt = sanitizeBt(o.bt); // C2 (1.5.0): Ustawienia → Backtest (skoki, skróty, godzina startu, ryzyko, szybkość)
@@ -192,6 +195,14 @@ function applyBe(key, raw) {
 }
 
 // ---------- dane ----------
+// ostatnia odpowiedź /api/data (surowe wiersze): po zmianie strefy czasu dzień i godzina trade'ów liczą się od nowa bez pytania serwera
+let lastRaw = null;
+function retimeModel() {
+  if (!model || !lastRaw) return;
+  model = { ...model, trades: S.normalizeTrades(lastRaw.data.trades), konta: S.normalizeKonta(lastRaw.data.konta), finanse: S.normalizeFinanse(lastRaw.data.finanse), sig: JSON.stringify([lastRaw.data, lastRaw.colors, lastRaw.fields, appTz()]) };
+  sanitizeSelections();
+  renderAll();
+}
 // silent: odświeżenie w tle (powrót do karty, co 5 min). Bez migania: bez spinnera, bez przerysowania, gdy dane się nie zmieniły.
 async function load(force = false, { silent = false } = {}) {
   if (silent && (refreshing || loading)) return;
@@ -210,7 +221,9 @@ async function load(force = false, { silent = false } = {}) {
     clearTimeout(scanTimer);
     if (j.scanning) scanTimer = setTimeout(() => load(false, { silent: true }), 4000);
     if (j.meta) meta = j.meta;
-    const sig = JSON.stringify([j.data, j.colors, j.fields]);
+    // strefa aplikacji wchodzi do podpisu: dzień i godzina trade'ów (parseDT) zależą od niej
+    const sig = JSON.stringify([j.data, j.colors, j.fields, appTz()]);
+    lastRaw = j;
     const changed = !model || model.sig !== sig;
     model = {
       trades: changed ? S.normalizeTrades(j.data.trades) : model.trades,
@@ -318,7 +331,7 @@ function badge(text, color) { return `<span class="badge c-${esc(color || 'defau
 // „3 trade'y” / „3 trades” (liczba z odmianą)
 const nTrades = (n) => t.p("{n} trade'ów", n);
 const tLabel = (x) => x.name || [x.instrument, x.dir].filter(Boolean).join(' ') || t('Trade bez nazwy');
-const whenText = (x) => `${F.shortDate(x.date)}${x.time ? ` ${x.time}` : ''}`;
+const whenText = (x) => `${F.shortDate(x.date)}${x.time ? ` ${x.time}\u00a0${tzShort()}` : ''}`;
 
 function delta(cur, prev, { fmt, better = 'high', range }) {
   if (!range.prev) return '';
@@ -671,7 +684,7 @@ function minuteCardHtml(ext) {
   const D = minuteData(ext);
   minPts = [];
   if (!D.all) {
-    return `<div class="card glint span-wide" id="minute-card"><div class="card-h"><h3>${L('Godzina wejścia')}<span class="sub">${L('każdy trade w swojej minucie')}</span></h3></div>
+    return `<div class="card glint span-wide" id="minute-card"><div class="card-h"><h3>${L('Godzina wejścia')} <span class="tz-tag" title="${esc(t('Strefa czasu z Ustawień'))}">${esc(tzShort())}</span><span class="sub">${L('każdy trade w swojej minucie')}</span></h3></div>
       <div class="empty mini"><p>${L("Brak trade'ów z godziną wejścia")}${D.noTime ? ` (${L('{n} bez godziny', { n: D.noTime })})` : ''}. ${L('Wpisz godzinę w polu „Data” w Notion albo w formularzu „Dodaj trade”.')}</p></div></div>`;
   }
   minPts = D.shown.map((x) => {
@@ -691,7 +704,7 @@ function minuteCardHtml(ext) {
   const range = n ? `${minPts[0].t.time}–${minPts[n - 1].t.time}` : '';
   const foot = [D.noTime ? `<b>${L('{n} bez godziny', { n: D.noTime })}</b> ${L('(pominięte)')}` : '', D.noR ? `<b>${L('{n} bez R', { n: D.noR })}</b> ${L('(pominięte)')}` : '', L('Strzałki przechodzą między trade\'ami, Enter pokazuje szczegóły.')].filter(Boolean).join(' · ');
   const body = n ? '<div class="chart lolli" id="minute"></div>' : `<div class="empty mini"><p>${L('Brak trade\'ów z godziną i R w tej sesji.')}</p></div>`;
-  return `<div class="card glint span-wide" id="minute-card"><div class="card-h"><h3>${L('Godzina wejścia')}<span class="sub">${L('R wg minuty wejścia')}${n ? ` · ${L('zakres {r}', { r: range })} · ${esc(nTrades(n))}` : ''}</span></h3>${seg}</div>
+  return `<div class="card glint span-wide" id="minute-card"><div class="card-h"><h3>${L('Godzina wejścia')} <span class="tz-tag" title="${esc(t('Strefa czasu z Ustawień'))}">${esc(tzShort())}</span><span class="sub">${L('R wg minuty wejścia')}${n ? ` · ${L('zakres {r}', { r: range })} · ${esc(nTrades(n))}` : ''}</span></h3>${seg}</div>
     ${body}<p class="note bk-foot">${foot}</p></div>`;
 }
 function drawMinute() {
@@ -1135,7 +1148,7 @@ function renderTrades(range) {
   const th = COLS.map(([k, l, a]) => {
     if (k === 'mini') return `<th class="${a}">${esc(l)}</th>`; // miniatura nie ma sortowania
     const on = state.sortK === k;
-    return `<th class="${a}" aria-sort="${on ? (state.sortD === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-btn" data-act="sort" data-v="${k}">${esc(l)}<span class="si" aria-hidden="true">${on ? (state.sortD === 'asc' ? ICON.sortUp(12) : ICON.sortDown(12)) : ''}</span></button></th>`;
+    return `<th class="${a}" aria-sort="${on ? (state.sortD === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-btn" data-act="sort" data-v="${k}">${esc(l)}${k === 'date' ? ` <span class="tz-tag" title="${esc(t('Strefa czasu z Ustawień'))}">${esc(tzShort())}</span>` : ''}<span class="si" aria-hidden="true">${on ? (state.sortD === 'asc' ? ICON.sortUp(12) : ICON.sortDown(12)) : ''}</span></button></th>`;
   }).join('');
   const tr = shown.map((t) => {
     const r = resOf(t);
@@ -1261,10 +1274,10 @@ function lbEl() {
 
 function factsOf(x) {
   const kontaNames = x.konta.map((id) => model.konta.find((k) => k.id === id)?.name).filter(Boolean);
-  const exit = x.exitTime ? `${x.exitDate && x.exitDate !== x.date ? F.shortDate(x.exitDate) + ' ' : ''}${x.exitTime}` : null;
+  const exit = x.exitTime ? `${x.exitDate && x.exitDate !== x.date ? F.shortDate(x.exitDate) + ' ' : ''}${x.exitTime}\u00a0${tzShort()}` : null;
   const f = [
     [t('Typ'), typLabel(x.typ)],
-    [t('Wejście'), `${F.longDate(x.date)}${x.time ? ' · ' + x.time : ''}`],
+    [t('Wejście'), `${F.longDate(x.date)}${x.time ? ' · ' + x.time + '\u00a0' + tzShort() : ''}`],
     [t('Wyjście'), exit],
     [t('Czas trwania'), x.dur != null ? F.fmtDur(x.dur) : null],
     [t('Instrument'), x.instrument], [t('Kierunek'), x.dir], [t('Setup'), x.setup], [t('Sesja'), x.session],
@@ -1649,7 +1662,7 @@ const prop = prop_;
 // Dane raz z lokalnego serwera, potem przeliczenie co minutę bez sieci (newsy-karty.js); karty w panelu bocznym od 1024 px, poniżej pod statystykami w widoku głównym.
 const newsOn = () => settings.chart.newsCard !== false;
 const earnOn = () => (typeof settings.chart.earningsCard === 'boolean' ? settings.chart.earningsCard : !!meta.hasFinnhubKey);
-const newsCards = createNewsCards({ getTz: () => settings.chartTz || '', getPrefs: () => settings.chart.overlays, onChange: () => paintNewsCards() });
+const newsCards = createNewsCards({ getTz: () => appTz(), getPrefs: () => settings.chart.overlays, onChange: () => paintNewsCards() });
 const newsSlot = (limit = 0) => `<div class="nws-slot" data-nws="news" data-limit="${limit}">${newsCards.news({ limit }).html}</div>`;
 const earnSlot = (limit = 0) => `<div class="nws-slot" data-nws="earn" data-limit="${limit}">${newsCards.earnings(meta, { limit }).html}</div>`;
 // Lewy panel (od 1024 px): wersje kompaktowe, żeby panel mieścił się bez przewijania; reszta pod „+N więcej” w Kalendarzu. Telefon: karty pod statystykami (newsMainHtml).
@@ -1672,7 +1685,7 @@ function paintNewsCards() {
 }
 // Kalendarz newsów (zakładka): strefa z Ustawień, ikonka z liczbą trade'ów dnia przenosi do listy trade'ów tego dnia
 const cal = createCalendar({
-  getTz: () => settings.chartTz || '',
+  getTz: () => appTz(),
   getTradeCount: (day) => (model ? baseTrades(state.typ, true).filter((x) => x.date === day).length : 0),
   onTrades: (day) => { Object.assign(state, { preset: 'custom', from: day, to: day, view: 'trades' }); save(); renderAll(); },
 });
@@ -1697,6 +1710,8 @@ function dropBtCopy(id) {
 const btView = createBacktestView({ onList: updateBtCopy, onRemoved: dropBtCopy, getTrades: () => (model ? model.trades : []),
      getSettings: () => settings.bt,
      onTemplates: (list) => { settings.bt = { ...settings.bt, templates: list }; saveSettings(); }, onFavTfs: (list) => { settings.bt = { ...settings.bt, favTfs: list }; saveSettings(); },
+     // 1.7-3: zapis presetów i aktywnego presetu z panelu zleceń („Zapisz jako preset…”, chip); sanitizeBt pilnuje zakresów, limitu i istnienia aktywnego presetu
+     onPresets: (patch) => { settings.bt = sanitizeBt({ ...settings.bt, ...patch }); saveSettings(); },
      getSetups: () => (model ? [...new Set(model.trades.map((x) => x.setup).filter(Boolean))].sort((a, b) => a.localeCompare(b, getLang())) : []), getAccounts: () => (model ? model.konta.map((k) => ({ id: k.id, name: k.name })) : []) });
 function openCalendar(mode, earnCls) { cal.goTo(null, mode); if (earnCls) cal.applyEarn(earnCls); state.view = 'calendar'; state.ui.sheet = ''; save(); renderTabs(); applySheetAttr(); const h = $('#view .ncal'); if (h && cal.isMounted(h)) { cal.unmount(); h.remove(); } renderMain(); $('#main').scrollTo({ top: 0 }); }
 // „+N więcej” z karty „Dzisiaj”: dzisiejszy dzień (dzień liczony w strefie z Ustawień); z karty „Wyniki spółek”: tydzień z klasami z karty
@@ -1710,7 +1725,7 @@ async function postJson(url, body) {
 async function refreshMeta() { try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ } }
 
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
-const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml(), onboardingHtml: () => ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), demoCount: () => demoCount(), onStop: (el) => stopServer(el), onRestored: () => load(true), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
+const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml(), onboardingHtml: () => ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), demoCount: () => demoCount(), onStop: (el) => stopServer(el), onRestored: () => load(true), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); retimeModel(); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
   // N4 (1.6.0): klucze zapisuje sekcja Źródła danych (POST /api/sources/key); po zmianie klucza, kredytu albo limitów odświeżamy meta i karty panelu
   onSourcesChanged: async () => { await refreshMeta(); newsCards.wantEarnings(earnOn()); renderSide(); renderDesk(); if (model) renderMain(); newsCards.load(); },
   loadNewsStatus: async () => {
@@ -1979,7 +1994,7 @@ async function applyRemoteSettings(r = {}) {
   if (typeof r.chartBadj === 'boolean') { settings.chartBadj = r.chartBadj; setBadjDefault(settings.chartBadj); }
   if (r.bt && typeof r.bt === 'object') settings.bt = sanitizeBt(r.bt);
   if (r.chart && typeof r.chart === 'object') { settings.chart = sanitizeChart(r.chart); setChartSettings(settings.chart); notifyOverlays(); lb.pv?.redraw(); }
-  if (r.chartTz === '' || validTz(r.chartTz)) { if (r.chartTz !== settings.chartTz) { settings.chartTz = r.chartTz; setChartTzDefault(settings.chartTz); lb.pv?.redraw(); } }
+  if (r.chartTz === '' || validTz(r.chartTz)) { if (r.chartTz !== settings.chartTz) { settings.chartTz = r.chartTz; setChartTzDefault(settings.chartTz); retimeModel(); lb.pv?.redraw(); } }
   S.setBeMargins(settings.beR, settings.beUsd);
   saveSettings(); // sync.applying blokuje zapis zwrotny
   if ((r.theme === 'onyx' || r.theme === 'platinum') && r.theme !== getTheme()) { try { localStorage.setItem(THEME_KEY, r.theme); } catch { /* brak */ } paintTheme(r.theme); }

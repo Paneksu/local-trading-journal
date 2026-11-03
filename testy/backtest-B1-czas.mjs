@@ -127,7 +127,8 @@ export default ({ test, assert, ROOT }) => {
 
   test('backtest-B1: kolizja skrótów', async () => {
     const { DEFAULT_SKROTY, DEFAULT_JUMPS, RESERVED_SKROTY, skrotOf, collisions } = await mod();
-    assert.deepEqual(DEFAULT_SKROTY, { play: 'Space', stepFwd: 'Shift+ArrowRight', stepBack: 'Shift+ArrowLeft', jump: 'J', speedUp: ']', speedDown: '[', buy: 'B', sell: 'S', closeAll: 'Shift+C', drawEntry: 'D', be: 'E', half: 'H' }); // J: wejście według rysunku; K: bez endDay; M: BE i połowa
+    // J: wejście według rysunku; K: bez endDay; M: BE i połowa; 1.7-2: Odwróć (R); 1.7-4: G i P
+    assert.deepEqual(DEFAULT_SKROTY, { play: 'Space', stepFwd: 'Shift+ArrowRight', stepBack: 'Shift+ArrowLeft', jump: 'J', speedUp: ']', speedDown: '[', buy: 'B', sell: 'S', closeAll: 'Shift+C', drawEntry: 'D', be: 'E', half: 'H', reverse: 'R', goDate: 'G', goPrice: 'P' });
     assert.deepEqual(RESERVED_SKROTY, ['Escape', 'Ctrl+Z', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', 'Enter', 'Delete', 'Backspace', 'Ctrl+J']); // L: Ctrl+J = Journal
     assert.deepEqual(collisions(DEFAULT_SKROTY, DEFAULT_JUMPS), [], 'domyślne bez kolizji');
     // klucze ustawień nie mogą pasować do filtra sanitizeSettings (key, hotkey…)

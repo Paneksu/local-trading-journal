@@ -5,7 +5,7 @@
 // Nie ma tu Sharpe'a, Sortino ani wariantów profit factor (nie-cel [S]): nie zmieniają żadnej decyzji dla próby kilkudziesięciu trade'ów.
 // English: backtest statistics view: R equity, edge table with a minimum-sample warning, execution (MAE/MFE) and backtest vs live.
 import { t } from './i18n.js';
-import { esc, fmtR, fmtPct, fmtMoney, cls, shortDate, DAYS_TITLE, num } from './format.js';
+import { esc, fmtR, fmtPct, fmtUsdFull as fmtMoney, cls, shortDate, DAYS_TITLE, num } from './format.js';
 import { drawEquity, drawColumns } from './charts.js';
 import { dayTags } from './bt-filtr.js';
 import { MIN_N, BY, summary, equityR, edgeTable, execution, compareLive, mergeBacktest, pickSessions, sessionsOf, NO_SETUP, NO_DAYTYPE, NO_HOUR, HOUR_BEFORE, HOUR_AFTER } from './bt-staty.js';
@@ -99,6 +99,8 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
   function headHtml(ts) {
     const s = summary(ts);
     const usd = usdLine(ts);
+    // 1.7-1: trade bez SL nie ma R (P5): liczy się do $ i liczby trade'ów, nie do metryk R
+    const noR = s.noR > 0 ? `<p class="note bt-st-few" role="status">${esc(t("Bez R: {n}. Trade bez SL liczy się do wyniku w $ i liczby trade'ów, nie do metryk R.", { n: s.noR }))}</p>` : '';
     const few = s.few
       ? `<p class="note bt-st-few" role="status">${esc(t("To dopiero {n} z {min} trade'ów. Poniżej {min} wynik łatwo jest przypadkiem: traktuj liczby jako szkic, nie jako wniosek.", { n: s.n, min: MIN_N }))}</p>`
       : '';
@@ -107,7 +109,7 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
       ${tile(t('Skuteczność'), esc(fmtPct(s.wr, 0)), t('wygrane z rozstrzygniętych, BE poza liczeniem'))}
       ${tile(t('Średnio na trade'), `<span class="${rcls(s.avgR)}">${esc(R(s.avgR))}</span>`, t('na 1R ryzyka'))}
       ${tile(t('Wynik'), `<span class="${rcls(s.sumR)}">${esc(R(s.sumR))}</span>`, usd ? `${t('suma R wszystkich trade\'ów')} · ${usd}` : t('suma R wszystkich trade\'ów'))}
-    </div>${few}`;
+    </div>${few}${noR}`;
   }
 
   const block = (title, ctl, inner) => `<section class="sec"><div class="sec-h"><h2>${esc(title)}</h2>${ctl || ''}</div><div class="card bt-st-card">${inner}</div></section>`;

@@ -5,6 +5,7 @@
 // GET/PATCH /v1/pages/:id, POST /v1/pages. Pomocnicze: GET /__test/log, POST /__test/notion-edit (zmiana "zrobiona w Notion").
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { wallToMs } from '../public/js/strefa.js';
 
 const PORT = Number(process.argv[2] || process.env.ATRAPA_PORT) || 4399;
 export const IDS = {
@@ -50,19 +51,25 @@ const pick = (a) => a[Math.floor(rnd() * a.length)];
 const pages = { trades: [], konta: [], dziennik: [], finanse: [] };
 const stamp = (d) => d.toISOString().replace(/:\d\d\.\d{3}Z$/, ':00.000Z'); // Notion zaokragla do minuty
 
+// przesunięcie strefy w chwili, w której zegar ścienny tej strefy pokazuje podaną godzinę (a nie w chwili o tej samej liczbie w UTC: różnica w nocy zmiany czasu)
 function offsetFor(tz, y, m, d, hh, mm) {
-  const probe = new Date(Date.UTC(y, m - 1, d, hh, mm));
+  const p2 = (n) => String(n).padStart(2, '0');
+  const probe = new Date(wallToMs(`${y}-${p2(m)}-${p2(d)}`, `${p2(hh)}:${p2(mm)}`, tz));
   const parts = new Intl.DateTimeFormat('en', { timeZone: tz, timeZoneName: 'longOffset' }).formatToParts(probe);
   const v = parts.find((p) => p.type === 'timeZoneName')?.value || 'GMT';
   return v === 'GMT' ? '+00:00' : v.replace('GMT', '');
 }
-function dateValue(local, tz = 'Europe/Warsaw') { // local: 'YYYY-MM-DD' albo 'YYYY-MM-DDTHH:MM[:SS]'
+function dateValue(local, tz = 'Europe/Warsaw', endLocal = null) { // local: 'YYYY-MM-DD' albo 'YYYY-MM-DDTHH:MM[:SS]'
   if (!local) return null;
   if (local.length <= 10) return { start: local, end: null, time_zone: null };
   const [d, t] = local.split('T');
   const [y, m, dd] = d.split('-').map(Number);
   const [hh, mm, ss = 0] = t.split(':').map(Number);
-  return { start: `${d}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}.000${offsetFor(tz, y, m, dd, hh, mm)}`, end: null, time_zone: tz };
+  // Notion przy odczycie oddaje start z PRZESUNIĘCIEM, a time_zone: null (sprawdzone 3.11.2026 jednym odczytem z prawdziwego Notion): strefa zapisu jest tylko w polu `_tz` (nie serializuje się),
+  // a testy czytają ją z /__test/pages jako `tz`
+  const v = { start: `${d}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}.000${offsetFor(tz, y, m, dd, hh, mm)}`, end: endLocal ? dateValue(endLocal, tz).start : null, time_zone: null };
+  Object.defineProperty(v, '_tz', { value: tz, enumerable: false });
+  return v;
 }
 const txt = (s) => (s ? [{ plain_text: s, text: { content: s } }] : []);
 const sel = (ds, prop, name) => (name ? { type: 'select', select: { name, color: schemas[ds][prop].select.options.find((o) => o.name === name)?.color || 'default' } } : { type: 'select', select: null });
@@ -306,8 +313,11 @@ function applyProps(ds, page, props) {
       if (!v.date) page.properties[name] = { type: 'date', date: null };
       else {
         const s = v.date.start;
-        if (s.length > 10 && !/[zZ]|[+-]\d\d:\d\d$/.test(s) && !v.date.time_zone) return 'time_zone required for datetime without offset';
-        page.properties[name] = { type: 'date', date: s.length <= 10 ? { start: s, end: null, time_zone: null } : dateValue(s.slice(0, 16), v.date.time_zone) };
+        if (s.length > 10 && !/(?:[zZ]|[+-]\d\d:\d\d)$/.test(s) && !v.date.time_zone) return 'time_zone required for datetime without offset';
+        // start z przesunięciem i bez time_zone zostaje jak podano (jak w Notion); start bez przesunięcia + time_zone to zegar w tej strefie
+        const hasOff = /(?:[zZ]|[+-]\d\d:\d\d)$/.test(s);
+        const en = v.date.end || null;
+        page.properties[name] = { type: 'date', date: s.length <= 10 ? { start: s, end: en, time_zone: null } : hasOff && !v.date.time_zone ? { start: s.length === 25 ? `${s.slice(0, 19)}.000${s.slice(19)}` : s, end: en, time_zone: null } : dateValue(s.slice(0, 16), v.date.time_zone, en && en.length > 10 ? en.slice(0, 16) : null) };
       }
     }
   }
@@ -321,6 +331,8 @@ const newPage = (ds, props, created) => {
 const resolveDs = (key) => { if (store.has(key)) return [key, store.get(key)]; const hit = [...store.entries()].find(([, d]) => d.name === key); return hit || [null, null]; };
 
 http.createServer(async (req, res) => {
+  // znacznik własnego procesu: pomocniki testów odróżniają go od cudzego serwera na tym samym porcie
+  if (process.env.THQ_TEST_NONCE) res.setHeader('X-Test-Nonce', process.env.THQ_TEST_NONCE);
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   log.push(`${req.method} ${p}`);
@@ -411,7 +423,7 @@ http.createServer(async (req, res) => {
   if (p === '/__test/share' && req.method === 'POST') { const b = await body(req); shared = b.shared !== false; return send(res, 200, { ok: true, shared }); }
   if (p === '/__test/loose') return send(res, 200, [...loosePages.values()]);
   if (p === '/__test/writes') return send(res, 200, log.filter((l) => !/^GET /.test(l) && !/\/query$/.test(l) && l !== 'POST /v1/search' && !l.includes('/__test/')));
-  if (p === '/__test/pages') { const [, ds] = resolveDs(url.searchParams.get('ds') || 'trades'); return send(res, 200, (ds?.pages || []).map((x) => ({ id: x.id, p: x.properties, edited: x.last_edited_time }))); }
+  if (p === '/__test/pages') { const [, ds] = resolveDs(url.searchParams.get('ds') || 'trades'); return send(res, 200, (ds?.pages || []).map((x) => ({ id: x.id, p: x.properties, edited: x.last_edited_time, tz: Object.fromEntries(Object.entries(x.properties).filter(([, q]) => q?.type === 'date').map(([k, q]) => [k, q.date?._tz ?? null])) }))); }
   if (p === '/__test/schema') { const [, ds] = resolveDs(url.searchParams.get('ds') || 'trades'); return send(res, 200, ds?.schema || {}); }
   if (p === '/__test/rename-prop' && req.method === 'POST') {
     // użytkownik zmienia nazwę pola w Notion (identyfikator pola zostaje): { ds, from, to }

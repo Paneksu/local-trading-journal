@@ -5,6 +5,7 @@
 // English: news and earnings calendar view: day/week/month, filters, whole-history search; pure helpers plus a small controller.
 import * as F from './format.js';
 import { t, locale } from './i18n.js';
+import { tzShort } from './strefa.js';
 import { eventName, impWord, sessionText, NEWS_IMPS, EARN_CLASSES, NEWS_TOKENS, EARN_TOKENS } from './newsy.js';
 
 const { esc } = F;
@@ -117,7 +118,7 @@ export function rowHtml(r, tz) {
 }
 export function dayHtml(d, { tz, nowSec, trades = 0 }) {
   const nowRow = (nowTxt) => `<tr class="cal-now" aria-hidden="true"><td colspan="4"><span>${esc(nowTxt)}</span></td></tr>`;
-  const nowTxt = `${t('Teraz')} ${new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit', timeZone: tz || undefined }).format(new Date(nowSec * 1000))}`;
+  const nowTxt = `${t('Teraz')} ${new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit', timeZone: tz || undefined }).format(new Date(nowSec * 1000))} ${tzShort(tz || undefined, nowSec * 1000)}`;
   const rows = d.rows.map((r, i) => (i === d.nowAt ? nowRow(nowTxt) : '') + rowHtml(r, tz)).join('') + (d.nowAt === d.rows.length && d.today ? nowRow(nowTxt) : '');
   const tr = trades ? `<button type="button" class="cal-tr" data-cal-trades="${d.day}" aria-label="${esc(t("Pokaż trade'y z dnia {d}", { d: dayHead(d.day) }))}">${esc(t.p("{n} trade'ów", trades))}</button>` : '';
   return `<section class="cal-day${d.today ? ' today' : ''}" aria-label="${esc(dayHead(d.day))}"><h3 class="cal-dh"><span>${esc(dayHead(d.day))}</span>${d.today ? `<em>${L('dziś')}</em>` : ''}${tr}</h3>
@@ -250,7 +251,7 @@ export function createCalendar({ getTz = () => '', getTradeCount = () => 0, onTr
     const cls = EARN_CLASSES.map((k) => chk(`cls.${k}`, st.earn.cls[k], t('Klasa {n}', { n: k }), dot(EARN_TOKENS[k]))).join('');
     return `<div class="ncal-nav"><div class="cal-step" role="group" aria-label="${L('Zakres')}"><button type="button" class="icon-btn" data-cal-step="-1" aria-label="${L('Poprzedni zakres')}">‹</button>
         <button type="button" class="btn sm" data-cal-today="1">${L('Dziś')}</button><button type="button" class="icon-btn" data-cal-step="1" aria-label="${L('Następny zakres')}">›</button></div>
-      <h2 class="cal-range" aria-live="polite">${esc(rangeText())}</h2>
+      <h2 class="cal-range" aria-live="polite">${esc(rangeText())}</h2><span class="tz-tag cal-tz" title="${esc(t('Strefa czasu z Ustawień'))}">${esc(tzShort(tz()))}</span>
       <input type="text" data-wd="date" class="sp-in cal-date" data-cal-date="1" value="${anchor}" min="${MIN_DAY}" max="${F.addDays(today, 400)}" aria-label="${L('Wybierz dzień')}">
       <div class="seg" role="group" aria-label="${L('Widok')}">${seg}</div></div>
       <div class="cal-find"><input type="search" class="sp-in cal-q" data-cal-q="1" maxlength="60" value="${esc(S.q)}" placeholder="${L('Szukaj w całej historii: CPI, NFP, NVDA…')}" autocomplete="off" spellcheck="false" aria-label="${L('Szukaj newsów i wyników spółek')}">
