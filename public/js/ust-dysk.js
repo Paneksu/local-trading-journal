@@ -63,8 +63,12 @@ export function createDysk(ctx) {
       const [sym, layer] = del.key.split('|'), r = rows.find((x) => x.symbol === sym && x.layer === layer), name = `${sym} ${layer}`;
       if (r) {
         const auto = sym === 'NQ' && (layer === '1s' || layer === 'kontrakty') && meta.chartNq1sDaily === true;
-        confirm = `<div class="sv-confirm" role="group" aria-labelledby="sv-del-h"><p id="sv-del-h"><b>${esc(t('Usunąć {name}?', { name }))}</b> ${esc(t('Zwolni {size} ({files} plików dni, {from} – {to}).', { size: fmtBytes(r.bytes), files: r.files, from: r.from, to: r.to }))}</p>
-          <p class="note">${L('Ponowne pobranie tych świec jest płatne (Databento wycenia je przed pobraniem). Okna tej warstwy wypadną też z kolejki pobierania.')}${auto ? ` ${L('Codzienne okno 1s NQ jest włączone, więc kolejka pobierze ponownie ostatnie 7 dni (ok. 0,14 USD).')}` : ''}</p>
+        // P57 (3.11.2026): przy włączonych automatycznych minutówkach kolejka odtworzy też ostatnie 92 dni warstwy 1m i kontraktów 1m
+        // tylko warstwy, których dane sięgają ostatnich 92 dni (starsza historia nie wróci sama)
+        const since = new Date(Date.now() - 92 * 86400000).toISOString().slice(0, 10);
+        const auto1m = (sym === 'NQ' || sym === 'ES') && (layer === '1m' || layer === 'kontrakty') && meta.chart1mDaily === true && String(r.to) >= since;
+        confirm = `<div class="sv-confirm" role="group" aria-labelledby="sv-del-h"><p id="sv-del-h"><b>${esc(t('Usunąć {name}?', { name }))}</b> ${esc(t('Zwolni {size} ({from} – {to}, plików dni: {files}).', { size: fmtBytes(r.bytes), files: r.files, from: r.from, to: r.to }))}</p>
+          <p class="note">${L('Ponowne pobranie tych świec jest płatne (Databento wycenia je przed pobraniem). Okna tej warstwy wypadną też z kolejki pobierania.')}${auto ? ` ${L('Codzienne okno 1s NQ jest włączone, więc kolejka pobierze ponownie ostatnie 7 dni (ok. 0,14 USD).')}` : ''}${auto1m ? ` ${L('Automatyczne minutówki są włączone, więc kolejka pobierze ponownie ostatnie 92 dni tej warstwy (przy odbudowie obu instrumentów razem do ok. 0,80 USD).')}` : ''}</p>
           <label class="lbl" for="sv-del-confirm">${esc(t('Wpisz {name}, aby potwierdzić', { name }))}</label>
           <div class="sp-keyrow"><input id="sv-del-confirm" class="sp-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" data-fk="dysk-del-in" placeholder="${esc(name)}">
             <button type="button" class="btn primary danger sm" data-act="dysk-del-ok" data-fk="dysk-del-ok"${del.busy ? ' disabled' : ''}>${del.busy ? L('Usuwam…') : L('Usuń warstwę')}</button>

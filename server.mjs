@@ -356,7 +356,7 @@ function sendError(res, e) {
 function meta() {
   return {
     ...versionState(), lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
-    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily === true, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
+    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily === true, chart1mDaily: config.chart1mDaily === true, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
 
@@ -370,10 +370,15 @@ const healthCtx = () => ({ notion, sources: SOURCES, config, schema: SCHEMA, sch
 // POST z ochroną zapisu: ścieżka → obsługa (body) → odpowiedź
 const ACTIONS = {
   '/api/config': async (body) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BacktestError(t('Nieprawidłowe dane ustawień.'), 400, 'bad-body');
     if (typeof body.updateCheck === 'boolean') config.updateCheck = body.updateCheck;
     if (typeof body.onboarded === 'boolean') config.onboarded = body.onboarded;
     if (typeof body.syncEnabled === 'boolean') config.syncEnabled = body.syncEnabled;
     if (typeof body.chartNq1sDaily === 'boolean') config.chartNq1sDaily = body.chartNq1sDaily; // P50: urządzenie i pieniądze, nie settings ani Notion
+    // P57 (3.11.2026): automatyczne minutówki ES i NQ; tak samo urządzenie i pieniądze, domyślnie wyłączone
+    if (typeof body.chart1mDaily === 'boolean') config.chart1mDaily = body.chart1mDaily;
+    // P57, przegląd (4.11.2026): wyłączenie automatu zatrzymuje wydawanie od razu, więc jego pozycje znikają z kolejki (okna trade'ów zostają)
+    if (body.chart1mDaily === false || body.chartNq1sDaily === false) candles.dropAutomatic();
     if (body.lang === 'pl' || body.lang === 'en') { config.lang = body.lang; setLang(body.lang); }
     persistConfig();
     return { ok: true, ...meta() };
@@ -556,7 +561,7 @@ function sourcesState() {
   return {
     keys: Object.fromEntries(Object.entries(SOURCE_KEYS).map(([s, k]) => [s, { configured: !!env[k], hint: keyHint(env[k]) }])),
     databento: {
-      limitUsd: candles.limitUsd(), dailyLimitUsd: candles.dailyLimitUsd(), spentTodayUsd: candles.spentToday(), credit: candles.credit(), nq1sDaily: config.chartNq1sDaily === true,
+      limitUsd: candles.limitUsd(), dailyLimitUsd: candles.dailyLimitUsd(), spentTodayUsd: candles.spentToday(), credit: candles.credit(), nq1sDaily: config.chartNq1sDaily === true, min1Daily: config.chart1mDaily === true,
       // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 2: bez podnoszenia twardych sufitów): UI tylko je pokazuje, pilnuje serwer
       caps: { limitMaxUsd: LIMIT_MAX_USD, creditMaxUsd: CREDIT_MAX_USD, importMaxUsd: IMPORT_MAX_USD, open1sMaxUsd: OPEN_IMPORT_MAX_USD },
       queue: st.queue, open1s: st.open1s, import1s: st.import1s,

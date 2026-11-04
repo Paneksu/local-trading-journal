@@ -48,7 +48,7 @@ export function createZrodla(ctx) {
   const keyMsg = {};
   let removing = null;
   // formularze kredytu i limitów: null | { step: 'edit' | 'confirm', values, msg }
-  let credit = null, limits = null, nqConfirm = false, money1 = null;
+  let credit = null, limits = null, nqConfirm = false, minConfirm = false, min1Opt = null, money1 = null;
   // final (ocena wyglądu P2-8): w kreatorze koszty, okno 1s NQ, FRED i Finnhub są pod „Więcej (opcjonalne)”; stan rozwinięcia przeżywa przerysowanie
   let wizMore = false;
   // komunikat stanu: błąd jako ostrzeżenie, „Sprawdzam…” jako oczekiwanie, reszta jako sukces (tekst z kropką)
@@ -160,8 +160,16 @@ export function createZrodla(ctx) {
   function autoHtml({ compact = false } = {}) {
     const m = ctx.getMeta() || {};
     const on = D().nq1sDaily ?? m.chartNq1sDaily === true;
-    const conf = nqConfirm ? `<div class="sv-confirm" role="group" aria-labelledby="sv-nq-c"><p id="sv-nq-c"><b>${L('Włączyć codzienne okno 1s NQ?')}</b> ${L('Kolejka wyda ok. 0,02 USD za każdy dzień, a przy pierwszym przebiegu nadrobi do 7 dni (ok. 0,14 USD). Zawsze w limitach i kredycie.')}</p>
+    // min1Opt: stan wybrany przed odpowiedzią serwera, żeby pole nie mignęło starą wartością
+    const on1m = min1Opt ?? D().min1Daily ?? m.chart1mDaily === true;
+    // bez klucza albo kredytu włączenie niczego nie pobierze: potwierdzenie mówi, czego brakuje
+    const needs = !src?.keys?.databento?.configured ? t('Pobieranie ruszy dopiero po zapisaniu klucza Databento.') : !D().credit?.configured ? t('Pobieranie ruszy dopiero po wpisaniu stanu kredytu Databento.') : '';
+    const needsHtml = needs ? `<p class="note sv-warn">${esc(needs)}</p>` : '';
+    const conf = nqConfirm ? `<div class="sv-confirm" role="group" aria-labelledby="sv-nq-c"><p id="sv-nq-c"><b>${L('Włączyć codzienne okno 1s NQ?')}</b> ${L('Kolejka wyda ok. 0,02 USD za każdy dzień, a przy pierwszym przebiegu nadrobi do 7 dni (ok. 0,14 USD). Zawsze w limitach i kredycie.')}</p>${needsHtml}
       <div class="upd-actions"><button type="button" class="btn sm" data-act="zr-nq-ok" data-fk="zr-nq-ok">${L('Włącz (ok. 0,02 USD dziennie)')}</button><button type="button" class="btn ghost sm" data-act="zr-nq-no" data-fk="zr-nq-no">${L('Anuluj')}</button></div></div>` : '';
+    // P57 (3.11.2026): minutówki ES i NQ, stan w config.local.json (chart1mDaily), domyślnie wyłączone; włączenie z potwierdzeniem kosztu
+    const conf1m = minConfirm ? `<div class="sv-confirm" role="group" aria-labelledby="sv-1m-c"><p id="sv-1m-c"><b>${L('Włączyć automatyczne pobieranie minutówek ES i NQ?')}</b> ${L('Kolejka pobierze brakujące świece minutowe ES i NQ. Cena to ok. 0,005 USD na dzień na instrument. Przy pierwszym przebiegu nadrobi najwyżej 92 dni, razem z oknami wokół zmiany kontraktu: pierwszy przebieg razem do ok. 0,80 USD. Zawsze w limitach i kredycie.')}</p>${needsHtml}
+      <div class="upd-actions"><button type="button" class="btn sm" data-act="zr-1m-ok" data-fk="zr-1m-ok">${L('Włącz (ok. 0,01 USD dziennie)')}</button><button type="button" class="btn ghost sm" data-act="zr-1m-no" data-fk="zr-1m-no">${L('Anuluj')}</button></div></div>` : '';
     if (compact) {
       return `<div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-nq1s" data-fk="ch-nq1s" ${on || nqConfirm ? 'checked' : ''}> ${L('Codziennie pobieraj 1s NQ 9:30–11:00 NY')}</label>
         <p class="note">${L('Sekundowe świece NQ z pierwszych 90 minut sesji Nowego Jorku, każdego dnia. Przydają się do Backtestu na sekundach. Wyłączone, dopóki ich nie włączysz.')}</p>${conf}</div>`;
@@ -170,6 +178,8 @@ export function createZrodla(ctx) {
       <p class="note sv-gd">${L('Po zapisaniu trade\'a kolejka sama dokłada okno 1s wokół niego (ok. 0,02 USD za trade), gdy Databento je udostępni, zwykle po ok. 8 godzinach.')}</p>
       <div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-nq1s" data-fk="ch-nq1s" ${on || nqConfirm ? 'checked' : ''}> ${L('Codziennie pobieraj 1s NQ 9:30–11:00 NY')}</label>
         <p class="note">${L('Okno sekundowe NQ z pierwszych 90 minut sesji Nowego Jorku każdego dnia (ok. 0,02 USD na dzień, w zwykłych limitach). Nadrabia dni, w których dashboard był wyłączony, najwyżej 7. Ustawienie tylko na tym komputerze.')}</p>${conf}</div>
+      <div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-1m" data-fk="ch-1m" ${on1m || minConfirm ? 'checked' : ''}> ${L('Automatycznie pobieraj minutówki ES i NQ')}</label>
+        <p class="note">${L('Pobiera brakujące świece minutowe ES i NQ (ok. 0,005 USD na dzień na instrument, w zwykłych limitach i kredycie). Nadrabia najwyżej 92 dni (pierwszy przebieg razem do ok. 0,80 USD), starszą historię pobierzesz importem. Ustawienie tylko na tym komputerze.')}</p>${conf1m}</div>
       ${queueHtml()}`;
   }
   function importHtml() {
@@ -279,6 +289,11 @@ export function createZrodla(ctx) {
   }
 
   // ---------- dane ----------
+  function setMin1(on) {
+    min1Opt = on;
+    ctx.rerender();
+    Promise.resolve(ctx.opts.onConfig({ chart1mDaily: on })).then(() => loadSources()).finally(() => { min1Opt = null; ctx.rerender(); });
+  }
   async function loadSources() {
     try { src = await getJson('/api/sources'); srcErr = ''; } catch (e) { srcErr = e.message; }
     if (ctx.isActive('zrodla')) ctx.rerender();
@@ -407,7 +422,9 @@ export function createZrodla(ctx) {
       case 'zr-lim-no': limits = null; ctx.rerender(); return true;
       case 'zr-lim-save': limitsSave(); return true;
       case 'zr-nq-ok': nqConfirm = false; ctx.opts.onConfig({ chartNq1sDaily: true }).then(() => loadSources()); return true;
-      case 'zr-nq-no': nqConfirm = false; ctx.rerender(); return true;
+      case 'zr-nq-no': nqConfirm = false; ctx.rerender(); root()?.querySelector('[data-fk="ch-nq1s"]')?.focus(); return true;
+      case 'zr-1m-ok': minConfirm = false; setMin1(true); return true;
+      case 'zr-1m-no': minConfirm = false; ctx.rerender(); root()?.querySelector('[data-fk="ch-1m"]')?.focus(); return true;
       case 'zr-imp-quote': quote(val); return true;
       case 'zr-imp-go': go(val); return true;
       case 'zr-imp-no': imp[val] = null; ctx.rerender(); return true;
@@ -422,6 +439,12 @@ export function createZrodla(ctx) {
       ctx.opts.onConfig({ chartNq1sDaily: false }).then(() => loadSources());
       return true;
     }
+    if (ev.target.matches('[data-act="ch-1m"]')) {
+      if (ev.target.checked) { minConfirm = true; ctx.rerender(); root()?.querySelector('[data-fk="zr-1m-ok"]')?.focus(); return true; }
+      minConfirm = false;
+      setMin1(false);
+      return true;
+    }
     // zmiana instrumentu albo dat unieważnia wycenę (pobranie idzie zawsze za wyceną z tych samych pól)
     const im = /^#?sv-imp(1m|1s)-(from|to)$/.exec(ev.target.id || '');
     if (ev.target.matches('#sv-imp-sym') || im) {
@@ -433,7 +456,7 @@ export function createZrodla(ctx) {
     return false;
   }
   function onEscape() {
-    if (removing || credit || limits || nqConfirm) { removing = null; credit = null; limits = null; nqConfirm = false; ctx.rerender(); return true; }
+    if (removing || credit || limits || nqConfirm || minConfirm) { removing = null; credit = null; limits = null; nqConfirm = false; minConfirm = false; ctx.rerender(); return true; }
     return false;
   }
   return {

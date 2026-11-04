@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.7.1] · 2026-11-04
+
+### PL
+- Dodane: automatyczne pobieranie minutówek ES i NQ. W Ustawieniach → Źródła danych → Automatyczne pobieranie włączasz „Automatycznie pobieraj minutówki ES i NQ” (po potwierdzeniu kosztu). Kolejka sama dokłada wtedy brakujące świece minutowe obu instrumentów, w tym warstwy kontraktów wokół rolla. Cena to ok. 0,005 USD na dzień na instrument. Przy pierwszym przebiegu nadrabia najwyżej 92 dni wstecz, razem z oknami wokół zmiany kontraktu: pierwszy przebieg to razem do ok. 0,80 USD. Starszą historię pobierasz importem. Zawsze w limitach i kredycie, a ustawienie dotyczy tylko tego komputera. Domyślnie jest wyłączone, także po aktualizacji. Krótki brak na końcu (poniżej godziny) czeka do następnego przebiegu. Pobiera porcjami miesięcznymi, więc przy niższym limicie niż cała pozycja postęp jest po kawałku, a okna 1s idą przed minutówkami. Wyłączenie przełącznika od razu usuwa jego czekające pozycje z kolejki (dotyczy też codziennego okna 1s NQ, okna trade'ów zostają). Pobranie, które nie udało się po naliczeniu kosztu, ponawia się po godzinie, potem po 6 godzinach, a po trzeciej próbie pozycja czeka na Twoją decyzję.
+
+### EN
+- Added: automatic download of ES and NQ one-minute candles. In Settings → Data sources → Automatic download you turn on "Automatically download ES and NQ one-minute candles" (after confirming the cost). The queue then adds the missing one-minute candles for both instruments by itself, including the contract layers around a roll. The price is about 0.005 USD per day per instrument. On its first run it catches up on at most 92 days back, including the windows around a contract change: the first run costs up to about 0.80 USD in total. You download older history with the import. It always stays within the limits and credit, and the setting applies to this computer only. It is off by default, also after the update. A short gap at the end (under an hour) waits for the next run. It downloads in monthly pieces, so with a limit lower than the whole item you get progress piece by piece, and 1s windows go before one-minute candles. Turning the switch off immediately removes its waiting items from the queue (this also applies to the daily NQ 1s window; trade windows stay). A download that failed after the cost was counted is retried after an hour, then after 6 hours, and after the third attempt the item waits for your decision.
+
 ## [1.7.0] · 2026-11-03
 
 ### PL

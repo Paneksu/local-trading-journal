@@ -2310,7 +2310,6 @@
   "Usuń warstwę {name}": "Delete layer {name}",
   "Usuń…": "Delete…",
   "Usunąć {name}?": "Delete {name}?",
-  "Zwolni {size} ({files} plików dni, {from} – {to}).": "Frees {size} ({files} day files, {from} – {to}).",
   "Ponowne pobranie tych świec jest płatne (Databento wycenia je przed pobraniem). Okna tej warstwy wypadną też z kolejki pobierania.": "Downloading these candles again costs money (Databento quotes them before the download). Windows of this layer also leave the download queue.",
   "Codzienne okno 1s NQ jest włączone, więc kolejka pobierze ponownie ostatnie 7 dni (ok. 0,14 USD).": "The daily NQ 1s window is on, so the queue will download the last 7 days again (about 0.14 USD).",
   "Wpisz {name}, aby potwierdzić": "Type {name} to confirm",
@@ -3046,5 +3045,18 @@
   "Domyślne": "Defaults",
   "Nieprawidłowy wybór wpisów.": "Invalid entry choice.",
   "Wpisy, których godzinę przesuwałeś na wykresie, nie mają znacznika: wybierz dla nich „ten sam moment” albo „pomiń”. Domyślnie wpisy mają „ta sama godzina NY”, a wpisy DEMO „ten sam moment”.": "Entries whose time you dragged on the chart have no marker: choose \"same moment\" or \"skip\" for them. By default entries get \"same clock time NY\" and DEMO entries get \"same moment\".",
-  "Trwa zapis wpisu w dzienniku. Spróbuj za chwilę.": "A journal entry is being saved. Try again in a moment."
+  "Trwa zapis wpisu w dzienniku. Spróbuj za chwilę.": "A journal entry is being saved. Try again in a moment.",
+  "Automatycznie pobieraj minutówki ES i NQ": "Automatically download ES and NQ one-minute candles",
+  "Włączyć automatyczne pobieranie minutówek ES i NQ?": "Turn on automatic download of ES and NQ one-minute candles?",
+  "Włącz (ok. 0,01 USD dziennie)": "Turn on (about 0.01 USD per day)",
+  "Pobiera brakujące świece minutowe ES i NQ (ok. 0,005 USD na dzień na instrument, w zwykłych limitach i kredycie). Nadrabia najwyżej 92 dni (pierwszy przebieg razem do ok. 0,80 USD), starszą historię pobierzesz importem. Ustawienie tylko na tym komputerze.": "Downloads the missing one-minute candles for ES and NQ (about 0.005 USD per day per instrument, within the usual limits and credit). It catches up on at most 92 days (the first run costs up to about 0.80 USD in total); you download older history with the import. This setting applies to this computer only.",
+  "Kolejka pobierze brakujące świece minutowe ES i NQ. Cena to ok. 0,005 USD na dzień na instrument. Przy pierwszym przebiegu nadrobi najwyżej 92 dni, razem z oknami wokół zmiany kontraktu: pierwszy przebieg razem do ok. 0,80 USD. Zawsze w limitach i kredycie.": "The queue will download the missing one-minute candles for ES and NQ. The price is about 0.005 USD per day per instrument. On its first run it catches up on at most 92 days, including the windows around a contract change: the first run costs up to about 0.80 USD in total. Always within the limits and credit.",
+  "Automatyczne minutówki są włączone, więc kolejka pobierze ponownie ostatnie 92 dni tej warstwy (przy odbudowie obu instrumentów razem do ok. 0,80 USD).": "Automatic one-minute candles are on, so the queue will download the last 92 days of this layer again (rebuilding both instruments costs up to about 0.80 USD in total).",
+  "Pobieranie ruszy dopiero po zapisaniu klucza Databento.": "Downloading starts only after you save the Databento key.",
+  "Pobieranie ruszy dopiero po wpisaniu stanu kredytu Databento.": "Downloading starts only after you enter the Databento credit balance.",
+  "Zwolni {size} ({from} – {to}, plików dni: {files}).": "Frees {size} ({from} – {to}, day files: {files}).",
+  "Nieprawidłowe dane ustawień.": "Invalid settings data.",
+  "Trzy nieudane płatne próby pobrania z rzędu, więc pozycja czeka na decyzję. Aby ponowić, zapisz limity w Ustawieniach → Źródła danych jeszcze raz albo wyłącz i włącz przełącznik. Ostatni błąd: {msg}": "Three failed paid download attempts in a row, so this item waits for your decision. To retry, save the limits in Settings → Data sources again or turn the switch off and on. Last error: {msg}",
+  "Trzy nieudane płatne próby pobrania z rzędu, więc pozycja czeka na decyzję. Aby ponowić, zapisz limity w Ustawieniach → Źródła danych jeszcze raz albo wyłącz i włącz przełącznik. Ostatni błąd: błąd zapisu na dysku, szczegóły w logu serwera.": "Three failed paid download attempts in a row, so this item waits for your decision. To retry, save the limits in Settings → Data sources again or turn the switch off and on. Last error: disk write error, details in the server log.",
+  "Kolejka czeka po nieudanym płatnym pobraniu i ponowi próbę o {at} UTC.": "The queue is waiting after a failed paid download and will try again at {at} UTC."
 }
