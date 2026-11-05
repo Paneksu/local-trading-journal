@@ -1549,6 +1549,7 @@
   "Do zamknięcia świecy": "Candle closes in",
   "Rynek zamknięty": "Market closed",
   "Brak notowań": "No quotes",
+  "Zamkn.": "Closed",
   "Brak notowań w bieżącym przedziale świecy {tf}": "No quotes in the current {tf} candle",
   "Otwarcie sesji: {t}": "Session opens: {t}",
   "Czas replayu do końca bieżącej świecy {tf}": "Replay time left in the current {tf} candle",

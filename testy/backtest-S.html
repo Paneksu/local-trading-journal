@@ -41,8 +41,10 @@ try {
   await RP.ready;
   const scr = () => document.querySelector('.bt-screen');
   const ch = () => RP.chart();
-  const cd = () => scr().querySelector('.bt-cd')?.textContent || '';
-  const cdTitle = () => scr().querySelector('.bt-cd')?.title || '';
+  // 05.11.2026: licznik na prawej osi ceny (.bt-cdt): na osi sam czas albo krótki tekst („Brak”), pełne znaczenie w aria-label i podpowiedzi
+  const cd = () => scr().querySelector('.bt-cdt')?.textContent || '';
+  const cdLabel = () => scr().querySelector('.bt-cdt')?.getAttribute('aria-label') || '';
+  const cdTitle = () => scr().querySelector('.bt-cdt')?.title || '';
   const secs = (s) => { const m = /(\d+):(\d\d)$/.exec(s); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
   const lastX = () => { const c = ch(), n = c.bars().length, x = c.chart.timeScale().timeToCoordinate(c.bars()[n - 1][0]); return x == null ? null : Math.round(x); };
   const range = () => ch().chart.timeScale().getVisibleLogicalRange();
@@ -103,12 +105,12 @@ try {
 
   // ---- „Brak notowań”: dziura 12:00–12:20 NY w danych 1m (przygotowana przez test): pod kursorem sesja, wykres nie ma świecy ----
   await RP.goTo(nyAt('2024-03-12', '12:10')); await sleep(700);
-  rec('brak', cd() === 'Brak notowań' && /Brak notowań/.test(cdTitle()), `kursor w dziurze danych (12:10 NY): «${cd()}» (title «${cdTitle()}»)`);
+  rec('brak', cd() === 'Brak' && cdLabel() === 'Brak notowań' && /Brak notowań/.test(cdTitle()), `kursor w dziurze danych (12:10 NY): «${cd()}» (aria-label «${cdLabel()}», title «${cdTitle()}»)`);
   rec('brak', secs(cd()) == null, 'bez odliczania i bez ujemnego czasu w dziurze');
   await RP.goTo(nyAt('2024-03-12', '12:40')); await sleep(700);
-  rec('brak', /^Do zamknięcia świecy \d\d:\d\d$/.test(cd()), `po dziurze licznik wraca («${cd()}»)`);
+  rec('brak', /^\d\d:\d\d$/.test(cd()) && /^Do zamknięcia świecy \d\d:\d\d$/.test(cdLabel()), `po dziurze licznik wraca («${cd()}»)`);
   await RP.goTo(nyAt('2024-03-12', '11:30')); await sleep(700);
-  rec('brak', /^Do zamknięcia świecy \d\d:\d\d$/.test(cd()), `przed dziurą normalne odliczanie («${cd()}»)`);
+  rec('brak', /^\d\d:\d\d$/.test(cd()) && /^Do zamknięcia świecy \d\d:\d\d$/.test(cdLabel()), `przed dziurą normalne odliczanie («${cd()}»)`);
   out.textContent = JSON.stringify({ checks, fatal: null });
 } catch (e) { if (e && e.message === '__koniec') { /* tryb luk zakończony */ } else out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) }); }
 </script>

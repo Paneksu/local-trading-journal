@@ -82,6 +82,6 @@ export default ({ test, assert, ROOT }) => {
     const C = await lib('public/js/bt-czas.js');
     assert.deepEqual([59, 60, 3725, 90000, -5].map(C.fmtCountdown), ['00:59', '01:00', '1:02:05', '1d 01:00:00', '00:00']);
     const css = readFileSync(path.join(ROOT, 'public/features.css'), 'utf8'); // interfejs: strona przeglądarkowa backtest-P-strona, pamięć odliczania: backtest-R
-    assert.ok(/\.bt-cd \{[^}]*tabular-nums/.test(css));
+    assert.ok(/\.bt-cdt \{[^}]*tabular-nums/.test(css));
   });
 };

@@ -1380,8 +1380,10 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-clock-tz { font-size: var(--t-xs); color: var(--fg-2); }
 .bt-clock-tz:empty { display: none; }
 /* odliczanie do zamknięcia świecy (04.11.2026): w nagłówku wykresu obok interwału, cyfry tabelaryczne, bez animacji */
-.bt-cd { margin-left: 4px; font-size: var(--t-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.bt-cd:empty { display: none; }
+/* 05.11.2026: licznik do zamknięcia świecy na prawej osi ceny, pod etykietą bieżącej ceny (kolor tła, wysokość i położenie ustawia bt-wykres.js, jak natywna etykieta); warstwa z-index 5 w kontenerze płótna osi, czyli nad znacznikami osi .bt-axt i nad etykietami z płótna (decyzja «Licznik zawsze widoczny»), bez zdarzeń */
+.bt-cdl { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+.bt-cdt { position: absolute; left: 0; box-sizing: border-box; height: 15px; padding: 0 2px; border-radius: 0 0 2px 2px; font-family: inherit; font-weight: 600; font-size: 10.5px; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; pointer-events: none; user-select: none; }
+.bt-cdt[hidden] { display: none; }
 .bt-clock-ny:empty { display: none; }
 .bt-stats { gap: 6px 16px; }
 .bt-acct { display: inline-flex; flex-wrap: nowrap; gap: 0; align-items: stretch; }

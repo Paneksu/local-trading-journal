@@ -55,20 +55,24 @@ try {
   const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
   await RP.ready;
   const scr = () => document.querySelector('.bt-screen');
-  const cd = () => scr().querySelector('.bt-cd')?.textContent || '';
+  // 05.11.2026: licznik stoi na prawej osi ceny (.bt-cdt w wykresie), nie w nagłówku; na osi jest sam czas, pełne znaczenie w aria-label
+  const cdEl = () => scr().querySelector('.bt-cdt');
+  const cd = () => cdEl()?.textContent || '';
   const secs = (s) => { const m = /(\d+):(\d\d)$/.exec(s); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
   await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(120);
   rec('zegar', /UTC|NY/.test(`${scr().querySelector('.bt-clock-tz')?.textContent} ${scr().querySelector('.bt-clock-ny')?.textContent}`), `strefa widoczna przy zegarze («${scr().querySelector('.bt-clock-tz')?.textContent}» «${scr().querySelector('.bt-clock-ny')?.textContent}»)`);
   rec('zegar', /\d\d:\d\d:\d\d/.test(scr().querySelector('.bt-clock')?.textContent || ''), `godzina z sekundami («${scr().querySelector('.bt-clock')?.textContent}»)`);
-  rec('odliczanie', /^Do zamknięcia świecy \d\d:\d\d$/.test(cd()) && secs(cd()) === 60, `1m na początku świecy: pełna minuta («${cd()}»)`);
+  rec('odliczanie', /^\d\d:\d\d$/.test(cd()) && secs(cd()) === 60, `1m na początku świecy: pełna minuta («${cd()}»)`);
+  rec('odliczanie', cdEl()?.getAttribute('aria-label') === 'Do zamknięcia świecy 01:00', `pełne znaczenie w aria-label («${cdEl()?.getAttribute('aria-label')}»)`);
+  rec('odliczanie', !scr().querySelector('.bt-cd'), 'w nagłówku wykresu nie ma już licznika');
   await RP.step(1); await sleep(80);
   rec('odliczanie', secs(cd()) === 60, `po kroku nowa świeca, znowu pełna minuta («${cd()}»)`);
   scr().querySelector('.bt-tfs [data-tf="15m"]').click(); await sleep(250);
   const s15 = secs(cd());
   rec('odliczanie', s15 > 0 && s15 <= 900, `zmiana interwału na 15m przelicza odliczanie («${cd()}»)`);
-  const r = scr().querySelector('.bt-cd').getBoundingClientRect();
-  rec('układ', r.width > 0 && r.right <= innerWidth, `licznik widoczny w nagłówku wykresu (${Math.round(r.width)} px)`);
-  rec('układ', getComputedStyle(scr().querySelector('.bt-cd')).fontVariantNumeric.includes('tabular-nums'), 'cyfry tabelaryczne');
+  const r = cdEl().getBoundingClientRect();
+  rec('układ', r.width > 0 && r.right <= innerWidth, `licznik widoczny na osi ceny wykresu (${Math.round(r.width)} px)`);
+  rec('układ', getComputedStyle(cdEl()).fontVariantNumeric.includes('tabular-nums'), 'cyfry tabelaryczne');
   scr().querySelector('.bt-tfs [data-tf="1m"]').click(); await sleep(300);
   // stan handlu zwykły: kursor na froncie (nie „przeglądasz wstecz”)
   rec('układ', !/Przeglądasz wstecz/.test(scr().textContent), 'zwykły stan handlu, bez blokady przeglądania wstecz');

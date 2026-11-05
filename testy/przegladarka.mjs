@@ -62,12 +62,13 @@ export function dumpDom(url, { timeoutMs = 60_000, width = 1200, height = 800 } 
 // pod --virtual-time-budget nagrywanie nie kończy się (sprawdzone 28.10.2026 na Edge: --dump-dom zwraca stronę przed wynikiem).
 // Port DevTools losowy (--remote-debugging-port=0, odczyt z DevToolsActivePort), więc nie zajmuje stałych portów (9222, 9223).
 // until: wyrażenie JS, na które czekamy; extract: wyrażenie, którego wartość zwracamy (returnByValue).
-export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent", shot = null, mobile = false, bridge = null } = {}) {
+export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 800, until = "document.getElementById('wynik')?.textContent !== '…'", extract = "document.getElementById('wynik').textContent", shot = null, mobile = false, bridge = null, preload = null, dpr = 0 } = {}) {
+  // dpr: współczynnik pikseli urządzenia jak skalowanie Windows (1,25, 1,5): flaga przeglądarki, bo Emulation.setDeviceMetricsOverride zmienia tylko window.devicePixelRatio, a płótna Lightweight Charts zostają 1:1 (zmierzone 05.11.2026)
   const exe = findBrowser();
   if (!exe) throw new Error('Brak Chrome/Edge');
   const prof = newProfile();
   const p = spawn(exe, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', `--user-data-dir=${prof}`,
-    `--window-size=${width},${height}`, '--remote-debugging-port=0', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { windowsHide: true });
+    `--window-size=${width},${height}`, ...(dpr ? [`--force-device-scale-factor=${dpr}`] : []), '--remote-debugging-port=0', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { windowsHide: true });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const deadline = Date.now() + timeoutMs;
   let ws = null;
@@ -109,6 +110,8 @@ export async function cdpPage(url, { timeoutMs = 90_000, width = 1200, height = 
     const ev = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }))?.result?.result?.value;
     // H2: mobile = prawdziwa szerokość telefonu (headless nie zmniejsza okna poniżej ~500 px, więc emulacja zamiast --window-size)
     if (bridge) { await send('Runtime.enable'); await send('Runtime.addBinding', { name: '__press' }); await send('Runtime.addBinding', { name: '__shot' }); await send('Emulation.setFocusEmulationEnabled', { enabled: true }); }
+    // preload: skrypt wykonywany w każdym nowym dokumencie PRZED skryptami strony (makiety fetch, ustawienia), więc pierwsze żądania strony już go widzą
+    if (preload) { await send('Page.enable'); await send('Page.addScriptToEvaluateOnNewDocument', { source: preload }); }
     if (mobile) await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await send('Page.navigate', { url });
     while (Date.now() < deadline) {

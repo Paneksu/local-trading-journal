@@ -39,6 +39,6 @@ export default ({ test, H, assert, ROOT }) => {
     test(`backtest-P: zegar ze strefą widoczną przy godzinie (${theme})`, () => tagged(theme, 'zegar', 2));
     test(`backtest-P: odliczanie do zamknięcia świecy: krok, zmiana interwału, układ (${theme})`, () => tagged(theme, 'odliczanie', 3));
     test(`backtest-P: napis dnia na wykresie backtestu i zwykły stan handlu, po najechaniu zrzut (${theme})`, () => tagged(theme, 'pasek', 2, true));
-    test(`backtest-P: licznik w nagłówku wykresu, cyfry tabelaryczne (${theme})`, () => tagged(theme, 'układ', 2));
+    test(`backtest-P: licznik na osi ceny wykresu, cyfry tabelaryczne (${theme})`, () => tagged(theme, 'układ', 2));
   }
 };

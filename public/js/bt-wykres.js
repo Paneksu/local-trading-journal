@@ -362,6 +362,80 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   const cls = (x) => (x > 1e-9 ? 'pos' : x < -1e-9 ? 'neg' : '');
   const pf = (p) => priceFmt.format(p);
   const snap = (p) => Math.round(p / tick) * tick;
+  // ---- licznik do zamknięcia świecy na prawej osi ceny ----
+  // [U] 05.11.2026 «do zamkniecia swiecy mialo byc na tej osi z prawej strony»
+  // Licznik stoi bezpośrednio pod etykietą bieżącej ceny, w jej kolorze (zielona albo czerwona zależnie od ostatniej świecy), jak w FX Replay i TradingView. Etykietę rysuje sama biblioteka
+  // (płótno osi), więc licznik jest elementem DOM (w kontenerze płótna osi, nad etykietą z płótna i nad znacznikami .bt-axt (z-index 5), pointer-events: none) ustawianym na współrzędnej ostatniego zamknięcia; położenie liczy hak rysowania
+  // prymitywu serii (dostaje każde odświeżenie wykresu: krok, auto-skala, przeciąganie i zoom osi, zmiana rozmiaru), więc nadąża za etykietą bez opóźnienia. Czas liczy wywołujący
+  // (bt-replay.js: candleClock w czasie replayu), tu tylko pokazywanie: setCountdown({ text, label, title }) albo null. DOM zapisujemy tylko przy zmianie wartości lub położenia.
+  // [U] 05.11.2026 «Licznik zawsze widoczny (Recommended)» („Licznik zawsze trzyma się pod ceną i może przykryć sąsiedni znacznik ceny SL/TP. Kwoty i ceny SL/TP nadal widać na plakietkach obok osi”):
+  // licznik stoi zawsze pod etykietą ceny, nad znacznikami SL, TP, wejścia i zleceń na osi (bez przenoszenia i chowania przy nich). Wyjątki: cena poza polem wykresu (chowa się jak etykieta)
+  // i dolna krawędź pola (staje nad etykietą, nigdy nie wchodzi na oś czasu).
+  // wymiary etykiety zmierzone na płótnie osi (Lightweight Charts 5.2.1, czcionka 10,5 px) przy DPR 1, 1,25 i 1,5 (testy/backtest-T): w pikselach urządzenia wysokość to najbliższa nieparzysta
+  // liczba ≥ 15·DPR (15, 19, 23), środek na wierszu round(y·DPR), a oś (floor(szerokość·DPR): 66, 82, 99) jest szersza od etykiety o round(6·DPR) (6, 8, 9); licznik ma ten sam kształt, więc liczymy w pikselach urządzenia
+  // (Math.round(x·DPR)/DPR), żeby przylegał bez szczeliny i zakładki także przy skalowaniu Windows 125% i 150%
+  const LBL_H = 15, LBL_GAP = 6;
+  const cdLayer = document.createElement('div');
+  cdLayer.className = 'bt-cdl';
+  // w kontenerze płótna osi ceny (position: relative, overflow: hidden, góra = góra płótna): ten sam układ współrzędnych co etykieta, bez przesunięć o ułamek piksela, a oś czasu jest poza nim
+  const cdAxisBox = chart.chartElement().querySelector('tr')?.lastElementChild?.querySelector('div');
+  // bez znalezionego pojemnika licznik się chowa (nie ma układu współrzędnych osi) i raz zapisuje ostrzeżenie; wcześniej lądował w hoście na lewej krawędzi wykresu
+  if (cdAxisBox) cdAxisBox.appendChild(cdLayer); else console.warn('bt-wykres: brak pojemnika płótna osi ceny, licznik do zamknięcia świecy ukryty');
+  const cdEl = document.createElement('div');
+  cdEl.className = 'bt-cdt';
+  cdEl.setAttribute('role', 'timer');
+  cdEl.setAttribute('aria-live', 'off');
+  cdEl.hidden = true;
+  cdLayer.appendChild(cdEl);
+  let cdSt = null;
+  // cdCrossY: współrzędna y krzyża celownika w polu wykresu (null, gdy kursora nie ma w polu); etykieta krzyża na osi leży pod licznikiem, więc licznik na ten czas znika
+  let cdCrossY = null;
+  const cdShown = { top: null, h: null, w: null, bg: '', fg: '', hide: true };
+  const cdParse = (s) => (/rgba?\(([^)]+)\)/.exec(s)?.[1] || '').split(/[ ,/]+/).filter(Boolean).slice(0, 3).map(Number);
+  const cdLum = (rgb) => { const [r, g, b] = rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  // tekst czarny albo biały, zależnie od tego, który daje większy kontrast na kolorze etykiety (WCAG)
+  const cdInk = (bg) => { const rgb = cdParse(bg); if (rgb.length < 3 || rgb.some((v) => !Number.isFinite(v))) return '#fff'; const l = cdLum(rgb); return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? '#000' : '#fff'; };
+  function placeCd() {
+    let hide = !cdSt || !cdAxisBox, top = 0, hpx = 0, bg = '', w = 0;
+    if (!hide) {
+      const n = candles.length, k = n ? candles[n - 1] : null, ph = paneH(), y = k ? yOf(k[4]) : null;
+      const d = globalThis.devicePixelRatio || 1;
+      w = (Math.floor(axisW() * d + 1e-6) - Math.round(LBL_GAP * d)) / d;
+      // biblioteka nie rysuje etykiety ceny, gdy cena leży poza polem wykresu, więc licznik też znika (bez etykiety nie miałby pod czym stać)
+      if (!k || y == null || y < 0 || y > ph || !(ph > 0) || !(w > 0)) hide = true;
+      else {
+        const hb = 2 * Math.floor(LBL_H * d / 2) + 1, phb = Math.round(ph * d);
+        const lblTop = Math.min(Math.max(Math.round(y * d) - (hb - 1) / 2, 0), phb - hb);
+        const below = lblTop + hb, above = lblTop - hb;
+        // zawsze tuż pod etykietą ceny, nad znacznikami SL, TP, wejścia i zleceń; tylko gdy pod etykietą nie ma miejsca w polu osi (cena przy dolnej krawędzi), staje nad nią, aby nie wejść na oś czasu
+        const tb = below + hb <= phb ? below : above >= 0 ? above : null;
+        if (tb == null) hide = true; else { top = tb / d; hpx = hb / d; }
+        // etykieta krzyża celownika (15 px wokół y kursora) nie może zniknąć pod licznikiem
+        if (cdCrossY != null && cdCrossY + LBL_H / 2 > top && cdCrossY - LBL_H / 2 < top + hpx) hide = true;
+        bg = k[4] >= k[1] ? (c.up ?? c.profit) : (c.down ?? c.loss);
+      }
+    }
+    if (hide) { if (!cdShown.hide) { cdShown.hide = true; cdEl.hidden = true; } return; }
+    if (cdShown.hide) { cdShown.hide = false; cdEl.hidden = false; }
+    if (cdShown.top !== top) { cdShown.top = top; cdEl.style.top = `${top}px`; }
+    if (cdShown.h !== hpx) { cdShown.h = hpx; cdEl.style.height = `${hpx}px`; cdEl.style.lineHeight = `${hpx}px`; }
+    if (cdShown.w !== w) { cdShown.w = w; cdEl.style.width = `${w}px`; }
+    // kolor etykiety może być zapisany w dowolnej notacji; tekst dobieramy z wartości rgb() obliczonej przez przeglądarkę (tylko przy zmianie koloru)
+    if (cdShown.bg !== bg) { cdShown.bg = bg; cdEl.style.background = bg; cdShown.fg = cdInk(getComputedStyle(cdEl).backgroundColor); cdEl.style.color = cdShown.fg; }
+  }
+  function setCountdown(v) {
+    cdSt = v && v.text ? v : null;
+    if (cdSt) {
+      if (cdEl.textContent !== cdSt.text) cdEl.textContent = cdSt.text;
+      if (cdEl.getAttribute('aria-label') !== cdSt.label) cdEl.setAttribute('aria-label', cdSt.label);
+      if (cdEl.title !== cdSt.title) cdEl.title = cdSt.title;
+    }
+    placeCd();
+  }
+  // hak rysowania: pusty prymityw serii, który przy każdym odświeżeniu wykresu ustawia licznik (po przeliczeniu skali ceny)
+  const cdPrim = { attached() {}, detached() {}, updateAllViews() {}, paneViews: () => [{ zOrder: () => 'top', renderer: () => ({ draw: () => { placeCd(); } }) }] };
+  series.attachPrimitive(cdPrim);
+  chart.subscribeCrosshairMove((p) => { const yy = p?.point?.y ?? null; if (yy !== cdCrossY) { cdCrossY = yy; placeCd(); } });
   const sg = (p) => (p.dir === 'Short' ? -1 : 1);
   const sgnTxt = (x) => (x > 1e-9 ? '+' : x < -1e-9 ? '−' : '');
   const ptsTxt = (x) => `${sgnTxt(x)}${pf(Math.abs(x))} ${t('pkt')}`;
@@ -900,12 +974,13 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   // skala ceny zmienia się też bez ruchu osi czasu (autoskala po nowej świecy, przeciągnięcie osi, Auto): lekki podgląd położenia linii co 200 ms dopasowuje plakietki
   let yWas = '';
   const yWatch = setInterval(() => {
+    placeCd();
     const p = layerSt?.position;
     if (!p && !(layerSt?.orders || []).length) return;
     const sig = [p?.entryPrice, p?.sl, ...(p ? tpOpen(p).map((x) => x.price) : []), p?.abePrice, ...(layerSt.orders || []).flatMap((o) => [o.price, o.sl, o.tp, ...(o.tps || []).map((x) => x.price)])].map((x) => (x == null ? '' : Math.round(yOf(x) ?? -1))).join(',');
     if (sig !== yWas) { yWas = sig; placeLayer(); }
   }, 200);
-  const relayout = () => { if (layerRaf) return; layerRaf = requestAnimationFrame(() => { layerRaf = 0; if (narrowWas !== narrowNow()) { narrowWas = narrowNow(); linesSig = ''; posSig = ''; if (want) applyTrading(want); } placeLayer(); }); };
+  const relayout = () => { if (layerRaf) return; layerRaf = requestAnimationFrame(() => { layerRaf = 0; if (narrowWas !== narrowNow()) { narrowWas = narrowNow(); linesSig = ''; posSig = ''; if (want) applyTrading(want); } placeLayer(); placeCd(); }); };
   let narrowWas = null;
   chart.timeScale().subscribeVisibleLogicalRangeChange(relayout);
   // zmiana wysokości wykresu (panel zleceń, szuflada, obrót telefonu) przesuwa linie bez ruchu osi czasu
@@ -1466,7 +1541,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   }, true);
 
   return {
-    apply,
+    apply, setCountdown,
     menuEl: () => cm?.el ?? null, closeMenu,
     setAuto, auto: () => autoY, hold: holdScale,
     bars: () => candles,
@@ -1507,7 +1582,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
       try { if (typeof offTool === 'function') offTool(); } catch { /* menedżer już zniszczony */ } offTool = null;
       nwl.destroy();
       closeMenu({ refocus: false }); clearHold();
-      mo?.disconnect(); ro?.disconnect(); if (layerRaf) cancelAnimationFrame(layerRaf); clearTimeout(offTimer); clearInterval(yWatch); layer.remove();
+      mo?.disconnect(); ro?.disconnect(); if (layerRaf) cancelAnimationFrame(layerRaf); clearTimeout(offTimer); clearInterval(yWatch); layer.remove(); cdLayer.remove();
       cancelHand(false); if (drag) endDragState(); closePart({ refocus: false }); closePct({ refocus: false });
       globalThis.removeEventListener('pointerdown', onLineDown, true);
       if (rys) { rys.destroy().catch(() => {}).finally(() => { try { chart.remove(); } catch { /* już usunięty */ } }); return; } // najpierw menedżer rysunków (po zapisie zaległej zmiany), potem wykres

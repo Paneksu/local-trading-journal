@@ -493,17 +493,20 @@ export default ({ test, H, assert, ROOT }) => {
       try {
         out = await cdpPage(Srv.base + '/', {
           width: 1920, height: 1080, timeoutMs: 60000,
+          // makieta 429 wchodzi PRZED skryptami strony (preload, także po przeładowaniu): wcześniej wchodziła po załadowaniu, a pierwsze prawdziwe żądanie /api/after-be (lista trade'ów) zdążało
+          // wrócić z „brak danych”; wynik już zapisany wygrywa z flagą błędu (patrz test wyżej), więc szczegóły pokazywały „brak danych” zamiast błędu (wyścig, 4 z 5 uruchomień)
+          preload: `{ const real = window.fetch.bind(window); window.fetch = (u, o) => (String(u).includes('/api/after-be') ? Promise.resolve(new Response(JSON.stringify({ error: 'zajęty', code: 'busy' }), { status: 429, headers: { 'Content-Type': 'application/json' } })) : real(u, o)); }`,
           until: `(() => {
             if (!sessionStorage.getItem('fala-init')) { sessionStorage.setItem('fala-init', '1'); localStorage.setItem('thq.filters.v1', JSON.stringify({ preset: 'all', typ: 'Live', view: 'trades', sortD: 'asc' })); location.reload(); return false; }
-            if (!window.__f) { window.__f = 1; const real = window.fetch.bind(window); window.fetch = (u, o) => (String(u).includes('/api/after-be') ? Promise.resolve(new Response(JSON.stringify({ error: 'zajęty', code: 'busy' }), { status: 429, headers: { 'Content-Type': 'application/json' } })) : real(u, o)); }
             if (!window.__c) { const row = [...document.querySelectorAll('tr.trow')].find((r) => /Fala 429/.test(r.textContent))?.querySelector('.row-btn'); if (!row) return false; window.__c = Date.now(); row.click(); return false; }
             return !!document.querySelector('.lb .lb-facts [data-abe]') && Date.now() - window.__c > 1500;
           })()`,
-          extract: "document.querySelector('.lb .lb-facts [data-abe]')?.innerText || ''",
+          extract: "(document.querySelector('.lb .lb-facts [data-abe]')?.innerText || '') + ' | prawdziwe żądania after-be: ' + performance.getEntriesByType('resource').filter((e) => /after-be/.test(e.name)).length",
         });
       } catch (e) { if (/Brak Chrome/.test(e.message)) { const s = new Error('brak przeglądarki'); s.skipTest = true; throw s; } throw e; }
       assert.match(String(out), /nie udało się pobrać/i, String(out));
       assert.ok(!/czeka na świece/i.test(String(out)), String(out));
+      assert.match(String(out), /prawdziwe żądania after-be: 0$/, `makieta 429 obejmuje wszystkie żądania strony: ${out}`);
     } finally { Srv?.stop(); A.stop(); }
   });
 

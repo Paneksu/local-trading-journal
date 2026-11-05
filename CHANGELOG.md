@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), wersje: [semver](https://semver.org/).
 
+## [1.8.1] · 2026-11-05
+
+### PL
+- Zmienione: licznik do zamknięcia świecy w Backteście stoi teraz na prawej osi ceny, bezpośrednio pod etykietą bieżącej ceny, w jej kolorze (zielonym albo czerwonym) i pokazuje sam czas, np. „00:42”. Zniknął z nagłówka wykresu. Każdy wykres ma własny licznik dla swojego interwału. W przerwie na osi mieści się krótki tekst („Zamkn.”, „Brak”), a pełne znaczenie („Rynek zamknięty”, „Brak notowań”) czyta czytnik ekranu i widać w podpowiedzi. Licznik stoi zawsze pod etykietą ceny i może przykryć sąsiedni znacznik ceny SL albo TP na osi; kwoty i ceny SL i TP nadal widać na plakietkach obok osi. Gdy cena jest poza polem wykresu, licznik znika razem z etykietą. Znika też na czas, gdy krzyż celownika jest w tym samym paśmie osi, żeby nie zasłaniać jego etykiety. Kształt licznika dopasowuje się do skali ekranu, więc przylega do etykiety także przy skalowaniu Windows 125% i 150%.
+
+### EN
+- Changed: the candle close countdown in Backtest now sits on the right price axis, directly under the current price label, in its colour (green or red), and shows only the time, e.g. "00:42". It is gone from the chart header. Each chart has its own countdown for its own interval. During a break the axis shows a short text ("Closed", "None") while the full meaning ("Market closed", "No quotes") is read by screen readers and shown in the tooltip. It always sits under the price label and may cover a neighbouring SL or TP price marker on the axis; the SL and TP amounts and prices are still visible on the tags next to the axis. When the price is outside the chart area, the countdown disappears together with the label. It also hides while the crosshair is in the same band of the axis, so it does not cover the crosshair label. Its shape follows the display scale, so it sits flush with the label at Windows 125% and 150% scaling too.
+
 ## [1.8.0] · 2026-11-05
 
 ### PL

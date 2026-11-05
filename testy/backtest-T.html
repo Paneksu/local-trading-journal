@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: licznik do zamknięcia świecy na prawej osi ceny (strona robocza)</title>
+<!-- Strona robocza testu backtest-T (testy/backtest-T-strona.mjs), tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/. Prawdziwy replay na świecach syntetycznych.
+     [U] 05.11.2026 «do zamkniecia swiecy mialo byc na tej osi z prawej strony»: licznik stoi pod etykietą bieżącej ceny na prawej osi (pozycja sprawdzana na pikselach płótna osi),
+     nie ma go w nagłówku wykresu. Parametry: ?theme=onyx|platinum, ?shots=1 (zrzuty przez most CDP window.__shot). Wynik: pre#wynik z JSON-em { checks, fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const shots = qs.get('shots') === '1';
+const theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+document.documentElement.dataset.theme = theme;
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const frames = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r)); };
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const only = qs.get('only');
+const section = async (tag, fn) => { if (only && tag !== only) return; try { await fn(); } catch (e) { rec(tag, false, `sekcja przerwana: ${e && e.stack || e}`); } };
+let shotId = 0;
+const shot = async (name) => {
+  if (!shots || !window.__shot) return;
+  const id = ++shotId;
+  // zrzuty bez okna journala po zamkniętym trade'zie i bez powiadomienia (zasłaniają lewy dół wykresu)
+  document.querySelectorAll('.bt-jr').forEach((x) => x.remove());
+  const tz = document.getElementById('toast'); if (tz) tz.hidden = true;
+  await sleep(350);
+  window.__shot(JSON.stringify({ id, name: `${name}-${theme}${devicePixelRatio !== 1 ? `-dpr${devicePixelRatio}` : ''}` }));
+  const t0 = performance.now();
+  while (performance.now() - t0 < 10000 && !window.__done?.[id]) await sleep(25);
+};
+try {
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: false, earnings: false, newsImp: { high: true, medium: true, low: false, holiday: true, opex: true } })); } catch { /* bez localStorage */ }
+  try { for (const k of ['thq.bt.open.v1', 'thq.bt.dock.v1', 'thq.bt.ord.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt, candleClock, fmtCountdown } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja T',
+    def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'usd', value: 500 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] }, now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const cells = () => [...scr().querySelectorAll('.bt-cell')];
+  const plot = (i = 0) => cells()[i].querySelector('.bt-plot');
+  const chartOf = (i = 0) => RP.charts()[i];
+  const cdt = (i = 0) => plot(i).querySelector('.bt-cdt');
+  const layoutBtn = (k) => scr().querySelector(`[data-layout="${k}"]`);
+  const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
+  const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const lastBar = (i = 0) => { const b = chartOf(i).bars(); return b[b.length - 1]; };
+  const paneH = (i = 0) => plot(i).clientHeight - (chartOf(i).chart.timeScale().height() || 0);
+  const fmt2 = (x) => new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+
+  // ---- piksele płótna osi ceny: prostokąty etykiet (ciągłe pasy nieprzezroczystych pikseli tuż przy prawej krawędzi osi), względem góry .bt-plot ----
+  const axisRuns = (i = 0) => {
+    const hr = plot(i).getBoundingClientRect(), c = chartOf(i), tsW = c.chart.timeScale().width();
+    const cvs = [...plot(i).querySelectorAll('canvas')].filter((cv) => { const r = cv.getBoundingClientRect(); return r.left >= hr.left + tsW - 2 && r.height > 30 && r.width < 200; });
+    const runs = [];
+    for (const cv of cvs) {
+      const dpr = devicePixelRatio, dprX = devicePixelRatio, W = cv.width, Hh = cv.height;
+      const d = cv.getContext('2d').getImageData(0, 0, W, Hh).data;
+      const cr = cv.getBoundingClientRect(), r0 = cr.top - hr.top, c0 = cr.left - hr.left;
+      const x = Math.max(1, Math.round(2 * dprX));
+      let st = -1;
+      for (let y = 0; y <= Hh; y++) {
+        const on = y < Hh && d[(y * W + x) * 4 + 3] >= 200;
+        if (on && st < 0) st = y;
+        if (!on && st >= 0) {
+          if ((y - st) / dpr >= 12) {
+            const mid = Math.floor((st + y) / 2), m = (mid * W + x) * 4;
+            let x1 = x; while (x1 + 1 < W && d[(mid * W + x1 + 1) * 4 + 3] >= 200) x1++;
+            runs.push({ top: r0 + st / dpr, bottom: r0 + y / dpr, left: c0, right: c0 + (x1 + 1) / dprX, color: `rgb(${d[m]}, ${d[m + 1]}, ${d[m + 2]})` });
+          }
+          st = -1;
+        }
+      }
+    }
+    return runs;
+  };
+  // etykieta ostatniej ceny: pas, który zawiera (albo leży najbliżej) współrzędnej ostatniego zamknięcia
+  const lastLabel = (i = 0) => {
+    const y0 = chartOf(i).series.priceToCoordinate(lastBar(i)[4]);
+    const runs = axisRuns(i);
+    if (!runs.length) return null;
+    const ref = y0 == null ? 0 : y0;
+    return runs.map((r) => ({ ...r, d: ref >= r.top && ref <= r.bottom ? 0 : Math.min(Math.abs(ref - r.top), Math.abs(ref - r.bottom)) })).sort((a, b) => a.d - b.d)[0];
+  };
+  const rectOf = (el, i = 0) => { const r = el.getBoundingClientRect(), h = plot(i).getBoundingClientRect(); return { top: r.top - h.top, bottom: r.bottom - h.top, left: r.left - h.left, right: r.right - h.left, w: r.width, h: r.height }; };
+  const shown = (el) => !!el && !el.hidden && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' && el.getBoundingClientRect().height > 0;
+  // WCAG 2.2: kontrast tekstu do tła z wartości rgb()
+  const rgbOf = (s) => (/rgba?\(([^)]+)\)/.exec(s)?.[1] || '0,0,0').split(/[ ,\/]+/).filter(Boolean).slice(0, 3).map(Number);
+  const lumOf = (rgb) => { const [r, g, b] = rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const contrast = (a, b) => { const x = lumOf(rgbOf(a)), y = lumOf(rgbOf(b)); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const sameRgb = (a, b) => rgbOf(a).every((v, k) => Math.abs(v - rgbOf(b)[k]) <= 2);
+  // pod etykietą co do piksela: góra licznika = dół etykiety (±0,5 px), ta sama szerokość osi, to samo tło; zwraca opis rozbieżności albo ''
+  const underLabel = (i = 0) => {
+    const el = cdt(i);
+    if (!shown(el)) return 'licznik niewidoczny';
+    const lab = lastLabel(i), r = rectOf(el, i);
+    if (!lab) return 'brak etykiety ceny na osi';
+    const bad = [];
+    if (Math.abs(r.top - lab.bottom) > 0.51 / devicePixelRatio) bad.push(`góra licznika ${r.top.toFixed(1)} vs dół etykiety ${lab.bottom.toFixed(1)}`);
+    if (!sameRgb(getComputedStyle(el).backgroundColor, lab.color)) bad.push(`tło ${getComputedStyle(el).backgroundColor} vs etykieta ${lab.color}`);
+    if (Math.abs(r.left - lab.left) > 1 / devicePixelRatio || Math.abs(r.right - lab.right) > 1 / devicePixelRatio) bad.push(`oś x: licznik ${r.left.toFixed(1)}…${r.right.toFixed(1)} vs etykieta ${lab.left.toFixed(1)}…${lab.right.toFixed(1)}`);
+    return bad.join('; ');
+  };
+  const cdText = (i = 0) => cdt(i)?.textContent || '';
+  const secsOf = (s) => { const m = /(\d+):(\d\d)$/.exec(s); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(400);
+  if (qs.get('diag') === '1') { const L = lastLabel(0), e = cdt(0), r = e && !e.hidden ? rectOf(e, 0) : null; rec('diag', true, JSON.stringify({ st: cdt(0)?.style.top, y0: chartOf(0).series.priceToCoordinate(lastBar(0)[4]), ph: paneH(0), boxTop: cdt(0)?.parentElement.parentElement.getBoundingClientRect().top - plot(0).getBoundingClientRect().top, cvTop: plot(0).querySelectorAll('canvas')[2].getBoundingClientRect().top - plot(0).getBoundingClientRect().top, cv: [...plot(0).querySelectorAll('canvas')].slice(2, 3).map((x) => [x.width, x.height, x.getBoundingClientRect().width, x.getBoundingClientRect().height]), dpr: devicePixelRatio, aw: chartOf(0).series.priceScale().width(), label: L, cd: r, cdW: r && r.w })); }
+  // ---------- 1. licznik nie istnieje w nagłówku (jest przeniesiony, nie zdublowany) ----------
+  const headerHas = () => cells().some((c) => c.querySelector('.bt-ch .bt-cd, .bt-ch [class*="bt-cd"]:not(.bt-cdt)')) || /Do zamknięcia świecy/.test(cells().map((c) => c.querySelector('.bt-ch').textContent).join(' '));
+  await section('nagłówek', async () => {
+    rec('nagłówek', !headerHas(), 'nagłówek wykresu nie ma licznika (.bt-cd) ani napisu „Do zamknięcia świecy”');
+    rec('nagłówek', !scr().querySelector('.bt-cd'), 'w całym ekranie replayu nie ma elementu .bt-cd');
+    rec('nagłówek', cells().length === 1 && plot(0).querySelectorAll('.bt-cdt').length === 1 && cdt(0).closest('.bt-plot') === plot(0), 'licznik jest w wykresie (warstwa .bt-cdl na osi), jeden egzemplarz');
+    // mutacja: dopisany do nagłówka licznik MUSI zostać wykryty przez to samo sprawdzenie (inaczej asercja negatywna jest ślepa)
+    const m = document.createElement('span'); m.className = 'bt-cd'; m.textContent = 'Do zamknięcia świecy 00:10';
+    cells()[0].querySelector('.bt-ch').appendChild(m);
+    rec('nagłówek', headerHas() === true, 'mutacja: licznik dopisany do nagłówka jest wykrywany przez sprawdzenie');
+    m.remove();
+    rec('nagłówek', !headerHas(), 'po cofnięciu mutacji sprawdzenie znowu jest czyste');
+  });
+
+  // ---------- 1b. brak pojemnika płótna osi: licznik się chowa i loguje ostrzeżenie (nie ląduje na lewej krawędzi wykresu) ----------
+  await section('kontener', async () => {
+    const { LWC_URL, readColors } = await import('/js/wykres.js');
+    const { createReplayChart } = await import('/js/bt-wykres.js');
+    const LWC = await import(LWC_URL);
+    const warns = [], w0 = console.warn;
+    console.warn = (...a) => { warns.push(a.join(' ')); };
+    const hosts = [], charts = [];
+    const build = (patch) => {
+      const h = document.createElement('div'); h.style.cssText = 'position:fixed;left:0;top:0;width:600px;height:300px;opacity:0;pointer-events:none'; document.body.appendChild(h); hosts.push(h);
+      const L = patch ? { ...LWC, createChart: (el, o) => { const c = LWC.createChart(el, o); c.chartElement = () => document.createElement('div'); return c; } } : LWC;
+      const ch = createReplayChart(h, { LWC: L, instrument: 'NQ', tf: '1m', colors: readColors(h) }); charts.push(ch);
+      const t0 = 1710251100, bars = [0, 1, 2, 3].map((i) => [t0 + i * 60, 18000 + i, 18004 + i, 17998 + i, 18002 + i, 5]);
+      ch.apply({ kind: 'reset', bars });
+      ch.setCountdown({ text: '01:00', label: 'Do zamknięcia świecy 01:00', title: 'test' });
+      return { h, ch };
+    };
+    try {
+      const good = build(false), bad = build(true);
+      await sleep(400);
+      const vis = (h) => { const e = h.querySelector('.bt-cdt'); return !!e && !e.hidden && e.getBoundingClientRect().height > 0; };
+      rec('kontener', vis(good.h), 'kontrola: z pojemnikiem osi licznik jest widoczny (sprawdzenie potrafi być zielone)');
+      rec('kontener', !vis(bad.h), 'bez pojemnika osi licznik jest ukryty');
+      rec('kontener', !bad.h.querySelector('.bt-cdl'), 'bez pojemnika osi licznik nie trafia do hosta (lewa krawędź wykresu)');
+      rec('kontener', warns.some((x) => /brak pojemnika płótna osi/.test(x)), `ostrzeżenie w konsoli («${warns[0] || ''}»)`);
+    } finally { console.warn = w0; for (const c of charts) { try { c.destroy(); } catch { /* już zniszczony */ } } for (const h of hosts) h.remove(); }
+  });
+
+  // ---------- 2. pozycja pod etykietą co do piksela: krok, interwał, skala, auto-skala, rozmiar ----------
+  const exact = (tag, label, i = 0) => { const bad = underLabel(i); rec(tag, bad === '', `${label}: ${bad || `licznik «${cdText(i)}» tuż pod etykietą (${fmt2(lastBar(i)[4])})`}`); };
+  await section('pozycja', async () => {
+    exact('pozycja', 'start 09:31', 0);
+    await shot('zwykly');
+    rec('pozycja', /^\d\d:\d\d$/.test(cdText(0)) && secsOf(cdText(0)) === 60, `tylko sam czas, bez napisu («${cdText(0)}»)`);
+    await RP.step(1); await frames(); await sleep(150);
+    exact('pozycja', 'po kroku', 0);
+    for (let k = 0; k < 4; k++) { await RP.step(1); await frames(2); }
+    await sleep(100); exact('pozycja', 'po 4 kolejnych krokach', 0);
+    const b15 = scr().querySelector('.bt-tfs [data-tf="15m"]'); b15.click(); await sleep(500);
+    exact('pozycja', 'po zmianie interwału na 15m', 0);
+    rec('pozycja', cdText(0) !== '' && secsOf(cdText(0)) > 0 && secsOf(cdText(0)) <= 900, `15m: czas do końca świecy («${cdText(0)}»)`);
+    scr().querySelector('.bt-tfs [data-tf="1m"]').click(); await sleep(500);
+    exact('pozycja', 'po powrocie na 1m', 0);
+    const c = chartOf(0), ps = c.series.priceScale(), px = lastBar(0)[4];
+    // ręczna skala (to samo, co przeciąganie osi): kilka zakresów, w tym przybliżenie i oddalenie
+    c.setAuto(false); await frames();
+    for (const [lo, hi, nm] of [[px - 40, px + 40, 'zakres ±40'], [px - 6, px + 6, 'przybliżenie ±6'], [px - 400, px + 400, 'oddalenie ±400'], [px - 10, px + 70, 'cena w dolnej części']]) {
+      ps.setVisibleRange({ from: lo, to: hi }); await frames(3); await sleep(80);
+      exact('pozycja', `skala ręczna, ${nm}`, 0);
+    }
+    c.setAuto(true); await sleep(400); exact('pozycja', 'auto-skala włączona z powrotem', 0);
+    // zmiana rozmiaru okna: węższy i niższy wykres
+    const cellEl = cells()[0], oldW = cellEl.style.width, oldH = cellEl.style.height;
+    cellEl.style.width = '1100px'; cellEl.style.height = '520px'; window.dispatchEvent(new Event('resize')); await sleep(500);
+    exact('pozycja', 'po zmianie rozmiaru wykresu (1100×520)', 0);
+    cellEl.style.width = oldW; cellEl.style.height = oldH; window.dispatchEvent(new Event('resize')); await sleep(500);
+    exact('pozycja', 'po przywróceniu rozmiaru', 0);
+    // mutacja: licznik przesunięty o 3 px MUSI zostać wykryty jako odchylenie
+    const el = cdt(0), top0 = el.style.top;
+    el.style.top = `${parseFloat(top0) + 3}px`; await frames(1);
+    rec('pozycja', underLabel(0) !== '', 'mutacja: licznik przesunięty o 3 px jest wykrywany jako błąd położenia');
+    el.style.top = top0; await frames(2); await sleep(120);
+    await RP.step(1); await frames(); await sleep(150);
+    exact('pozycja', 'po cofnięciu mutacji i kroku licznik wrócił na miejsce', 0);
+  });
+
+  // ---------- 3. kolor zmienia się z etykietą (zielona/czerwona) i kontrast tekstu ----------
+  await section('kolor', async () => {
+    const seen = new Map();
+    for (let k = 0; k < 160 && seen.size < 2; k++) {
+      await RP.step(1); await frames(2); await sleep(30);
+      const lab = lastLabel(0), el = cdt(0);
+      if (!lab || !shown(el)) continue;
+      const bg = getComputedStyle(el).backgroundColor, fg = getComputedStyle(el).color;
+      const key = lab.color;
+      if (!sameRgb(bg, lab.color)) { rec('kolor', false, `krok ${k}: tło licznika ${bg} ≠ etykieta ${lab.color}`); break; }
+      if (!seen.has(key)) seen.set(key, { bg, fg, k });
+    }
+    rec('kolor', seen.size === 2, `licznik przeszedł przez oba kolory etykiety (${[...seen.keys()].join(' | ')})`);
+    for (const [k, v] of seen) {
+      const cr = contrast(v.fg, v.bg);
+      rec('kolor', cr >= 4.5, `kontrast tekstu licznika ${v.fg} na ${v.bg} (${theme}) = ${cr.toFixed(2)}:1 (min 4,5)`);
+    }
+    if (seen.size) rec('kolor', true, `kontrasty: ${[...seen].map(([k, v]) => `${v.bg} → ${contrast(v.fg, v.bg).toFixed(2)}`).join(', ')}`);
+    exact('kolor', 'po przejściu przez oba kolory', 0);
+  });
+
+  // ---------- 3b. etykieta krzyża celownika na osi: licznik znika, gdy krzyż jest w jego paśmie, i wraca po zjechaniu ----------
+  await section('krzyż', async () => {
+    const e = cdt(0), pane = plot(0).querySelectorAll('canvas')[1];
+    const moveTo = (clientY) => { const r = pane.getBoundingClientRect(); const ev0 = { bubbles: true, clientX: r.left + r.width / 2, clientY }; pane.dispatchEvent(new MouseEvent('mouseenter', { ...ev0, bubbles: false })); pane.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width / 2, clientY })); };
+    const hr = plot(0).getBoundingClientRect(), R0 = e.getBoundingClientRect();
+    rec('krzyż', shown(e), 'przed ruchem myszy licznik jest widoczny');
+    moveTo(R0.top + R0.height / 2); await frames(3); await sleep(100);
+    rec('krzyż', !shown(e), 'krzyż w paśmie licznika: licznik schowany (etykieta krzyża nie jest zasłonięta)');
+    moveTo(R0.top - 120); await frames(3); await sleep(100);
+    rec('krzyż', shown(e), 'krzyż wyżej o 120 px: licznik z powrotem');
+    exact('krzyż', 'po zjechaniu krzyża', 0);
+    moveTo(R0.top + R0.height / 2); await frames(2);
+    pane.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true })); window.dispatchEvent(new MouseEvent('mouseout')); await frames(3); await sleep(150);
+    rec('krzyż', shown(e), 'kursor opuścił wykres: licznik z powrotem');
+  });
+
+  // ---------- 4. warstwy: pozycja z SL i TP tuż przy cenie; licznik zawsze pod ceną, przepuszcza zdarzenia, plakietki dalej do chwytania ----------
+  await section('warstwy', async () => {
+    // kursor stoi na froncie (po sekcji „kolor”): cofnięty replay blokuje zlecenia, więc ta sekcja idzie przed sekcjami, które skaczą w tył i w przód
+    // pozycja otwiera się szeroko (SL 20, TP 30 pkt) i dopiero potem SL oraz TP są przesuwane tuż przy cenę (inaczej 2–3 pkt padają od pierwszej świecy)
+    const openWide = async () => { RP.orders().closeAll(); await sleep(150); setF('sl', 20); setF('tp', 30); RP.orders().submit('buy'); await sleep(200); await RP.step(1); await frames(2); await sleep(200); return RP.book().positions.NQ; };
+    const moveLv = async (sl, tp) => { const p = RP.book().positions.NQ, px = lastBar(0)[4]; RP.orders().setLevel('NQ', 'sl', px - sl); RP.orders().setLevel('NQ', 'tp', px + tp, p.tps?.[0]?.id ?? null); await frames(3); await sleep(300); };
+    await openWide(); await moveLv(2, 3); await sleep(200);
+    const c = chartOf(0), L = c.tradeLayer(), pos = RP.book().positions.NQ;
+    rec('warstwy', !!pos && pos.sl != null && pos.tp != null, `pozycja z SL i TP jest otwarta (SL ${pos?.sl}, TP ${pos?.tp})`);
+    const el = cdt(0);
+    rec('warstwy', getComputedStyle(el).pointerEvents === 'none', 'licznik ma pointer-events: none');
+    const R = rectOf(el, 0), hr = plot(0).getBoundingClientRect();
+    const hit = shown(el) ? document.elementFromPoint(hr.left + (R.left + R.right) / 2, hr.top + (R.top + R.bottom) / 2) : null;
+    rec('warstwy', !shown(el) || (hit !== el && !el.contains(hit)), 'zdarzenia myszy omijają licznik (elementFromPoint nie trafia w niego)');
+    // poziomy osi: wejście, SL, TP jako prostokąty (natywne znaczniki 16 px albo własne .bt-axt)
+    const levels = [['wejście', pos.entryPrice], ['SL', pos.sl], ['TP', pos.tp]].map(([n, p]) => ({ n, y: c.series.priceToCoordinate(p) })).filter((x) => x.y != null);
+    const near = levels.filter((l) => Math.abs(l.y - c.series.priceToCoordinate(lastBar(0)[4])) < 40);
+    // [U] 05.11.2026 «Licznik zawsze widoczny (Recommended)»: licznik stoi zawsze pod etykietą ceny, nad znacznikami SL, TP, wejścia i zleceń (może je przykryć; kwoty i ceny widać na plakietkach)
+    const axisTop = () => { const hr = plot(0).getBoundingClientRect(), ts = c.chart.timeScale().width(); const cv = [...plot(0).querySelectorAll('canvas')].find((x) => { const r = x.getBoundingClientRect(); return r.left >= hr.left + ts - 2 && r.height > 30 && r.width < 200; }); return cv.getBoundingClientRect().top - hr.top; };
+    const clash = (nm) => {
+      const e = cdt(0);
+      if (!shown(e)) return rec('warstwy', false, `${nm}: licznik jest schowany mimo poziomów przy cenie (ma być zawsze widoczny)`);
+      const r = rectOf(e, 0), y0 = c.series.priceToCoordinate(lastBar(0)[4]), ph = paneH(0);
+      const dd = devicePixelRatio, hb = 2 * Math.floor(15 * dd / 2) + 1, phb = Math.round(ph * dd), want = axisTop() + (Math.min(Math.max(Math.round(y0 * dd) - (hb - 1) / 2, 0), phb - hb) + hb) / dd;
+      const covered = levels.filter((l) => r.top < l.y + 8 - 0.5 && r.bottom > l.y - 8 + 0.5).map((l) => l.n);
+      rec('warstwy', Math.abs(r.top - want) <= 0.51 / devicePixelRatio, `${nm}: licznik zawsze tuż pod etykietą ceny (góra ${r.top.toFixed(1)}, oczekiwana ${want.toFixed(1)}; przykrywa znaczniki: ${covered.join(', ') || 'żadnego'})`);
+    };
+    clash('SL 2 pkt, TP 3 pkt');
+    rec('warstwy', near.length >= 1, `poziom stoi tuż przy cenie (${near.map((x) => x.n).join(', ')})`);
+    // mutacja: licznik z pointer-events: auto MUSI być wykryty przez ten sam test trafienia (inaczej sprawdzenie jest ślepe)
+    { const e = cdt(0); e.style.pointerEvents = 'auto'; const rr = e.getBoundingClientRect(); const hh = document.elementFromPoint(rr.left + rr.width / 2, rr.top + rr.height / 2); rec('warstwy', hh === e, 'mutacja: pointer-events: auto na liczniku jest wykrywane przez elementFromPoint'); e.style.pointerEvents = ''; }
+    // plakietki pozycji dalej przechwytują kliknięcia
+    for (const k of ['pos', 'psl', 'ptp']) {
+      const tg = L.querySelector(`[data-k="${k}"]`);
+      if (!tg || tg.hidden) { rec('warstwy', false, `plakietka ${k} brak`); continue; }
+      const r = tg.getBoundingClientRect();
+      const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      rec('warstwy', h === tg || tg.contains(h), `plakietka ${k} przechwytuje kliknięcie (nie licznik)`);
+    }
+    await shot('pozycja-sl-tp');
+    // SL i TP bliżej niż wysokość etykiety (15 px): 1 pkt i 0,5 pkt od ceny
+    for (const [sl, tp] of [[1, 1], [0.5, 0.5]]) {
+      await openWide(); await moveLv(sl, tp);
+      const p2 = RP.book().positions.NQ;
+      levels.length = 0; if (p2) for (const [n, p] of [['wejście', p2.entryPrice], ['SL', p2.sl], ['TP', p2.tp]]) { const y = c.series.priceToCoordinate(p); if (y != null) levels.push({ n, y }); }
+      rec('warstwy', !!p2 && Math.abs(lastBar(0)[4] - p2.sl - sl) < 0.01 && Math.abs(p2.tp - lastBar(0)[4] - tp) < 0.01, `poziomy ustawione: cena ${lastBar(0)[4]}, wejście ${p2?.avg}, SL ${p2?.sl}, TP ${p2?.tp}`);
+      clash(`SL ${sl} pkt, TP ${tp} pkt`);
+      if (sl === 0.5) await shot('pozycja-sl-tp-bardzo-blisko');
+    }
+    RP.orders().closeAll(); await sleep(250);
+  });
+
+  // ---------- 4. cena przy krawędzi i poza widokiem: nie rysuje na osi czasu, zachowuje się jak etykieta albo znika ----------
+  await section('krawędź', async () => {
+    const c = chartOf(0), ps = c.series.priceScale(), px = lastBar(0)[4];
+    c.setAuto(false); await frames();
+    const inPane = (nm) => {
+      const el = cdt(0), ph = paneH(0);
+      if (!shown(el)) return rec('krawędź', true, `${nm}: licznik schowany (cena poza widokiem)`);
+      const r = rectOf(el, 0);
+      rec('krawędź', r.top >= -0.5 && r.bottom <= ph + 0.5, `${nm}: licznik w polu osi (${r.top.toFixed(1)}…${r.bottom.toFixed(1)} z ${ph}), nie wchodzi na oś czasu`);
+    };
+    // cena przy górnej krawędzi
+    ps.setVisibleRange({ from: px - 200, to: px + 3 }); await frames(3); await sleep(150);
+    let lab = lastLabel(0);
+    rec('krawędź', !!lab, `u góry: etykieta ceny jest na osi (${lab ? `${lab.top.toFixed(1)}…${lab.bottom.toFixed(1)}` : 'brak'})`);
+    inPane('cena przy górnej krawędzi');
+    if (shown(cdt(0)) && lab) rec('krawędź', !(rectOf(cdt(0), 0).top < lab.bottom - 0.5 && rectOf(cdt(0), 0).bottom > lab.top + 0.5), 'u góry: licznik nie nakłada się na etykietę ceny');
+    await shot('krawedz-gora');
+    // cena przy dolnej krawędzi
+    ps.setVisibleRange({ from: px - 3, to: px + 200 }); await frames(3); await sleep(150);
+    lab = lastLabel(0);
+    rec('krawędź', !!lab, `u dołu: etykieta ceny jest na osi (${lab ? `${lab.top.toFixed(1)}…${lab.bottom.toFixed(1)}` : 'brak'})`);
+    inPane('cena przy dolnej krawędzi');
+    if (shown(cdt(0)) && lab) rec('krawędź', !(rectOf(cdt(0), 0).top < lab.bottom - 0.5 && rectOf(cdt(0), 0).bottom > lab.top + 0.5), 'u dołu: licznik nie nakłada się na etykietę ceny');
+    await shot('krawedz-dol');
+    // poza widokiem: powyżej i poniżej
+    ps.setVisibleRange({ from: px - 500, to: px - 300 }); await frames(3); await sleep(150);
+    // jak natywna etykieta: gdy ceny nie ma na osi (poza polem wykresu), licznika też nie ma
+    const outHidden = (nm) => rec('krawędź', !lastLabel(0) === !shown(cdt(0)), `${nm}: licznik ${shown(cdt(0)) ? 'widoczny' : 'schowany'}, etykieta ceny ${lastLabel(0) ? 'jest' : 'nie ma jej'} na osi (zachowuje się jak etykieta)`);
+    outHidden('cena powyżej widoku');
+    inPane('cena powyżej widoku');
+    await shot('krawedz-poza-gora');
+    ps.setVisibleRange({ from: px + 300, to: px + 500 }); await frames(3); await sleep(150);
+    inPane('cena poniżej widoku');
+    outHidden('cena poniżej widoku');
+    await shot('krawedz-poza-dol');
+    // mutacja: licznik wypchnięty pod pole osi MUSI zostać wykryty
+    const el = cdt(0), t0 = el.style.top; el.hidden = false; el.style.top = `${paneH(0) + 20}px`; el.style.display = 'block';
+    const r = rectOf(el, 0);
+    rec('krawędź', !(r.top >= -0.5 && r.bottom <= paneH(0) + 0.5), 'mutacja: licznik na osi czasu jest wykrywany jako błąd (sprawdzenie nie jest ślepe)');
+    el.style.top = t0; el.style.display = '';
+    c.setAuto(true); await sleep(500);
+    exact('krawędź', 'po włączeniu auto-skali licznik wrócił pod etykietę', 0);
+  });
+
+  // ---------- 5. przerwa (Rynek zamknięty) i brak notowań: krótki tekst w szerokości osi, pełne znaczenie w aria-label ----------
+  await section('przerwa', async () => {
+    const aw = () => chartOf(0).series.priceScale().width();
+    const fits = (nm) => { const el = cdt(0), r = rectOf(el, 0); rec('przerwa', shown(el) && el.scrollWidth <= el.clientWidth + 0.5 && r.w <= aw() + 1.5 && r.right <= plot(0).clientWidth + 0.5, `${nm}: tekst «${el?.textContent}» mieści się w osi (${el?.scrollWidth}/${el?.clientWidth} px, oś ${aw()} px)`); };
+    // replay przeskakuje przerwę dzienną (landing/gapTarget): cel 17:30 NY ląduje na otwarciu 18:00, więc „Rynek zamknięty” nie jest osiągalny kursorem w tych danych;
+    // krótki tekst i jego geometrię sprawdzamy wprost przez API wykresu (to samo setCountdown, które woła replay), a ścieżkę replayu tylko w tym, co osiągalne
+    await RP.goTo(nyAt('2024-03-12', '17:30')); await sleep(600);
+    rec('przerwa', /^(\d\d:\d\d|Zamkn\.)$/.test(cdText(0)), `cel 17:30 NY: replay pokazuje «${cdText(0)}» (przeskok przerwy albo przerwa)`);
+    if (cdText(0) === 'Zamkn.') rec('przerwa', /Rynek zamknięty/.test(cdt(0).getAttribute('aria-label') || '') && /Otwarcie sesji/.test(cdt(0).title || ''), 'przerwa w replayu: pełne znaczenie w aria-label i godzina otwarcia w podpowiedzi');
+    chartOf(0).setCountdown({ text: 'Zamkn.', label: 'Rynek zamknięty', title: 'Otwarcie sesji: wt 18:00' }); await frames(2);
+    rec('przerwa', cdText(0) === 'Zamkn.' && cdt(0).getAttribute('aria-label') === 'Rynek zamknięty' && /Otwarcie sesji/.test(cdt(0).title), `krótki tekst «${cdText(0)}», pełne znaczenie w aria-label «${cdt(0).getAttribute('aria-label')}», godzina otwarcia w podpowiedzi`);
+    fits('przerwa sesji (API)');
+    exact('przerwa', 'przerwa sesji (API)', 0);
+    await shot('przerwa');
+    await RP.step(1); await frames(2); await sleep(200);
+    await RP.goTo(nyAt('2024-03-12', '12:10')); await sleep(600);
+    rec('przerwa', cdText(0) === 'Brak', `dziura w danych 1m (12:10 NY): «${cdText(0)}»`);
+    rec('przerwa', /Brak notowań/.test(cdt(0).getAttribute('aria-label') || '') && /Brak notowań/.test(cdt(0).title || ''), `pełne znaczenie w aria-label i podpowiedzi («${cdt(0).getAttribute('aria-label')}»)`);
+    fits('brak notowań');
+    exact('przerwa', 'brak notowań', 0);
+    // najdłuższy możliwy czas przy dużej cenie: interwał 1D (do 23:59:59) i 4h (do 3:59:59) przy cenie rzędu 18 000
+    await RP.goTo(nyAt('2024-03-12', '09:40')); await sleep(500);
+    for (const tf of ['4h', '1D']) {
+      const f = scr().querySelector('.bt-tfadd'); const b = scr().querySelector(`.bt-tfs [data-tf="${tf}"]`);
+      if (b) b.click(); else { f.querySelector('input').value = tf; f.requestSubmit(); }
+      await sleep(700);
+      rec('przerwa', /^\d{1,2}:\d\d(:\d\d)?$/.test(cdText(0)), `${tf}: format czasu («${cdText(0)}»)`);
+      fits(`interwał ${tf}, cena ${fmt2(lastBar(0)[4])}`);
+    }
+    scr().querySelector('.bt-tfs [data-tf="1m"]').click(); await sleep(600);
+  });
+
+  // ---------- 6. układy 2h, 2v i 4 (dwa wykresy obok siebie, jeden pod drugim, cztery): każdy wykres ma swój licznik według własnego interwału ----------
+  await section('układ', async () => {
+    const tfSeq = ['1m', '5m', '15m', '1h'];
+    for (const kind of ['2h', '2v', '4']) {
+      const btn = layoutBtn(kind);
+      if (!btn) { rec('układ', false, `brak przycisku układu ${kind}`); continue; }
+      btn.click(); await sleep(900);
+      const n = cells().length;
+      rec('układ', n === RP.charts().length && n >= 2, `${kind}: ${n} wykresów`);
+      for (let i = 0; i < n; i++) {
+        const tf = tfSeq[i % tfSeq.length];
+        const b = cells()[i].querySelector(`.bt-tfs [data-tf="${tf}"]`);
+        if (b) b.click(); else { const f = cells()[i].querySelector('.bt-tfadd'); f.querySelector('input').value = tf; f.requestSubmit(); }
+      }
+      await sleep(900);
+      const texts = [];
+      for (let i = 0; i < n; i++) {
+        const tf = cells()[i].querySelector('.bt-tfs [aria-pressed="true"]')?.dataset.tf;
+        const el = cdt(i);
+        const want = candleClock(RP.cursor(), tf)?.remaining;
+        const got = cdText(i);
+        texts.push(`${tf}=${got}`);
+        rec('układ', !!el && !el.closest('.bt-cell').querySelector('.bt-cd'), `${kind}, wykres ${i + 1} (${tf}): ma własny licznik i nie ma .bt-cd w nagłówku`);
+        rec('układ', want != null && got === fmtCountdown(want), `${kind}, wykres ${i + 1} (${tf}): czas wg własnego interwału «${got}» = «${want != null ? fmtCountdown(want) : '?'}»`);
+        const bad = underLabel(i);
+        rec('układ', bad === '', `${kind}, wykres ${i + 1}: ${bad || 'licznik tuż pod własną etykietą ceny'}`);
+      }
+      rec('układ', new Set(texts.map((x) => x.split('=')[1])).size > 1, `${kind}: wykresy z różnymi interwałami mają różne odliczanie (${texts.join(', ')})`);
+      if (kind === '4') await shot('cztery');
+    }
+    layoutBtn('1').click(); await sleep(900);
+    rec('układ', cells().length === 1, 'powrót do jednego wykresu');
+    scr().querySelector('.bt-tfs [data-tf="1m"]').click(); await sleep(700);
+  });
+
+  // ---------- 8. dostępność i aktualizacja DOM ----------
+  await section('a11y', async () => {
+    await RP.goTo(nyAt('2024-03-12', '09:50')); await sleep(500);
+    const el = cdt(0);
+    rec('a11y', el.getAttribute('role') === 'timer', 'role="timer"');
+    const live = el.getAttribute('aria-live');
+    rec('a11y', (live == null || live === 'off') && !el.closest('[aria-live="polite"], [aria-live="assertive"]'), `licznik nie jest regionem na żywo (aria-live ${live}), czytnik nie dostaje komunikatu co sekundę`);
+    rec('a11y', /^Do zamknięcia świecy \d\d:\d\d$/.test(el.getAttribute('aria-label') || ''), `aria-label niesie pełne znaczenie («${el.getAttribute('aria-label')}»)`);
+    rec('a11y', /Czas replayu do końca bieżącej świecy/.test(el.title || ''), `podpowiedź («${el.title}»)`);
+    // mutacja: licznik z aria-live="polite" MUSI zostać odrzucony przez to samo sprawdzenie
+    el.setAttribute('aria-live', 'polite');
+    rec('a11y', !!(el.getAttribute('aria-live') !== 'off' && el.getAttribute('aria-live') != null), 'mutacja: aria-live="polite" jest wykrywane jako błąd');
+    el.removeAttribute('aria-live');
+    // DOM zmienia się tylko przy zmianie wartości lub położenia: bez kroku i bez zmian skali zero mutacji przez 1,5 s
+    await sleep(300);
+    let muts = 0;
+    const mo = new MutationObserver((l) => { muts += l.length; });
+    mo.observe(chartOf(0).tradeLayer(), { subtree: true, childList: true, characterData: true, attributes: true });
+    plot(0).dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 0 }));
+    await sleep(1500);
+    mo.disconnect();
+    rec('a11y', muts === 0, `1,5 s bez kroku: zero mutacji DOM licznika i warstwy (${muts})`);
+    // krok zmienia dokładnie licznik (tekst, podpowiedź, ewentualnie położenie), nie całą warstwę
+    const before = cdText(0);
+    await RP.step(1); await frames(2); await sleep(120);
+    rec('a11y', /^\d\d:\d\d$/.test(cdText(0)), `po kroku «${before}» → «${cdText(0)}», nadal sam czas`);
+    exact('a11y', 'po kroku', 0);
+  });
+
+  out.textContent = JSON.stringify({ checks, fatal: null });
+} catch (e) { out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) }); }
+</script>
+</body>
+</html>

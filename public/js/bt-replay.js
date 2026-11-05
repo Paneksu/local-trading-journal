@@ -748,15 +748,17 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (res._h !== html) { res._h = html; res.innerHTML = html; }
     paintNotion();
     // odliczanie do zamknięcia świecy aktywnego interwału każdego wykresu (czas replayu, nie zegar systemowy); pamięć ważna do zamknięcia sesji (createClockCache).
+    // [U] 05.11.2026 «do zamkniecia swiecy mialo byc na tej osi z prawej strony»: wynik idzie na prawą oś ceny, pod etykietę bieżącej ceny (chart.setCountdown), nie do nagłówka wykresu;
+    // na osi mieści się sam czas, a w przerwie krótki tekst („Zamkn.”, „Brak”), pełne znaczenie niesie aria-label i podpowiedź
     // Interwał sekundowy poza oknem prawdziwego 1s składa się ze świec minutowych, więc liczy się z 60 s; „Brak notowań”, gdy pod kursorem jest sesja, a wykres nie ma świecy bieżącego przedziału
     for (const c of cells) {
       const secOut = (parseTf(c.tf)?.sec ?? 60) < 60 && !inside(data?.real1s(c.instrument) || [], cursor);
       const bars = c.chart.bars();
       const v = (c.clock ||= createClockCache())(cursor, c.tf, bars.length ? bars[bars.length - 1][0] : null, secOut ? 60 : null);
-      const txt = v.kind === 'open' ? `${t('Do zamknięcia świecy')} ${fmtCountdown(v.remaining)}` : v.kind === 'closed' ? t('Rynek zamknięty') : v.kind === 'nodata' ? t('Brak notowań') : '';
-      if (c.cdEl.textContent !== txt) c.cdEl.textContent = txt;
+      const txt = v.kind === 'open' ? fmtCountdown(v.remaining) : v.kind === 'closed' ? t('Zamkn.') : v.kind === 'nodata' ? t('Brak') : '';
+      const lbl = v.kind === 'open' ? `${t('Do zamknięcia świecy')} ${txt}` : v.kind === 'closed' ? t('Rynek zamknięty') : v.kind === 'nodata' ? t('Brak notowań') : '';
       const ttl = v.kind === 'closed' && v.end != null ? t('Otwarcie sesji: {t}', { t: `${fmtIn(chartTz()).DAY.format(new Date(v.end * 1000))} ${fmtIn(chartTz()).HM.format(new Date(v.end * 1000))}` }) : v.kind === 'nodata' ? t('Brak notowań w bieżącym przedziale świecy {tf}', { tf: c.tf }) : t('Czas replayu do końca bieżącej świecy {tf}', { tf: c.tf });
-      if (c.cdEl.title !== ttl) c.cdEl.title = ttl;
+      c.chart.setCountdown(txt ? { text: txt, label: lbl, title: ttl } : null);
     }
     for (const c of cells) {
       const secTf = (parseTf(c.tf)?.sec ?? 60) < 60;
@@ -834,7 +836,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
             <p class="lbl">${esc(t('Ulubione'))}</p><div class="swc-chips bt-tfchips"></div>
           </div></span>
         <div class="seg sm bt-auto" role="group" aria-label="${esc(t('Skala ceny'))}"><button type="button" data-swc="auto" aria-pressed="${cfgC.auto !== false}" title="${esc(autoTitle(cfgC.auto !== false))}">${esc(t('Auto'))}</button></div>
-        <span class="swc-save" aria-live="polite"></span><span class="swc-meter" hidden></span><span class="bt-cd" role="timer" aria-live="off"></span>
+        <span class="swc-save" aria-live="polite"></span><span class="swc-meter" hidden></span>
         <button type="button" class="btn sm swc-draw" aria-expanded="false">${esc(t('Rysuj'))}</button>
         <div class="swc-tools" role="toolbar" aria-label="${esc(t('Narzędzia rysowania'))}"></div>
       </div>
@@ -853,7 +855,6 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const cell = { i, el: host, instrument: cfgC.instrument, tf: cfgC.tf, liveTimer: 0, sig: '', off: null, ext: false };
     const sel = (s) => host.querySelector(s);
     cell.secnote = sel('.bt-secnote');
-    cell.cdEl = sel('.bt-cd');
     cell.builder = createBuilder(streamOf(cfgC.instrument), cfgC.tf);
     const base = store.docOf(sym);
     cell.chart = createReplayChart(sel('.bt-plot'), {
