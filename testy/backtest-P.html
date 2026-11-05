@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: czas wykresu i odliczanie do zamknięcia świecy (strona robocza)</title>
+<!-- Strona robocza testu backtest-P (testy/backtest-P-strona.mjs), tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/. Prawdziwy replay na świecach
+     syntetycznych: zegar ze strefą (UTC−x) i odliczanie do zamknięcia świecy w nagłówku wykresu; ?theme=onyx|platinum. Wynik: pre#wynik z JSON-em { checks, fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+try {
+  // zdarzenie całodzienne dnia kursora (OPEX; następny dzień leży poza ekranem, bo to przyszłość replayu) dopisane do odpowiedzi serwera z newsami, żeby wykres backtestu miał napis i pasek; newsy włączone w nakładkach
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (url, opts) => {
+    const r = await realFetch(url, opts);
+    if (!String(url).includes('/api/backtest/range')) return r;
+    try {
+      const j = await r.clone().json();
+      if (j && typeof j === 'object') {
+        window.__inj = (window.__inj || 0) + 1; (j.news ||= []).push({ t: Date.UTC(2024, 2, 12, 4) / 1000, day: '2024-03-12', name: 'OPEX', imp: 'opex', kind: 'opex', allDay: true, tentative: false, src: 'off', basis: 'rule', variant: 'monthly' });
+        return new Response(JSON.stringify(j), { status: r.status, headers: { 'Content-Type': 'application/json' } });
+      }
+    } catch { /* nie JSON */ }
+    return r;
+  };
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: true, earnings: false, newsImp: { high: true, medium: true, low: false, holiday: true, opex: true } })); } catch { /* bez localStorage */ }
+  try { for (const k of ['thq.bt.open.v1', 'thq.bt.dock.v1', 'thq.bt.ord.v1', 'thq.bt.jump.v1']) localStorage.removeItem(k); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja P',
+    def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'pct', value: 1 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] }, now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const cd = () => scr().querySelector('.bt-cd')?.textContent || '';
+  const secs = (s) => { const m = /(\d+):(\d\d)$/.exec(s); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(120);
+  rec('zegar', /UTC|NY/.test(`${scr().querySelector('.bt-clock-tz')?.textContent} ${scr().querySelector('.bt-clock-ny')?.textContent}`), `strefa widoczna przy zegarze («${scr().querySelector('.bt-clock-tz')?.textContent}» «${scr().querySelector('.bt-clock-ny')?.textContent}»)`);
+  rec('zegar', /\d\d:\d\d:\d\d/.test(scr().querySelector('.bt-clock')?.textContent || ''), `godzina z sekundami («${scr().querySelector('.bt-clock')?.textContent}»)`);
+  rec('odliczanie', /^Do zamknięcia świecy \d\d:\d\d$/.test(cd()) && secs(cd()) === 60, `1m na początku świecy: pełna minuta («${cd()}»)`);
+  await RP.step(1); await sleep(80);
+  rec('odliczanie', secs(cd()) === 60, `po kroku nowa świeca, znowu pełna minuta («${cd()}»)`);
+  scr().querySelector('.bt-tfs [data-tf="15m"]').click(); await sleep(250);
+  const s15 = secs(cd());
+  rec('odliczanie', s15 > 0 && s15 <= 900, `zmiana interwału na 15m przelicza odliczanie («${cd()}»)`);
+  const r = scr().querySelector('.bt-cd').getBoundingClientRect();
+  rec('układ', r.width > 0 && r.right <= innerWidth, `licznik widoczny w nagłówku wykresu (${Math.round(r.width)} px)`);
+  rec('układ', getComputedStyle(scr().querySelector('.bt-cd')).fontVariantNumeric.includes('tabular-nums'), 'cyfry tabelaryczne');
+  scr().querySelector('.bt-tfs [data-tf="1m"]').click(); await sleep(300);
+  // stan handlu zwykły: kursor na froncie (nie „przeglądasz wstecz”)
+  rec('układ', !/Przeglądasz wstecz/.test(scr().textContent), 'zwykły stan handlu, bez blokady przeglądania wstecz');
+  const lab = [...document.querySelectorAll('.nws-hit')].find((b) => /^nd:/.test(b.dataset.k));
+  rec('pasek', !!lab, 'napis dnia (OPEX) na wykresie backtestu');
+  const bar = () => [...document.querySelectorAll('.bt-plot svg .nwb, .bt-plot canvas')].length;
+  if (qs.get('hover') === '1' && lab) { lab.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse', bubbles: false })); await sleep(300); rec('pasek', !document.querySelector('.nws-tip')?.hidden, 'po najechaniu na napis dnia dymek jest otwarty (a z nim pasek zakresu)'); }
+  rec('diag', true, JSON.stringify({ hits: [...document.querySelectorAll('.nws-hit')].map((b) => b.dataset.k), inj: window.__inj || 0 }));
+  out.textContent = JSON.stringify({ checks, fatal: null });
+} catch (e) { out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) }); }
+</script>
+</body>
+</html>

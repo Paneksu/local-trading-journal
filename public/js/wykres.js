@@ -10,7 +10,7 @@ import { esc, fmtR } from './format.js';
 import * as G from './geometria.js';
 import { tradeQuery, fetchCandles, padFor, tfSec, MAX_VISIBLE, barToggles, overlayToggles, createOverlays, markToggles, loadAutoScale, saveAutoScale, zoomPrice, chartTz, setChartTzOverride, fmtIn, tfBarHtml, mountTfBar, DECIMAL, overlayGeometry, mountOverlayPop, DASHES, BOX_STROKE_ALPHA, startRange, gapLabel, badjWarning, clampFrameTf, capBars, SUB_MINUTE_MAX_BARS } from './podglad.js';
 import { chartSettings } from './styl-wykresu.js';
-import { newsGeometry, timeToX, markPath, NEWS_DASH, feed as newsFeed } from './newsy.js';
+import { newsGeometry, timeToX, bandX, markPath, NEWS_DASH, feed as newsFeed } from './newsy.js';
 import { mountNewsLayer } from './newsy-warstwa.js';
 import { createRysunki, NO_STATS, NO_ACCOUNT, adoptEdited, planTradeSave, tickOf } from './rysunki.js';
 import { positionStats, statsText, statsOf, statBoxes } from './pozycja-staty.js';
@@ -375,14 +375,14 @@ function outlined(ctx, text, x, y, color, bg, hr) {
 }
 const NEWS_COLOR = { high: 'nRed', medium: 'nOrange', low: 'nYellow', holiday: 'fg2', opex: 'nBlue' };
 const EARN_COLOR = { 1: 'nRed', 2: 'nOrange', 3: 'nYellow', 4: 'fg2' };
-export function newsPrimitive({ chart, series, getModel, getCandles, getStep, getColors, onGeometry = () => {} }) {
+export function newsPrimitive({ chart, series, getModel, getCandles, getStep, getColors, onGeometry = () => {}, getActiveBand = () => null, getFuture = () => null }) {
   let req = null;
   const geo = (size) => {
     const model = getModel();
     if (!model?.on) return null;
     const candles = getCandles(), sc = overlayScales(chart, series, candles);
     if (!sc) return null;
-    return newsGeometry(model, timeToX(candles, getStep(), sc), { left: 0, right: sc.right, top: 0, bottom: size.height });
+    return newsGeometry(model, timeToX(candles, getStep(), sc, getFuture()), { left: 0, right: sc.right, top: 0, bottom: size.height }, bandX(candles, getStep(), sc, getFuture()));
   };
   const colorOf = (o, col) => col[o.kind === 'earn' ? EARN_COLOR[o.cls] : NEWS_COLOR[o.imp]] || col.fg2;
   const lines = (target) => target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr, mediaSize }) => {
@@ -407,6 +407,10 @@ export function newsPrimitive({ chart, series, getModel, getCandles, getStep, ge
     const col = getColors();
     ctx.save();
     ctx.setLineDash([]);
+    // pasek zakresu dnia handlowego przy osi czasu, tylko dla napisu dnia pod wskaźnikiem (04.11.2026: «tylko po najechaniu na tekst danego dnia»), delikatny
+    ctx.globalAlpha = 0.55;
+    for (const b of g.bands) { if (b.key !== getActiveBand()) continue; ctx.fillStyle = colorOf(b, col); ctx.fillRect(Math.round(b.x * hr), Math.round(b.y * vr), Math.max(1, Math.round(b.w * hr)), Math.max(1, Math.round(b.h * vr))); }
+    ctx.globalAlpha = 1;
     ctx.font = `${Math.round(10.5 * vr)}px ${col.font}`;
     ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
     for (const k of g.marks) {
@@ -475,8 +479,14 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
   const anchored = Number.isFinite(trade0.at);
   let badj = anchored && frame.badj === true, adjGen = 0, adjust = frame.adjust || null;
   const query = () => ({ ...tradeQuery(trade), ...(badj ? { adjust: 1 } : {}) });
-  const getC = (a, b, f, q) => (source ? source.get(a, b, f) : fetchCandles(instrument, a, b, f, q));
-  const nowCap = () => (source && Number.isFinite(source.maxT) ? Math.floor(source.maxT) : Math.floor(Date.now() / 1000));
+  // [U] 05.11.2026 «Ogranicz do granicy sesji (Recommended)»: sessionCap z serwera (trade Backtest z lokalną sesją) kończy dociąganie świec, zamiast pytać o kolejne puste doby
+  let sessionCap = Infinity;
+  const getC = async (a, b, f, q) => {
+    const j = await (source ? source.get(a, b, f) : fetchCandles(instrument, a, b, f, q));
+    if (Number.isFinite(j?.sessionCap)) sessionCap = j.sessionCap;
+    return j;
+  };
+  const nowCap = () => Math.min(sessionCap, source && Number.isFinite(source.maxT) ? Math.floor(source.maxT) : Math.floor(Date.now() / 1000));
   const style = chartSettings().style; // Ustawienia → Wykresy; zmiana stylu działa od następnego otwarcia edycji (jak kolory świec, które zmieniają się na żywo)
   const bars = () => seriesData(candles, style, c);
   const F_PRICE = new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -535,8 +545,9 @@ export async function createEditor(root, { trade: trade0, tradeId, frame, doc, o
   const prim = overlayPrimitive({ chart, series, getModel: () => ov.model(candles), getPrefs: () => ov.prefs(), getCandles: () => candles, getColors: () => c });
   series.attachPrimitive(prim);
   // newsy i earningsy (1.4.0): rysuje prymityw, interakcję (dymek, klawiatura, dotyk) daje warstwa przycisków nad wykresem
-  const nwl = mountNewsLayer(plot, { fmt: () => fmtIn(chartTz()) });
-  const nprim = newsPrimitive({ chart, series, getModel: () => ov.news(candles), getCandles: () => candles, getStep: () => step, getColors: () => c,
+  let activeBand = null;
+  const nwl = mountNewsLayer(plot, { fmt: () => fmtIn(chartTz()), onActive: (k) => { activeBand = k; nprim.requestUpdate(); } });
+  const nprim = newsPrimitive({ chart, series, getModel: () => ov.news(candles), getCandles: () => candles, getStep: () => step, getColors: () => c, getActiveBand: () => activeBand,
     onGeometry: (g) => { const m = ov.news(candles); nwl.update(g, m, `${chartTz()}|${newsFeed.version()}|${m.groups.length}|${m.eGroups.length}|${m.labels.length}|${candles.length}`); } });
   series.attachPrimitive(nprim);
   ov.ensure(candles);

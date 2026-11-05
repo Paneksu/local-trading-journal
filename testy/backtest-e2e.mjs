@@ -93,7 +93,7 @@ try {
   };
 
   if (ONLY.includes('wydajnosc')) {
-    const res = await page('backtest-wydajnosc.html', { shot: path.join(WYNIKI, 'H1-wydajnosc.png') });
+    const res = await page('backtest-wydajnosc.html', { timeoutMs: 600_000, shot: path.join(WYNIKI, 'H1-wydajnosc.png') });
     report.perf = res.perf;
     tagged(res, 'krok', 'backtest-H1: krok ≤ 16 ms p95');
     tagged(res, 'odtwarzanie', 'backtest-H1: odtwarzanie 100× przez 90 min');
@@ -102,6 +102,7 @@ try {
     tagged(res, 'weekend', 'backtest-K: odtwarzanie przez granicę dni i weekend (300×), klatki ≤ 100 ms');
     tagged(res, 'historia', 'backtest-K: pełna historia do początku danych, doładowanie nie blokuje UI');
     tagged(res, 'konto', 'backtest-L: odtwarzanie 100× na 1s z otwartą pozycją, etykietą P&L i szufladą');
+    tagged(res, 'siatka', 'backtest-S: siatka przyszłości (newsy włączone): krok 1s, 5s i cztery wykresy, reset przy zmianie interwału, przewinięcie do newsa na 1s');
   }
 
   // L (31.10.2026): handel i journaling jak w FX Replay na prawdziwych świecach (ta sama strona co testy/backtest-L-strona.mjs na danych syntetycznych)
@@ -112,7 +113,7 @@ try {
       ['podglad', 'backtest-L: podgląd zlecenia (ryzyko $ i %, cel, R:R)'], ['pl', 'backtest-L: otwarty P&L na linii pozycji, equity = saldo + otwarty'],
       ['szuflada', 'backtest-L: szuflada pozycji na żywo'], ['procent', 'backtest-L: zamknięcie 50% z linii, prowizja'], ['szybki', 'backtest-L: szybki panel odchudzony'],
       ['ryzyko', 'backtest-L: ryzyko % od bieżącego salda'], ['jednostki', 'backtest-L: SL/TP w punktach, tickach, cenie'], ['zlecenie', 'backtest-L: przeciąganie zlecenia oczekującego'],
-      ['journal', 'backtest-L: Journal bez świec po zamknięciu, rysunki tylko w migawce'],
+      ['journal', 'backtest-L: Journal, świece po wyjściu do znaku wodnego, rysunki tylko w migawce'],
     ]) tagged(res, tag, name);
   }
 

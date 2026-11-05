@@ -1067,6 +1067,11 @@ for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^newsy-\d+.
   (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
 }
 
+// ---------- wynik po BE: testy z testy/po-be-NN*.mjs (czysta logika i serwer, bez sieci) ----------
+for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^po-be-\d+.*\.mjs$/.test(n)).sort()) {
+  (await import(pathToFileURL(path.join(ROOT, 'testy', f)).href)).default({ test, H, assert, ROOT });
+}
+
 // ---------- moduł Backtest (1.5.0): testy z testy/backtest-<karta>-*.mjs, dane tylko syntetyczne (testy/bt-dane-syntetyczne.mjs) ----------
 // backtest-e2e.mjs (H1) to odbiór na kopii prawdziwych świec, uruchamiany osobno: run.mjs go nie importuje
 for (const f of readdirSync(path.join(ROOT, 'testy')).filter((n) => /^backtest-.*\.mjs$/.test(n) && n !== 'backtest-e2e.mjs').sort()) {

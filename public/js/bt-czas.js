@@ -2,7 +2,7 @@
 // Godziny NY liczone tą samą regułą co serwer (lib/news.mjs etToUtc: od 2007 czas letni od 2. niedzieli marca do 1. niedzieli listopada, 2:00 lokalnie).
 // Krok = jedna świeca aktywnego TF (wyrównanie do granicy kubełka). TF sekundowy poza oknem prawdziwego 1s krokuje o minutę, bo tam świece bazowe są 1m.
 // English: replay clock helpers: NY wall time, steps aligned to the active timeframe, jump targets, keyboard shortcuts and look-ahead-safe news.
-import { dayNum, fromDayNum, weekdayOf, parseTf, SESSIONS, sessionBounds } from './swiece.js';
+import { dayNum, fromDayNum, weekdayOf, parseTf, SESSIONS, sessionBounds, sessionOf, monthOfSession } from './swiece.js';
 import { validateFilter } from './bt-filtr.js';
 import { visibleCount, isReplayTf } from './bt-swieca.js';
 import { t } from './i18n.js';
@@ -104,6 +104,143 @@ const IMPS_FROM = { high: ['high'], medium: ['high', 'medium'] };
 export function visibleNews(events, cursor) {
   const today = dateStr(nyDayNum(cursor));
   return (events || []).filter((e) => e.t <= cursor || e.day === today).map(project).sort((a, b) => a.t - b.t);
+}
+
+// ---- czas do zamknięcia bieżącej świecy ----
+// [U] 04.11.2026 «dodaj takze do backtestingu aktualny czas wykresu bo nie ma takiego oraz czas do zamkniecia danej swieczki»
+// Liczone z tych samych granic co świece wykresu (aggregate w swiece.js): kubełki interwałów podgodzinowych i godzinowych zaczynają się od otwarcia sesji CME
+// (17:00 Chicago = 18:00 ET) i są ucięte zamknięciem sesji; 1D = sesja, 1W = sesje od niedzieli do zamknięcia w piątek, 1M = sesje, których dzień handlowy leży w miesiącu.
+// Poza sesją (przerwa 17:00-18:00 ET, weekend) świecy nie ma: wynik { state: 'closed', end: najbliższe otwarcie }, bez ujemnych i zmyślonych czasów.
+// Wynik { state: 'open', lo, end, remaining } albo { state: 'closed', lo, end, remaining }; lo..end to przedział ważności (do pamięci podręcznej: poza nim liczyć od nowa).
+const keyOfSession = (p, day) => (p.unit === 'D' ? Math.floor(day / p.n) : p.unit === 'W' ? Math.floor(((day - weekdayOf(day) - 3) / 7) / p.n) : Math.floor(monthOfSession(day) / p.n));
+// Uwaga: gałąź D/W/M (2D, 1W, 1M) obsługuje interwały, których replay nie oferuje (isReplayTf w bt-swieca.js przyjmuje tylko sekundy, minuty i godziny do doby), więc to nie jest ścieżka
+// użytkownika replayu; zostaje, bo candleClock jest liczone z tych samych granic sesji co aggregate (świece dzienne i wyższe) i może posłużyć wykresowi z takimi interwałami. Testy tej gałęzi
+// (backtest-R: pamięć odliczania) są testami logiki, nie scenariusza użytkownika; scenariusz użytkownika to interwały do godzinowych (backtest-S).
+export function candleClock(cursor, tf, secEff = null) {
+  const p0 = parseTf(tf), c = Math.floor(cursor);
+  if (!p0 || !Number.isFinite(c)) return null;
+  // interwał sekundowy poza oknem prawdziwego 1s składa się ze świec minutowych: licz z faktycznego odstępu (secEff), nie z nominalnego
+  const p = secEff && p0.sec < secEff && 'smh'.includes(p0.unit) ? { ...p0, sec: secEff } : p0;
+  const sess = sessionBounds(c);
+  if (!sess) {
+    // najbliższe otwarcie po c: pierwsza sesja (niedziela-czwartek) otwarta po c
+    let d = Math.floor(c / 86400) - 2, end = null;
+    for (let i = 0; i < 12 && end == null; i++, d++) { if (weekdayOf(d) > 4) continue; const o = sessionOf(d).open; if (o > c) end = o; }
+    return { state: 'closed', lo: c, start: c, prev: null, until: end ?? c + 1, end, remaining: end == null ? null : end - c };
+  }
+  let lo = sess.open, start, end, until, prev = null;
+  if (p.unit === 'D' || p.unit === 'W' || p.unit === 'M') {
+    const key = keyOfSession(p, sess.day);
+    end = sess.close; until = sess.close; // pamięć ważna tylko do zamknięcia SESJI, nie całej świecy 2D/1W/1M: po wejściu w przerwę trzeba przeliczyć (przegląd 04.11.2026)
+    let d = sess.day;
+    for (let i = 0; i < 400; i++) {
+      d++;
+      if (weekdayOf(d) > 4) continue;
+      if (keyOfSession(p, d) !== key) break;
+      end = sessionOf(d).close;
+    }
+    // początek świecy: otwarcie pierwszej sesji tego samego klucza (jak w aggregate)
+    start = sess.open; d = sess.day;
+    for (let i = 0; i < 400; i++) {
+      d--;
+      if (weekdayOf(d) > 4) continue;
+      if (keyOfSession(p, d) !== key) break;
+      start = sessionOf(d).open;
+    }
+  } else {
+    lo = sess.open + Math.floor((c - sess.open) / p.sec) * p.sec;
+    start = lo;
+    end = Math.min(lo + p.sec, sess.close); until = end;
+    // początek poprzedniej świecy handlowej (w tej sesji albo ostatniej poprzedniej sesji): do wykrycia braku notowań (patrz createClockCache)
+    prev = lo - p.sec;
+    if (prev < sess.open) {
+      let d = sess.day - 1;
+      while (weekdayOf(d) > 4) d--;
+      const ps = sessionOf(d);
+      prev = ps.open + Math.floor((ps.close - 1 - ps.open) / p.sec) * p.sec;
+    }
+  }
+  return { state: 'open', lo, start, prev, until, end, remaining: end - c };
+}
+// Pamięć odliczania jednej komórki wykresu: przedział ważności liczy się od nowa dopiero po wyjściu kursora poza [lo, until) albo po zmianie interwału.
+// view = { kind: 'open' | 'closed' | 'nodata' | 'none', remaining, end }: 'nodata' („Brak notowań”), gdy pod kursorem jest sesja, a wykres nie ma świecy bieżącego przedziału (przerwa w danych:
+// święto, skrócona sesja); wyłącznie z danych do kursora (lastBarT = początek ostatniej świecy), bez kalendarza świąt i bez patrzenia w przyszłość. Tylko interwały do godzinowych
+// (dla D, W i M długość poprzedniej świecy jest zmienna, więc tam brak notowań nie jest wykrywany).
+export function createClockCache() {
+  let k = null, key = '';
+  return (cursor, tf, lastBarT = null, secEff = null) => {
+    const kk = `${tf}|${secEff || 0}`;
+    if (!k || key !== kk || cursor < k.lo || cursor >= k.until) { key = kk; k = candleClock(cursor, tf, secEff) || { state: 'none', lo: cursor, start: cursor, until: cursor + 1, end: cursor + 1 }; }
+    // replay pokazuje świecę dopiero, gdy ma dane (na początku przedziału ostatnia jest jeszcze poprzednia), więc brak notowań = ostatnia świeca starsza niż poprzednia świeca handlowa
+    if (k.state === 'open' && k.prev != null && lastBarT != null && lastBarT < k.prev) return { kind: 'nodata', remaining: null, end: k.end, k };
+    return { kind: k.state, remaining: k.state === 'open' ? k.end - Math.floor(cursor) : null, end: k.end, k };
+  };
+}
+// 59 → „00:59”, 3725 → „1:02:05”, 90000 → „1d 01:00:00” (cyfry tabelaryczne w CSS, żeby nie skakały)
+export function fmtCountdown(sec) {
+  const s = Math.max(0, Math.floor(sec)), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  const p2 = (n) => String(n).padStart(2, '0');
+  return d > 0 ? `${d}d ${p2(h)}:${p2(m)}:${p2(x)}` : h > 0 ? `${h}:${p2(m)}:${p2(x)}` : `${p2(m)}:${p2(x)}`;
+}
+
+// Okno newsów NA WYKRESIE backtestu: dzień handlowy kursora i następny dzień handlowy.
+// [U] 04.11.2026 «zrob jeszcze tak ze newsy na wykresie backtestingowym widac z dzisiaj i z nastepnego dnia ale z przeszlosci jak sie patrzy do tylu nie widac bo przeszkadza w analizie technicznej HTF»
+// „Dzisiaj” = dzień kursora replayu (nie data systemowa). Decyzja gustu: dzień handlowy CME (18:00 ET dnia poprzedniego – 17:00 ET, jak pasek zakresu dnia), więc
+// o 18:00 ET okno przesuwa się na kolejny dzień; następny dzień handlowy omija sobotę i niedzielę (piątek → poniedziałek). Dotyczy tylko wykresu: visibleNews (filtry, skoki, statystyki) bez zmian.
+export function tradingDayNum(cursor) { return nyDayNum(cursor + 6 * 3600); } // 18:00 ET + 6 h = północ następnej daty
+const nextTradingNum = (n) => { const w = weekdayOf(n + 1); return n + 1 + (w === 6 ? 2 : w === 0 ? 1 : 0); };
+export const newsWindowKey = (cursor) => tradingDayNum(cursor);
+export function chartNews(events, cursor) {
+  const d0 = tradingDayNum(cursor), d1 = nextTradingNum(d0);
+  const s0 = dateStr(d0), s1 = dateStr(d1);
+  const dayOf = (e) => (e.allDay ? e.day : dateStr(tradingDayNum(e.t)));
+  return (events || []).filter((e) => { const d = dayOf(e); return d === s0 || d === s1; }).map(project).sort((a, b) => a.t - b.t);
+}
+
+// Koniec okna newsów: zamknięcie sesji następnego dnia handlowego po dniu handlowym chwili t (granica, do której wykres rysuje newsy w przyszłości).
+export function newsWindowEnd(t) {
+  const d1 = nextTradingNum(tradingDayNum(t));
+  return sessionOf(d1 - 1).close; // sesja dnia handlowego d1 otwiera się dzień wcześniej (niedziela dla poniedziałku)
+}
+// Limit punktów siatki i jej gęsty początek (04.11.2026, przegląd kodu): okno newsów (dzień kursora + następny) ma na 1s ok. 110-165 tys. świec, a przebudowa tylu punktów serii (setData)
+// przy każdej luce w danych 1s zatrzymywała krok (zmierzone: 50 przebudów w 150 krokach, p95 75 ms). Zdarzenie ma się jednak narysować i dać się do niego przewinąć także na 1s i 5s,
+// więc siatka ma gęsty początek (FUTURE_DENSE punktów w prawdziwym odstępie świec: tu stoją kolejne świece) i rzadszy ogon (co k-ty punkt) aż do końca okna; pozycję newsa w ogonie liczy
+// interpolacja między punktami (extPoint w newsy.js). Ogon jest rzadszy tylko tam, gdzie kursor nie dojdzie bez przebudowy siatki (dojście do przeskoczonego punktu liczy siatkę od nowa).
+export const FUTURE_CAP = 8000;
+export const FUTURE_DENSE = 2500;
+// Siatka przyszłych świec dla pustego miejsca za ostatnią świecą wykresu backtestu.
+// [U] 04.11.2026 «maja sie rysowac w przyszlosci tamgdzie nie ma swieczek»: newsy z okna chartNews (dzień kursora i następny) mają stać na właściwym czasie za ostatnią świecą.
+// Zwraca rosnące początki świec PO świecy zaczynającej się w lastStart, do endT (wyłącznie), z tych samych sesji CME co aggregate: poza sesją (przerwa 17:00-18:00 ET, weekend)
+// świec nie ma, więc siatka je pomija, a oś czasu w pustym miejscu pokazuje prawdziwe godziny i zgadza się z osią po dojściu kursora (także po zmianie czasu).
+// sec = faktyczny odstęp świec wykresu (interwał podgodzinowy i godzinowy; poza oknem 1s świece sekundowe są minutowe); D, W i M: początek pierwszej sesji kolejnego klucza.
+// Bez cen i bez wartości: to tylko czasy, więc przyszłość nie ma jak wyciec. cap ogranicza liczbę punktów (interwały sekundowe).
+export function futureBuckets(lastStart, tf, sec, endT, cap = FUTURE_CAP) {
+  const p = parseTf(tf), out = [];
+  if (!p || !Number.isFinite(lastStart) || !Number.isFinite(endT) || !(sec > 0)) return out;
+  const sess = sessionBounds(lastStart);
+  if (!sess) return out;
+  const nextOpenAfter = (day) => { let d = day + 1; while (weekdayOf(d) > 4) d++; return sessionOf(d); };
+  if (p.unit === 'D' || p.unit === 'W' || p.unit === 'M') {
+    let cur = sess, key = keyOfSession(p, sess.day);
+    for (let i = 0; i < 400 && out.length < cap; i++) {
+      cur = nextOpenAfter(cur.day);
+      if (cur.open >= endT) break;
+      const k = keyOfSession(p, cur.day);
+      if (k !== key) { key = k; out.push(cur.open); }
+    }
+    return out;
+  }
+  let t = lastStart, s = sess, stride = 1, skip = 0, lastT = null;
+  while (out.length < cap) {
+    const nx = t + sec;
+    if (nx < s.close) t = nx; else { s = nextOpenAfter(s.day); t = s.open; }
+    if (t >= endT) break;
+    if (out.length === FUTURE_DENSE && stride === 1) stride = Math.max(1, Math.ceil(((endT - t) / sec) / Math.max(1, cap - FUTURE_DENSE - 1))); // ogon: co stride-ty punkt do końca okna
+    if (out.length >= FUTURE_DENSE && ++skip < stride) { lastT = t; continue; }
+    skip = 0; lastT = null; out.push(t);
+  }
+  if (lastT != null && out.length < cap) out.push(lastT); // ostatni punkt okna zawsze jest w siatce (news tuż przed końcem okna ma pozycję)
+  return out;
 }
 
 // Najbliższe zdarzenie o t > kursor i wadze ≥ minImp ('high' albo 'medium'); całodniowe (święta, opex) się nie liczą.

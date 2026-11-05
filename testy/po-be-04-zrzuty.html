@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="/">
+<title>po-be-04 zrzuty (strona robocza: zrzuty wyniku po BE)</title>
+<!-- Strona robocza zadania 4 (wynik po BE), tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/. Używają jej skrypty zrzutów backtest-wyniki/po-be-04-zrzuty-bt.mjs.
+     ?scene=journal: sesja z trade'em zamkniętym na BE, otwarty Journal (wiersz Po BE); ?scene=seed: sesja ze zasiewem z testy/bt-po-be-seed.js (poziomy 2 do 3R), zapisuje też
+     wynik po BE każdego trade'a i ręcznie policzone R; ?scene=stats: statystyki backtestu z sekcją Wynik po BE. ?theme=platinum. Dane: prawdziwe świece NQ 12.03.2024 z kopii. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+  body.shot #wynik { display: none; }
+  #stats { padding: 16px 24px; }
+</style>
+</head>
+<body class="shot">
+<pre id="wynik">…</pre>
+<div id="stats"></div>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+const scene = qs.get('scene') || 'journal';
+if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms = 6000) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(20); } return null; };
+const info = {};
+try {
+  try { localStorage.removeItem('thq.bt.open.v1'); localStorage.removeItem('thq.bt.dock.v1'); localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false })); } catch { /* bez localStorage */ }
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { seedTrades, expectedR, ENTRY } = await import('/__testy/bt-po-be-seed.js');
+  const client = createSessionClient();
+  const E = Date.UTC(2024, 2, 12, 14, 0) / 1000, X = E + 1200, END = Date.UTC(2024, 2, 12, 21, 0) / 1000;
+  const def = { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'pct', value: 1 }, riskBase: 'current', commission: 2.5, startTime: '09:00', accountId: null, filter: null, excluded: [] };
+
+  if (scene === 'journal') {
+    // jeden trade zamknięty stopem na BE, kursor 25 minut po wyjściu: Journal pokazuje wiersz Po BE
+    const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja po BE', def, now: Date.now() });
+    doc.trades = [{ ...seedTrades(E, X)[0], id: 't1', sl0: ENTRY - 10, tp: ENTRY + 3, beAt: ENTRY + 2 }];
+    doc.tradeSeq = 1;
+    doc.book = { ...(doc.book || {}), hw: X + 1500, hwi: { NQ: X + 1500 } };
+    doc.cursor = X + 1500;
+    await client.create(doc);
+    const { openReplay } = await import('/js/bt-replay.js');
+    client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+    const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+    await RP.ready;
+    RP.openJournalWindow('t1');
+    await until(() => RP.journalWindow()?.view()?.status?.() === 'ok', 10000);
+    await until(() => document.querySelector('.lb-facts [data-abe] .abe') && !/czeka/.test(document.querySelector('.lb-facts [data-abe]').textContent), 10000);
+    await sleep(500);
+    info.row = document.querySelector('.lb-facts [data-abe]')?.innerText || null;
+  } else if (scene === 'seed') {
+    const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja statystyki po BE', def, now: Date.now() });
+    doc.trades = seedTrades(E, X);
+    doc.tradeSeq = doc.trades.length;
+    doc.book = { ...(doc.book || {}), hw: END, hwi: { NQ: END } };
+    doc.cursor = END;
+    await client.create(doc);
+    const r = await (await fetch('/api/after-be', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-THQ': '1' }, body: JSON.stringify({ items: doc.trades.map((x) => ({ key: `${doc.id}/${x.id}`, typ: 'Backtest' })) }) })).json();
+    info.session = doc.id;
+    info.trades = doc.trades.map((x) => { const st = r.results[`${doc.id}/${x.id}`]; return { id: x.id, setup: x.setup, dir: x.dir, entry: x.entryPrice, sl0: x.sl0, tp: x.tp, status: st.status, rIfHeld: st.rIfHeld, ręcznie: ['tp', 'sl'].includes(st.status) ? expectedR(x, st.status) : null }; });
+  } else if (scene === 'stats') {
+    const { mountStats } = await import('/js/bt-staty-widok.js');
+    const host = document.getElementById('stats');
+    const m = mountStats(host, { client, getTrades: () => [], sessionId: null });
+    await m.ready;
+    await until(() => host.querySelector('[data-abe-sec] .tiles'), 15000);
+    await sleep(300);
+    host.querySelector('[data-abe-sec]')?.scrollIntoView({ block: 'start' });
+    info.sec = host.querySelector('[data-abe-sec]')?.innerText?.slice(0, 1500) || null;
+  }
+  out.textContent = JSON.stringify(info);
+} catch (e) {
+  out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), info });
+}
+</script>
+</body>
+</html>

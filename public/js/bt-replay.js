@@ -20,7 +20,7 @@
 import { t, locale } from './i18n.js';
 import { esc, fmtR, WEEKDAYS, weekdayIdx, shortDate } from './format.js';
 import { createBuilder, REPLAY_TFS, visibleCount, isReplayTf, checkCustomTf, tfNeeds1s } from './bt-swieca.js';
-import { nyAt, visibleNews, nextNews, jumpTarget, skrotOf, sanitizeBt, skipGap, stepCursor, hintOf, skrotLabel, STEP_TFS, sanitizeStepTf, stepTfFor, GO_PRICE_DAYS, BT_PRESETS, priceText } from './bt-czas.js';
+import { nyAt, visibleNews, chartNews, newsWindowKey, createClockCache, fmtCountdown, nextNews, jumpTarget, skrotOf, sanitizeBt, skipGap, stepCursor, hintOf, skrotLabel, STEP_TFS, sanitizeStepTf, stepTfFor, GO_PRICE_DAYS, BT_PRESETS, priceText } from './bt-czas.js';
 import { emptyBook, advance, MULT, TICK, autoBePrice, tpPlan } from './bt-wypelnienia.js';
 import { tpOrder } from './bt-drabinka.js';
 import { toTrade, nextTradeId, mountJournal, todoOf, setupSuggestions, pxText } from './bt-journal.js';
@@ -28,6 +28,7 @@ import { isUnsent, needsUpdate } from './bt-notion.js';
 import { account as accountOf, openPL, riskBalance, commissionOf, createExcursionTracker } from './bt-konto.js';
 import { mountDock } from './bt-szuflada.js';
 import { openJournalWindow, journalMaxT } from './bt-journal-okno.js';
+import { createAfterBeStore } from './po-be-widok.js';
 import { fmtUsdFull as fmtMoney } from './format.js';
 import { mountOrders, abeInfo, menuItems, menuStillValid } from './bt-zlecenia.js';
 import { setDayRule, isOpen as wdIsOpen } from './wybor-daty.js';
@@ -106,7 +107,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   // M (31.10.2026): skok to przycisk „Skocz <skok>” (powtarza wybrany) i menu skoków (wybór skacze od razu); ukryta lista .bt-jump trzyma wybrany skok
   el.innerHTML = `
     <header class="bt-top">
-      <div class="bt-ttl"><b class="bt-name"></b><span class="bt-when"><span class="bt-date"></span><span class="bt-clock"></span><span class="bt-clock-ny"></span></span><span class="bt-daytype"></span></div>
+      <div class="bt-ttl"><b class="bt-name"></b><span class="bt-when"><span class="bt-date"></span><span class="bt-clock"></span><span class="bt-clock-tz"></span><span class="bt-clock-ny"></span></span><span class="bt-daytype"></span></div>
       <div class="bt-stats"><span class="bt-acct" aria-label="${esc(t('Konto'))}"></span><span class="bt-ac bt-res" data-ac="ses"></span><span class="bt-notion" role="status"></span><button type="button" class="btn sm" data-bt="notion">${esc(t('Zapisz do Notion'))}</button><span class="bt-todo-w"><button type="button" class="btn sm bt-todo" data-bt="todo" aria-expanded="false" hidden></button><div class="bt-todo-l" role="menu" hidden></div></span></div>
       <div class="seg sm bt-layout" role="group" aria-label="${esc(t('Układ wykresów'))}">${layoutBtns}</div>
       ${onStats ? `<button type="button" class="btn sm" data-bt="stats">${esc(t('Statystyki'))}</button>` : ''}
@@ -401,6 +402,8 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   // ---- L: Journal trade'a w klasycznym oknie (bt-journal-okno.js) ----
   // [U] 31.10.2026 «Przyjmuję wszystkie» (J2: tylko zamknięte trade'y; J4: rysunki Journala to migawka trade'a, rysunki sesji bez zmian; J5: poprawki wysłanego trade'a w tle do Notion)
   let jw = null, jwDirty = false;
+  // wynik po BE w Journalu: bufor na czas życia replayu; zapytanie wysyła serwerowi tylko { key, typ }, a przed nim sesja jest zapisana (serwer czyta plik sesji i jej znak wodny)
+  const abeStore = createAfterBeStore();
   const lastClosedId = () => { const l = (doc?.trades || []).filter((x) => x && Number.isFinite(x.exitT)); return l.length ? l[l.length - 1].id : null; };
   function openJournalWin(id, { setup = '' } = {}) {
     const x = (doc?.trades || []).find((y) => y.id === id);
@@ -409,12 +412,19 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     if (journal?.id === id) closeJournal();
     if (jw) { jw.show(id); return jw; }
     jwDirty = false;
+    const snap = {};
+    for (const k of sessionInstruments()) snap[k] = hwOf(k);
     jw = openJournalWindow({
       trades: () => doc?.trades || [], id,
       onDelete: (tid) => { deleteTrade(tid); },
       fetchRange: loadRange || ((q) => client.range(q)),
-      maxTOf: (tr) => journalMaxT(tr, { cursor, real1s: data?.real1s(tr.instrument) || [] }),
+      // [U] 04.11.2026 «niech journal w backtestingu ma wlasnie dostep podczas wyswietlania trade'a swiece nie do momentu wyjscia tylko jeszcze troche po zeby bylo widac ogolna reakcje rynku podczas trade,
+      // ale jak zapisuje trade i journaluje jeszcze podczas jak nie poznalem przyszlych swiec w backtestingowej sesji to nnie powinny mi sie ujawniac wtedy»; zakres: «Do końca dnia handlowego (Recommended)».
+      // Granica to znak wodny instrumentu (hwOf: najdalsze, co sesja już pokazała, także w trybie przeglądania), zapamiętany w chwili otwarcia okna (snap): okno pokazuje stan z otwarcia,
+      // a nic nie wychodzi poza to, co sesja pokazała. Dalej tnie journalMaxT (koniec dnia handlowego wyjścia) i journalSource (świece bazowe do granicy).
+      maxTOf: (tr) => { snap[tr.instrument] ??= hwOf(tr.instrument); return journalMaxT(tr, { limit: snap[tr.instrument], real1s: data?.real1s(tr.instrument) || [] }); },
       setups: setupSuggestions(getSetups(), doc.trades), known: getSetups(),
+      afterBe: { store: abeStore, sessionId, ready: () => client.flush().catch(() => {}) },
       fmtTime: (s) => (Number.isFinite(s) ? `${dayLabelShort(s)} ${hmsTz(s)}` : '–'),
       setup,
       onSave: (tid, patch) => {
@@ -722,7 +732,9 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     $('.bt-clock').textContent = f.HMS.format(new Date(Math.floor(cursor) * 1000));
     // M (31.10.2026): zegar w strefie wykresu ma podpis strefy, a godzina startu i skoki są w NY, więc obok stoi godzina NY (gdy strefa wykresu nie jest NY)
     const tz = chartTz();
-    if (tz !== clockTz) { clockTz = tz; $('.bt-clock').title = t('Czas wykresu: {tz}', { tz: tzLabel(tz, cursor) }); }
+    // 04.11.2026: strefa zegara widoczna obok godziny (skrót „UTC−5”; w NY ją zastępuje podpis „NY”), odświeżana przy zmianie strefy albo co 30 min czasu replayu (zmiana czasu)
+    const tzKey = `${tz}|${Math.floor(cursor / 1800)}`;
+    if (tzKey !== clockTz) { clockTz = tzKey; const full = tzLabel(tz, cursor); $('.bt-clock').title = t('Czas wykresu: {tz}', { tz: full }); $('.bt-clock-tz').textContent = tz === 'America/New_York' ? '' : (/UTC.*$/.exec(full) || [full])[0]; }
     // zegar w NY ma tylko podpis „NY”, w innej strefie obok stoi godzina NY
     const nyTxt = tz === 'America/New_York' ? 'NY' : `${fmtIn('America/New_York').HMS.format(new Date(Math.floor(cursor) * 1000))} NY`, nyEl = $('.bt-clock-ny');
     if (nyEl.textContent !== nyTxt) nyEl.textContent = nyTxt;
@@ -735,6 +747,17 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const html = `<span class="lbl">${esc(t('Sesja'))}</span> <span class="bt-ac-v"><b class="${c0}">${esc(fmtMoney(a.session.usd))}</b> <span class="bt-ac-x ${c0}">${esc(`${pctTxt(a.session.pct)} · ${fmtR(a.session.r)} · ${t.p("{n} trade'ów", trades.length)}`)}</span></span>`;
     if (res._h !== html) { res._h = html; res.innerHTML = html; }
     paintNotion();
+    // odliczanie do zamknięcia świecy aktywnego interwału każdego wykresu (czas replayu, nie zegar systemowy); pamięć ważna do zamknięcia sesji (createClockCache).
+    // Interwał sekundowy poza oknem prawdziwego 1s składa się ze świec minutowych, więc liczy się z 60 s; „Brak notowań”, gdy pod kursorem jest sesja, a wykres nie ma świecy bieżącego przedziału
+    for (const c of cells) {
+      const secOut = (parseTf(c.tf)?.sec ?? 60) < 60 && !inside(data?.real1s(c.instrument) || [], cursor);
+      const bars = c.chart.bars();
+      const v = (c.clock ||= createClockCache())(cursor, c.tf, bars.length ? bars[bars.length - 1][0] : null, secOut ? 60 : null);
+      const txt = v.kind === 'open' ? `${t('Do zamknięcia świecy')} ${fmtCountdown(v.remaining)}` : v.kind === 'closed' ? t('Rynek zamknięty') : v.kind === 'nodata' ? t('Brak notowań') : '';
+      if (c.cdEl.textContent !== txt) c.cdEl.textContent = txt;
+      const ttl = v.kind === 'closed' && v.end != null ? t('Otwarcie sesji: {t}', { t: `${fmtIn(chartTz()).DAY.format(new Date(v.end * 1000))} ${fmtIn(chartTz()).HM.format(new Date(v.end * 1000))}` }) : v.kind === 'nodata' ? t('Brak notowań w bieżącym przedziale świecy {tf}', { tf: c.tf }) : t('Czas replayu do końca bieżącej świecy {tf}', { tf: c.tf });
+      if (c.cdEl.title !== ttl) c.cdEl.title = ttl;
+    }
     for (const c of cells) {
       const secTf = (parseTf(c.tf)?.sec ?? 60) < 60;
       const r1 = data?.real1s(c.instrument) || [], show = secTf && !inside(r1, cursor);
@@ -811,7 +834,7 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
             <p class="lbl">${esc(t('Ulubione'))}</p><div class="swc-chips bt-tfchips"></div>
           </div></span>
         <div class="seg sm bt-auto" role="group" aria-label="${esc(t('Skala ceny'))}"><button type="button" data-swc="auto" aria-pressed="${cfgC.auto !== false}" title="${esc(autoTitle(cfgC.auto !== false))}">${esc(t('Auto'))}</button></div>
-        <span class="swc-save" aria-live="polite"></span><span class="swc-meter" hidden></span>
+        <span class="swc-save" aria-live="polite"></span><span class="swc-meter" hidden></span><span class="bt-cd" role="timer" aria-live="off"></span>
         <button type="button" class="btn sm swc-draw" aria-expanded="false">${esc(t('Rysuj'))}</button>
         <div class="swc-tools" role="toolbar" aria-label="${esc(t('Narzędzia rysowania'))}"></div>
       </div>
@@ -830,10 +853,11 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
     const cell = { i, el: host, instrument: cfgC.instrument, tf: cfgC.tf, liveTimer: 0, sig: '', off: null, ext: false };
     const sel = (s) => host.querySelector(s);
     cell.secnote = sel('.bt-secnote');
+    cell.cdEl = sel('.bt-cd');
     cell.builder = createBuilder(streamOf(cfgC.instrument), cfgC.tf);
     const base = store.docOf(sym);
     cell.chart = createReplayChart(sel('.bt-plot'), {
-      LWC, D, instrument: cfgC.instrument, tf: cfgC.tf, colors: (colors = readColors(sel('.bt-plot'))), getNews: () => visibleNews(data.news(), cursor),
+      LWC, D, instrument: cfgC.instrument, tf: cfgC.tf, colors: (colors = readColors(sel('.bt-plot'))), getNews: () => chartNews(data.news(), cursor),
       autoScale: cfgC.auto !== false,
       onAutoChange: (on) => { const ab = sel('[data-swc="auto"]'); ab.setAttribute('aria-pressed', String(on)); ab.title = autoTitle(on); if (doc.layout.charts[i]) doc.layout.charts[i] = { ...doc.layout.charts[i], auto: on }; persist(); },
       // K: pełna historia: porcje świec interwału wykresu sprzed okna bazowego, do początku danych
@@ -1013,10 +1037,11 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   function setCursor(c) {
     let nc = Math.min(endT, Math.max(minCur(), c));
     if (!data.covers(nc)) nc = Math.max(cursor, Math.min(nc, data.baseTo()));
-    const newsBefore = visibleNews(data.news(), cursor).length;
+    // wykres pokazuje newsy dnia handlowego kursora i następnego (04.11.2026), więc przerysowanie przy zmianie dnia lub liczby newsów
+    const newsBefore = `${newsWindowKey(cursor)}|${chartNews(data.news(), cursor).length}`;
     cursor = nc;
     advanceAll();
-    if (visibleNews(data.news(), cursor).length !== newsBefore) for (const x of cells) x.chart.newsChanged();
+    if (`${newsWindowKey(cursor)}|${chartNews(data.news(), cursor).length}` !== newsBefore) for (const x of cells) x.chart.newsChanged();
     render();
     persist();
     prefetch();
@@ -1025,7 +1050,9 @@ export function openReplay(root, { sessionId, client = createSessionClient(), lo
   let prefetching = null;
   function prefetch() {
     if (prefetching || closed) return;
-    prefetching = data.ensure(cursor).then((ev) => { if (ev) onData(ev); }).catch((e) => { if (!closed) msg(t('Nie udało się wczytać świec: {msg}', { msg: e?.message || '' })); }).finally(() => { prefetching = null; });
+    // newsy dociągnięte w tle (doładowanie okna idzie z odpowiedzią o świece, także bez zdarzenia trim/reload) odświeżają model newsów wykresu od razu, także w pauzie (przegląd 04.11.2026)
+    const newsN = data.news().length;
+    prefetching = data.ensure(cursor).then((ev) => { if (ev) onData(ev); if (data.news().length !== newsN) for (const c of cells) c.chart.newsChanged(); }).catch((e) => { if (!closed) msg(t('Nie udało się wczytać świec: {msg}', { msg: e?.message || '' })); }).finally(() => { prefetching = null; });
   }
   // Przejście do chwili c (kroki, skoki, „Wróć”): dane do c wczytane przed ruchem. Skok w przód z pozycją albo zleceniem idzie przez dane porcjami (silnik widzi każdą
   // świecę po drodze); bez nich (i przy cofaniu) okno przeładowuje się od razu wokół celu.

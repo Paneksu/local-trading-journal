@@ -26,6 +26,8 @@ import { createCalendar } from './kalendarz.js';
 import './wybor-daty.js';
 import { createBacktestView } from './bt-widok.js';
 import { sanitizeBt, sessionsCopyOf } from './bt-czas.js';
+import { afterBeRows, afterBeBadge, afterBeFact, afterBeResult, afterBeSection, afterBeNoDataReason, afterBeLivePending, loadAfterBeBacklog, createAfterBeStore, statRows } from './po-be-widok.js';
+import { afterBeStats } from './po-be.js';
 
 const { esc, fmtR, fmtMoney, fmtPct, fmtPf, fmtVal, num, cls, DASH } = F;
 const L = (s, p) => esc(t(s, p));
@@ -976,6 +978,8 @@ async function saveConfig(patch) {
     if ('updateCheck' in patch) { upd.check(); sync?.changed(); }
     if ('syncEnabled' in patch && patch.syncEnabled) { const r = await sync.pull(); if (!r?.applied) sync.changed({ now: true }); }
     if ('syncEnabled' in patch) devices.refresh();
+    // zmiana ustawień wykresu (przełącznik po BE, limity) zmienia powód brak danych: stan źródeł wczytujemy od nowa i odmalowujemy komórki bez zmiany widoku
+    if (Object.keys(patch).some((k) => k.startsWith('chart'))) abeLoadSrc().then(() => abePaint());
     toast(t('Zapisano ustawienia.'));
   } catch {
     toast(t('Nie udało się zapisać ustawień. Sprawdź, czy dashboard działa.'), { error: true });
@@ -1030,6 +1034,7 @@ function renderMain() {
     return;
   }
   const { range, base, cur, ext, c } = viewCtx();
+  if (state.view !== 'trades' && state.view !== 'stats') abeSeen = '';
   if (state.view === 'gallery') {
     view.innerHTML = renderGallery(range) + footLine();
     bindGallery();
@@ -1039,6 +1044,7 @@ function renderMain() {
   if (state.view === 'trades') {
     view.innerHTML = renderTrades(range) + footLine();
     renderSide(); renderStatus();
+    abeKick();
     return;
   }
   if (state.view === 'prop') {
@@ -1061,6 +1067,7 @@ function renderMain() {
     html += `<section class="sec" aria-label="${L('Kalendarz i dyscyplina')}"><div class="gr row-c"><div class="card" id="cal">${renderCalendar()}</div><div class="stack">${bk.side}</div></div></section>`;
     html += `<section class="sec" id="heat-sec" aria-label="${L('Mapa dni')}">${renderHeatmap()}</section>`;
     html += bk.html;
+    html += abeSectionHtml(cur);
   }
   html += footLine();
   view.innerHTML = html;
@@ -1072,6 +1079,7 @@ function renderMain() {
   drawCharts();
   scrollHeat();
   renderSide(); renderStatus();
+  abeKick();
 }
 
 function footLine() {
@@ -1105,7 +1113,7 @@ const SORT_VAL = {
   r: (t) => t.r,
   pnl: (t) => t.pnl,
 };
-const COLS = [['date', t('Data'), ''], ['name', t('Trade'), ''], ['instrument', t('Instrument'), ''], ['dir', t('Kierunek'), ''], ['setup', t('Setup'), ''], ['dur', t('Czas'), 'r'], ['mini', t('Wykres'), 'mc'], ['res', t('Wynik'), ''], ['r', 'R', 'r'], ['pnl', 'P&L', 'r']];
+const COLS = [['date', t('Data'), ''], ['name', t('Trade'), ''], ['instrument', t('Instrument'), ''], ['dir', t('Kierunek'), ''], ['setup', t('Setup'), ''], ['dur', t('Czas'), 'r'], ['mini', t('Wykres'), 'mc'], ['res', t('Wynik'), ''], ['abe', t('Po BE'), 'abe-h'], ['r', 'R', 'r'], ['pnl', 'P&L', 'r']];
 
 function sortRows(rows) {
   const val = SORT_VAL[state.sortK] || SORT_VAL.date;
@@ -1134,6 +1142,69 @@ function bindMinis() {
   observeMinis(document, (id) => { const x = byId.get(id); return x ? { ...tradeArg(x), id: x.id, imgs: x.imgs } : null; }, { fallback: miniFallback });
 }
 
+// ---------- wynik po BE (Live, Paper i Backtest) ----------
+// Po BE: co zrobiłaby cena po wybiciu stopem na BE przy pierwotnych poziomach. Liczy serwer (POST /api/after-be); tu tylko pytamy i pokazujemy.
+// [U] 04.11.2026 «Wszystkie trzy» (Live, Paper i Backtest, także z filtrem Typ), «Procenty + R bez BE, per setup (Recommended)», «Osobny status „bez sesji” (Recommended)», «Tylko w aplikacji (Recommended)».
+// Backtest idzie jako { key, typ } (tylko serwer zna granicę sesji, więc dashboard niczego nie ujawnia), trade bez znacznika [sesja/trade] ma lokalny status „bez sesji”.
+// Pobieranie nie blokuje renderu: render rysuje to, co jest w buforze, a po nowych wynikach odświeżamy same komórki i sekcję, bez ponownego renderu (brak pętli).
+// Pending i no-data pobieramy ponownie tylko przy wejściu na widok (zmiana widoku albo typu), nigdy z timera.
+const abe = createAfterBeStore();
+let abeSeen = '';
+const abeRowsOf = (list) => afterBeRows(list, { typ: state.typ });
+// Powód no-data w podpowiedzi: od razu z meta, a kolejka i opóźnienie dochodzą z /api/sources przy wejściu na widok (bez sieci do dostawców). Result się nie zmienia.
+let abeSrc = null;
+const abeSrcNow = () => abeSrc ?? { afterBe: meta.chartAfterBe === true, key: !!meta.hasDatabentoKey, credit: meta.chartCredit, dailyLimitUsd: meta.chartDailyLimitUsd, spentTodayUsd: meta.chartSpentTodayUsd };
+const abeReason = (row) => afterBeNoDataReason({ typ: row?.item?.typ ?? null, exitAt: row?.item?.exitAt ?? null, exitWhy: row?.exitWhy ?? null, src: abeSrcNow(), held: abe.isHeld(row?.key) });
+// Live i Paper: pending to trwający dzień handlowy, więc dymek może to powiedzieć. Backtest bez dymka: pending ma zawsze ten sam DOM.
+const abeOpts = (row) => ({ reason: abeReason(row), pendingTitle: row?.item && row.item.typ !== 'Backtest' ? afterBeLivePending() : undefined });
+async function abeLoadSrc() {
+  try {
+    const j = await (await fetch('/api/sources')).json();
+    if (j?.databento) abeSrc = { ...j.databento, key: !!j.keys?.databento?.configured };
+  } catch { /* zostaje stan z meta */ }
+}
+// przy błędzie pobrania komórka to spokojne „–” z podpowiedzią (bez aria-busy), w trakcie pobierania „…”
+const abeCellHtml = (row) => (!row ? DASH : abe.has(row.key) ? afterBeBadge(abe.get(row.key), { short: true, ...abeOpts(row) })
+  : abe.failed() ? `<span class="muted" title="${esc(t('Nie udało się pobrać wyniku po BE.'))}">${DASH}</span>` : '<span class="abe abe-muted" aria-busy="true">…</span>');
+function abeSectionHtml(list) {
+  const rows = abeRowsOf(list);
+  if (!rows.length) return '';
+  const missing = rows.some((x) => !abe.has(x.key));
+  return afterBeSection(afterBeStats(statRows(rows, abe)), { loading: missing && !abe.failed(), error: missing && abe.failed(), total: rows.length });
+}
+function abePaint() {
+  const host = $('#view');
+  if (!host || !ctx) return;
+  if (state.view === 'trades' && ctx.rows) {
+    const by = new Map(abeRowsOf(ctx.rows).map((x) => [x.id, x]));
+    for (const el of host.querySelectorAll('[data-abe-cell], [data-abe-card]')) el.innerHTML = abeCellHtml(by.get(el.dataset.abeCell || el.dataset.abeCard));
+  } else if (state.view === 'stats') {
+    const el = host.querySelector('[data-abe-sec]');
+    if (el) el.outerHTML = abeSectionHtml(ctx.cur || []);
+  }
+}
+async function abeKick() {
+  const key = `${state.view}|${state.typ}`;
+  const fresh = abeSeen !== key;
+  abeSeen = key;
+  const rows = abeRowsOf(state.view === 'trades' ? ctx?.rows || [] : ctx?.cur || []);
+  if (!rows.length) return;
+  const srcDone = fresh ? abeLoadSrc() : null;
+  const changed = await abe.ensure(rows, { refresh: fresh });
+  await srcDone;
+  if (changed || fresh || abe.failed()) abePaint();
+}
+// szczegóły trade'a (lightbox): wiersz z bufora od razu (paintLbInfo), wynik dochodzi po odpowiedzi serwera
+const abeFact = (row) => afterBeFact(afterBeResult(abe, row.key), abeOpts(row));
+async function abeLightbox(tr) {
+  const rows = afterBeRows([tr], { typ: tr.typ });
+  if (!rows.length) return;
+  await Promise.all([abe.ensure(rows, { refresh: true }), abeLoadSrc()]);
+  const el = lb.open && lb.items[lb.idx]?.t.id === tr.id ? lbEl().querySelector('.lb-facts [data-abe]') : null;
+  if (el) el.outerHTML = abeFact(rows[0]);
+}
+const abeFactOf = (tr) => { const rows = afterBeRows([tr], { typ: tr.typ }); return rows.length ? abeFact(rows[0]) : ''; };
+
 const TABLE_CAP = 400;
 function renderTrades(range) {
   let all = inRange(baseTrades(state.typ, true), range);
@@ -1141,12 +1212,13 @@ function renderTrades(range) {
   const rows = sortRows(all);
   const shown = rows.slice(0, TABLE_CAP);
   ctx.rows = shown;
+  const abeBy = new Map(abeRowsOf(shown).map((x) => [x.id, x]));
   const chip = rFilter ? `<button type="button" class="chip" data-act="rf-clear" aria-label="${L('Usuń filtr przedziału R')}">${L('Przedział R: {r}', { r: rFilter.text })} ${ICON.close(12)}</button>` : '';
   const add = `${chip}<button class="btn primary" type="button" data-act="add-trade">${ICON.plus(14)}${L('Dodaj trade')}</button>`;
   const head = pageHead(t("Trade'y"), `${typLabel(state.typ)} · ${range.label}${searchNote()} · ${nTrades(all.length)}`, add);
   if (!all.length) return `${head}<section class="sec">${emptyState(range)}</section>`;
   const th = COLS.map(([k, l, a]) => {
-    if (k === 'mini') return `<th class="${a}">${esc(l)}</th>`; // miniatura nie ma sortowania
+    if (k === 'mini' || k === 'abe') return `<th class="${a}">${esc(l)}</th>`; // miniatura i wynik po BE nie mają sortowania
     const on = state.sortK === k;
     return `<th class="${a}" aria-sort="${on ? (state.sortD === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-btn" data-act="sort" data-v="${k}">${esc(l)}${k === 'date' ? ` <span class="tz-tag" title="${esc(t('Strefa czasu z Ustawień'))}">${esc(tzShort())}</span>` : ''}<span class="si" aria-hidden="true">${on ? (state.sortD === 'asc' ? ICON.sortUp(12) : ICON.sortDown(12)) : ''}</span></button></th>`;
   }).join('');
@@ -1155,14 +1227,14 @@ function renderTrades(range) {
     return `<tr class="trow" data-act="trade-open" data-src="rows" data-id="${esc(t.id)}"><td class="nw">${esc(F.shortDate(t.date))}${t.time ? `<small>${esc(t.time)}</small>` : ''}</td>
       <td class="nm"><button type="button" class="row-btn" data-act="trade-open" data-src="rows" data-id="${esc(t.id)}" title="${L('Pokaż szczegóły')}">${esc(tLabel(t))}</button></td>
       <td>${t.instrument ? esc(t.instrument) : DASH}</td><td>${t.dir ? badge(t.dir, t.dirColor) : DASH}</td><td class="st" title="${esc(t.setup || '')}">${t.setup ? esc(t.setup) : DASH}</td>
-      <td class="r">${t.dur != null ? esc(F.fmtDur(t.dur)) : DASH}</td><td class="mc">${miniCell(t)}</td><td class="res ${RES_CLASS[r]}">${RES_LABEL[r]}</td>
+      <td class="r">${t.dur != null ? esc(F.fmtDur(t.dur)) : DASH}</td><td class="mc">${miniCell(t)}</td><td class="res ${RES_CLASS[r]}">${RES_LABEL[r]}</td><td class="abe-c" data-abe-cell="${esc(t.id)}">${abeCellHtml(abeBy.get(t.id))}</td>
       <td class="r ${cls(t.r)}"><b>${rText(t)}</b></td><td class="r ${cls(t.pnl)}">${t.pnl != null ? fmtMoney(t.pnl) : DASH}</td></tr>`;
   }).join('');
   const cards = shown.map((t) => {
     const r = resOf(t);
     return `<button type="button" class="tcard" data-act="trade-open" data-src="rows" data-id="${esc(t.id)}"><span class="tc1"><b>${esc(tLabel(t))}</b><b class="${cls(t.r)}">${rText(t)}</b></span>
       <span class="tc2">${esc([whenText(t), t.instrument, t.dir, t.setup].filter(Boolean).join(' · '))}</span>
-      <span class="tc3"><span class="${RES_CLASS[r]}">${RES_LABEL[r]}</span>${t.dur != null ? `<span>${esc(F.fmtDur(t.dur))}</span>` : ''}${t.pnl != null ? `<span class="${cls(t.pnl)}">${fmtMoney(t.pnl)}</span>` : ''}${miniCell(t, 'sm')}</span></button>`;
+      <span class="tc3"><span class="${RES_CLASS[r]}">${RES_LABEL[r]}</span>${abeBy.has(t.id) ? `<span data-abe-card="${esc(t.id)}">${abeCellHtml(abeBy.get(t.id))}</span>` : ''}${t.dur != null ? `<span>${esc(F.fmtDur(t.dur))}</span>` : ''}${t.pnl != null ? `<span class="${cls(t.pnl)}">${fmtMoney(t.pnl)}</span>` : ''}${miniCell(t, 'sm')}</span></button>`;
   }).join('');
   const cap = rows.length > TABLE_CAP ? `<p class="note">${L("Pokazuję {a} z {b} trade'ów. Zawęź okres lub filtry, żeby zobaczyć resztę.", { a: TABLE_CAP, b: rows.length })}</p>` : '';
   return `${head}<section class="sec" aria-label="${L("Lista trade'ów")}"><div class="card tt-card"><div class="tbl-wrap tt-table"><table class="tt"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div><div class="tcards">${cards}</div></div>${cap}</section>`;
@@ -1293,7 +1365,7 @@ function paintLbInfo(d, it) {
   const bm = S.beByMargin(tt);
   const bmTxt = bm ? (bm.unit === 'R' ? `±${num(bm.v, 2)}R` : `±${fmtMoney(bm.v, { plus: false })}`) : '';
   d.querySelector('.lb-cap').innerHTML = `<b>${esc(tLabel(tt))}</b> <span class="${RES_CLASS[r]}">${esc(RES_LABEL[r])}</span>${bm ? ` <span class="muted">(${L('w marginesie {v}', { v: bmTxt })})</span>` : ''} <b class="${cls(tt.r)}">${rText(tt)}</b>${hasImg && it.k > 1 ? `<span class="muted"> · ${L('zrzut {a}/{b}', { a: it.i + 1, b: it.k })}</span>` : ''}`;
-  d.querySelector('.lb-facts').innerHTML = factsOf(tt).map(([k, v, c]) => `<div><dt>${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('');
+  d.querySelector('.lb-facts').innerHTML = factsOf(tt).map(([k, v, c]) => `<div><dt>${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('') + abeFactOf(tt);
 }
 function showLightbox() {
   const d = lbEl();
@@ -1310,6 +1382,7 @@ function showLightbox() {
   if (hasImg) { img.src = imgSrc(it); img.alt = t('Zrzut: {c}', { c: capParts(tt).join(', ') }); } else img.removeAttribute('src');
   d.querySelector('.lb-count').textContent = `${lb.idx + 1} / ${lb.items.length}`;
   paintLbInfo(d, it);
+  abeLightbox(tt).catch(() => {});
   d.querySelector('.lb-notes').textContent = tt.notes || '';
   d.querySelector('.lb-notes').hidden = !tt.notes;
   d.querySelector('.lb-link').href = tt.url;
@@ -1340,7 +1413,8 @@ function showLightbox() {
 // Podgląd świec w lightboxie: jeden na raz, tworzony przy pierwszym pokazaniu trade'a (tylko lokalne świece, bez sieci zewnętrznej).
 // extra: { frame, tf, drawings } przy powrocie z trybu edycji (ten sam kadr i interwał).
 // P35: contract = pole „Kontrakt” (puste = wg reguły), date i time: trade bez godziny bierze kontrakt z dnia handlowego (kontrakty.dateRef)
-const tradeArg = (x) => ({ at: x.at, exitAt: x.dur != null ? x.at + x.dur * 60000 : null, instrument: x.instrument, entryPrice: x.entryPrice, exitPrice: x.exitPrice, sl: x.sl, tp: x.tp, be: x.be, r: x.r, pnl: x.pnl, contract: x.contract || '', date: x.date, time: x.time });
+// [U] 05.11.2026 «Ogranicz do granicy sesji (Recommended)»: btTrade niesie klucz trade'a Backtest z lokalną sesją: podgląd, edytor i miniatura dostają świece tylko do granicy sesji (tnie serwer, lib/po-be.mjs); Live i Paper bez zmian.
+const tradeArg = (x) => ({ at: x.at, exitAt: x.dur != null ? x.at + x.dur * 60000 : null, instrument: x.instrument, entryPrice: x.entryPrice, exitPrice: x.exitPrice, sl: x.sl, tp: x.tp, be: x.be, r: x.r, pnl: x.pnl, contract: x.contract || '', date: x.date, time: x.time, btTrade: S.btTradeKey(x) });
 function ensureChart(x, extra = {}) {
   if (lb.pv && lb.pvId === x.id) return lb.pv;
   dropChart();
@@ -1725,7 +1799,7 @@ async function postJson(url, body) {
 async function refreshMeta() { try { const m = await fetch('/api/meta', { cache: 'no-store' }); if (m.ok) meta = { ...meta, ...(await m.json()) }; } catch { /* zostaje poprzednie */ } }
 
 // ---------- ustawienia: palety danych i marginesy BE (ustawienia.js) ----------
-const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), updateHtml: () => upd.settingsHtml(), onboardingHtml: () => ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), demoCount: () => demoCount(), onStop: (el) => stopServer(el), onRestored: () => load(true), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); retimeModel(); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
+const ust = createSettings({ settings, save: saveSettings, getTheme, applyAll: () => applyLook(getTheme()), onBe: (k, raw) => applyBe(k, raw), getMeta: () => meta, onConfig: (p) => saveConfig(p), afterBeBacklog: () => loadAfterBeBacklog(model?.trades ?? null), updateHtml: () => upd.settingsHtml(), onboardingHtml: () => ob.settingsHtml(), devicesHtml: () => devices.settingsHtml(), demoCount: () => demoCount(), onStop: (el) => stopServer(el), onRestored: () => load(true), onSyncToggle: (on) => saveConfig({ syncEnabled: on }), onTab: () => devices.refresh(), onChartTz: (tz) => { setChartTzDefault(tz); retimeModel(); lb.pv?.redraw(); }, onChartBadj: (on) => setBadjDefault(on), onChart: (c) => onChartChanged(c), onBt: () => btView.replay()?.refreshJumps(), btCopyInfo: () => btCopy,
   // N4 (1.6.0): klucze zapisuje sekcja Źródła danych (POST /api/sources/key); po zmianie klucza, kredytu albo limitów odświeżamy meta i karty panelu
   onSourcesChanged: async () => { await refreshMeta(); newsCards.wantEarnings(earnOn()); renderSide(); renderDesk(); if (model) renderMain(); newsCards.load(); },
   loadNewsStatus: async () => {

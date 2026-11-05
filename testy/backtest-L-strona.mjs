@@ -41,5 +41,5 @@ export default ({ test, H, assert, ROOT }) => {
   test('backtest-L: ryzyko % od bieżącego salda w replayu, short z prowizją', () => tagged('ryzyko', 2));
   test('backtest-L: SL i TP w punktach, tickach albo cenie', () => tagged('jednostki', 3));
   test('backtest-L: przeciągnięcie zlecenia oczekującego i jego SL na wykresie, odrzucenie za rynek, anulowanie z szuflady', () => tagged('zlecenie', 7));
-  test('backtest-L: Journal: klasyczne okno bez świec po zamknięciu trade\'a, rysunki tylko w migawce, Setup i notatka, Ctrl+J, Historia', () => tagged('journal', 16));
+  test('backtest-L: Journal: klasyczne okno, świece po wyjściu do znaku wodnego (zaraz po zamknięciu bez nich, po cofnięciu kursora do znaku wodnego i nie dalej), rysunki tylko w migawce, Setup i notatka, Ctrl+J, Historia', () => tagged('journal', 20));
 };

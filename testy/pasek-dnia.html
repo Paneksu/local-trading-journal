@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JustJournal: pasek dnia newsów (strona robocza)</title>
+<!-- Strona robocza podglądu wizualnego paska zakresu zdarzeń całodziennych (04.11.2026), podawana tylko przez dashboard testowy (THQ_TEST_PAGES=1) pod /__testy/.
+     Parametry: ?theme=onyx|platinum &view=prev1m|prev1mLeft|edit1m|prev1D &hover=nd|ed (fokus na napisie dnia). Prawdziwe moduły z prawdziwym styles.css, atrapa fetch (świece, newsy, wyniki).
+     Wynik: pre#wynik z JSON-em { view, theme, bands, hits }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; padding: 12px; }
+  #c { width: 1000px; height: 420px; display: flex; flex-direction: column; }
+  #wynik { white-space: pre-wrap; font: 11px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<div class="lb" style="position: static; inset: auto;"><div id="c"></div></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const theme = q.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const view = q.get('view') || 'prev1m';
+document.documentElement.dataset.theme = theme;
+const out = document.getElementById('wynik');
+window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+window.cancelAnimationFrame = (id) => clearTimeout(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const utc = (y, mo, d, h = 0, mi = 0) => Date.UTC(y, mo - 1, d, h, mi) / 1000;
+
+// 1m od czwartku 19.11.2026 12:00 ET (17:00Z) do piątku 20.11 17:00 ET (22:00Z), bez przerwy 17:00-18:00 ET w czwartek (22:00Z-23:00Z)
+const candles = [];
+{ let p = 5840, k = 0;
+  for (let u = utc(2026, 11, 19, 17); u < utc(2026, 11, 20, 22); u += 60) {
+    if (u >= utc(2026, 11, 19, 22) && u < utc(2026, 11, 19, 23)) continue;
+    const o = p, c = 5840 + 14 * Math.sin(k / 55) + 4 * Math.sin(k / 9); candles.push([u, o, Math.max(o, c) + 0.6, Math.min(o, c) - 0.6, c, 10]); p = c; k++;
+  } }
+// 1D: sesje 16-30.11 (t = otwarcie 18:00 ET dnia poprzedniego); czwartek 26.11 (Thanksgiving) bez sesji
+const daily = [];
+{ let p = 5820;
+  for (const [mo, d] of [[11, 16], [11, 17], [11, 18], [11, 19], [11, 20], [11, 23], [11, 24], [11, 25], [11, 27], [11, 30]]) {
+    const dow = new Date(Date.UTC(2026, mo - 1, d)).getUTCDay();
+    const prev = dow === 1 ? d - 3 : d - 1; // poniedziałek otwiera w niedzielę
+    const o = p, c = p + (Math.sin(d) * 18); daily.push([utc(2026, mo, prev, 23), o, Math.max(o, c) + 9, Math.min(o, c) - 9, c, 1]); p = c;
+  } }
+const news = [
+  { t: utc(2026, 11, 20, 5), day: '2026-11-20', name: 'OPEX miesięczny', imp: 'opex', kind: 'opex', allDay: true, tentative: false, src: 'off', basis: 'rule', variant: 'monthly' },
+  { t: utc(2026, 11, 26, 5), day: '2026-11-26', name: 'Bank Holiday', imp: 'holiday', kind: 'holiday', allDay: true, tentative: false, src: 'off', basis: 'rule' },
+  { t: utc(2026, 11, 19, 13, 30), day: '2026-11-19', name: 'Initial Jobless Claims', imp: 'high', kind: 'data', allDay: false, tentative: false, src: 'ff', basis: 'feed' },
+];
+const earn = [{ t: utc(2026, 11, 20, 5), day: '2026-11-20', symbol: 'GE', name: 'GE Corp', cls: 2, session: 'unknown', allDay: true, src: 'edgar' }];
+const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+const real = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  url = String(url);
+  if (url.includes('/api/news')) return json({ events: news });
+  if (url.includes('/api/earnings')) return json({ events: earn });
+  if (url.includes('/api/candles')) {
+    const tf = new URL(url, location.href).searchParams.get('tf');
+    return json(tf === '1D' ? { bars: daily, missing: [], derived: [], availableEnd: null } : { bars: candles, layer: '1m', rolls: [], missing: [], derived: [], availableEnd: null });
+  }
+  return real(url, opts);
+};
+try {
+  const W = await import('/js/wykres.js');
+  const P = await import('/js/podglad.js');
+  P.setChartTzDefault('America/New_York');
+  try {
+    localStorage.setItem(P.AUTO_KEY, '1');
+    localStorage.setItem(P.OVERLAY_KEY, JSON.stringify({ sessions: false, pdhl: false, news: true, earnings: true, newsImp: { high: true, medium: true, low: true, holiday: true, opex: true }, earnCls: { 1: true, 2: true, 3: true, 4: true } }));
+  } catch { /* bez localStorage */ }
+  const root = document.getElementById('c');
+  const idx = (t) => candles.findIndex((c) => c[0] >= t);
+  const trade = { at: candles[idx(utc(2026, 11, 20, 14))][0] * 1000, exitAt: candles[idx(utc(2026, 11, 20, 14, 30))][0] * 1000, instrument: 'ES', entryPrice: 5842, exitPrice: 5848, sl: 5836, tp: 5850, be: null, r: 1.5 };
+  if (view === 'edit1m') {
+    const ed = await W.createEditor(root, { trade, tradeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', frame: { tf: '1m', fromIndex: idx(utc(2026, 11, 20, 20)), toIndex: idx(utc(2026, 11, 20, 20)) + 300, candles, rolls: [] }, doc: null, edited: 'S0', onDone: () => {} });
+    await sleep(900);
+  } else {
+    const tf = view === 'prev1D' ? '1D' : '1m';
+    const frame = view === 'prev1D' ? { from: daily[0][0], to: daily[daily.length - 1][0] + 86400 }
+      : view === 'prev1mLeft' ? { from: utc(2026, 11, 20, 14), to: utc(2026, 11, 20, 20) } : { from: utc(2026, 11, 19, 20), to: utc(2026, 11, 20, 5) };
+    const pv = P.createPodglad(root, { trade, tf, frame });
+    await pv.ready; await sleep(900);
+  }
+  // ?hover=nd (napis newsów) albo ?hover=ed (napis wyników): fokus na przycisku napisu dnia, jak przy najechaniu
+  if (q.get('hover')) { root.querySelector(`.nws-hit[data-k^="${q.get('hover')}:"]`)?.focus(); await sleep(400); }
+  const bands = [...root.querySelectorAll('svg .nwb')].map((r) => ({ cls: r.getAttribute('class'), k: r.dataset.k, x: r.getAttribute('x'), w: r.getAttribute('width'), y: r.getAttribute('y'), fill: r.getAttribute('style') }));
+  const hits = [...root.querySelectorAll('.nws-hit')].map((b) => b.getAttribute('aria-label'));
+  out.textContent = JSON.stringify({ view, theme, bands, hits }, null, 1);
+} catch (e) { out.textContent = `FAIL ${e && e.stack || e}`; }
+</script>
+</body>
+</html>

@@ -17,7 +17,7 @@ export { validTz };
 import { confirmDialog, toast } from './modal.js';
 import * as G from './geometria.js';
 import { themed, CSS_COLORS } from './rysunki-kolory.js';
-import { newsDefaults, normNews, buildNewsModel, newsGeometry, newsSvg, timeToX, candleWindow, feed as newsFeed, NEWS_IMPS, EARN_CLASSES } from './newsy.js';
+import { newsDefaults, normNews, buildNewsModel, newsGeometry, newsSvg, timeToX, bandX, candleWindow, feed as newsFeed, NEWS_IMPS, EARN_CLASSES } from './newsy.js';
 import { mountNewsLayer } from './newsy-warstwa.js';
 import { chartSettings, closePoints } from './styl-wykresu.js'; // cykl importów jest bezpieczny: nic z tego modułu nie jest wołane w czasie ładowania
 
@@ -197,12 +197,14 @@ export function loadBadj() { return badjBase; }
 export const badjWarning = (adjust) => t('Back-adjust włączony: ceny pozostałych kontraktów są przeliczone do kontraktu trade\'a, więc poziomy trade\'a i rysunki pasują do świec.')
   + (adjust?.missing?.length ? ' ' + t('Bez luki (brak świec obu kontraktów): {list}.', { list: adjust.missing.join(', ') }) : '');
 // Parametry zapytania o świece trade'a: czas wejścia i wyjścia (trade bez godziny: południe w Chicago dnia handlowego) i pole „Kontrakt”.
+// [U] 05.11.2026 «Ogranicz do granicy sesji (Recommended)»: btTrade (trade typu Backtest z lokalną sesją) każe serwerowi przyciąć świece do granicy sesji; działa też bez czasu wejścia.
 export function tradeQuery(trade) {
-  if (!trade || !Number.isFinite(trade.at)) return {};
+  const bt = trade?.btTrade ? { btTrade: trade.btTrade } : {};
+  if (!trade || !Number.isFinite(trade.at)) return bt;
   const ref = !trade.time && trade.date ? dateRef(trade.date) : null;
   const a = ref ?? Math.floor(trade.at / 1000);
   const b = ref == null && Number.isFinite(trade.exitAt) && trade.exitAt >= trade.at ? Math.floor(trade.exitAt / 1000) : a;
-  return { tfrom: a, tto: b, ...(trade.contract ? { contract: String(trade.contract).trim().toUpperCase() } : {}) };
+  return { tfrom: a, tto: b, ...(trade.contract ? { contract: String(trade.contract).trim().toUpperCase() } : {}), ...bt };
 }
 const BADJ_TITLE = () => t('Back-adjust (jak B-ADJ w TradingView): ceny pozostałych kontraktów przeliczone o luki rolli do kontraktu trade\'a. Przełącza widok tylko chwilowo; stałe ustawienie jest w Ustawieniach.');
 export function barToggles(sec) {
@@ -793,9 +795,15 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
   }
 
   // ---- dane ----
-  const getCandles = (from, to, tf) => (source ? source.get(from, to, tf) : fetchCandles(instrument, from, to, tf, extra()));
+  const getCandles = async (from, to, tf) => {
+    const j = await (source ? source.get(from, to, tf) : fetchCandles(instrument, from, to, tf, extra()));
+    if (Number.isFinite(j?.sessionCap)) sessionCap = j.sessionCap;
+    return j;
+  };
   // L: koniec dostępnych świec: teraz albo (Journal backtestu) chwila zamknięcia trade'a
-  const nowCap = () => (source && Number.isFinite(source.maxT) ? Math.floor(source.maxT) : Math.floor(Date.now() / 1000));
+  // [U] 05.11.2026 «Ogranicz do granicy sesji (Recommended)»: sessionCap z serwera (trade Backtest z lokalną sesją) kończy dociąganie świec, zamiast pytać o kolejne puste doby
+  let sessionCap = Infinity;
+  const nowCap = () => Math.min(sessionCap, source && Number.isFinite(source.maxT) ? Math.floor(source.maxT) : Math.floor(Date.now() / 1000));
   const takeMeta = (j) => { S.contract = j.contract || null; S.adjust = j.adjust || null; S.missing = j.missing || []; paintNotes(); };
 
   // Wczytuje świece TF `tf` dla kadru [fromT, toT] (z zapasem) i ustawia indeksy kadru po czasie.
@@ -1066,7 +1074,7 @@ export function createPodglad(root, { trade, drawings: drawings0 = [], meta = ()
     }).join('');
     // newsy i earningsy (1.4.0): linie pod świecami, znaczniki i etykiety dni nad nimi; ta sama logika (newsy.js) co w edycji
     const nmod = ov.news(S.candles);
-    const ng = nmod.on ? newsGeometry(nmod, timeToX(S.candles, step, s), { left: ml, right: ml + pw, top: mt, bottom: mt + ph }) : null;
+    const ng = nmod.on ? newsGeometry(nmod, timeToX(S.candles, step, s), { left: ml, right: ml + pw, top: mt, bottom: mt + ph }, bandX(S.candles, step, s)) : null;
     const nsvg = ng ? newsSvg(ng) : { under: '', over: '' };
     root.querySelector('.swc-ov-note').textContent = [ov.pdhlGap(S.candles) ? t('PDH/PDL: do linii potrzebne są pobrane świece całej poprzedniej sesji.') : '', ov.newsFailed() ? t('Newsy: nie udało się wczytać danych.') : ''].filter(Boolean).join(' ');
 
@@ -1433,7 +1441,7 @@ let miniVer = 0;
 const miniQueue = createMiniQueue({
   limit: 4,
   load: async (_key, a) => {
-    const q = new URLSearchParams({ instrument: a.instrument, from: String(a.from), to: String(a.to), tf: a.tf });
+    const q = new URLSearchParams({ instrument: a.instrument, from: String(a.from), to: String(a.to), tf: a.tf, ...(a.btTrade ? { btTrade: a.btTrade } : {}) });
     const r = await fetch(`/api/candles?${q}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(String(r.status));
     return r.json();
@@ -1470,7 +1478,7 @@ export function observeMinis(root, getTrade, { fallback = () => '' } = {}) {
     const key = `${el.dataset.mini}|${instrument}|${fr.tf}|${fr.from}|${fr.to}|${miniVer}`;
     const have = miniQueue.peek(key);
     if (have) { show(el, tr, have); return; }
-    miniQueue.get(key, { skip: () => !el.isConnected, arg: { instrument, from: fr.from, to: fr.to, tf: fr.tf } }).then((resp) => { if (resp) show(el, tr, resp); }, () => show(el, tr, null));
+    miniQueue.get(key, { skip: () => !el.isConnected, arg: { instrument, from: fr.from, to: fr.to, tf: fr.tf, btTrade: tr.btTrade || null } }).then((resp) => { if (resp) show(el, tr, resp); }, () => show(el, tr, null));
   };
   const els = [...root.querySelectorAll('[data-mini]:not(.is-ready)')];
   if (typeof IntersectionObserver === 'undefined') { els.forEach(start); return () => {}; }

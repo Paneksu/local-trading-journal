@@ -35,6 +35,8 @@ const daySec = (d) => Math.floor(Date.parse(`${d}T00:00:00Z`) / 1000);
 const todayIso = () => new Date().toISOString().slice(0, 10);
 // kwoty zawsze z dwoma miejscami po przecinku (124,50 USD), jak w potwierdzeniach kwotą
 const money = (x) => new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+// wydatki dobierania są rzędu 0,005 USD, więc licznik pokazuje do czterech miejsc
+const moneyFine = (x) => new Intl.NumberFormat(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(x);
 const pct = (a, b) => (b > 0 ? Math.max(0, Math.min(100, Math.round((a / b) * 100))) : 0);
 const fmtT = (sec) => new Intl.DateTimeFormat(locale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }).format(new Date(sec * 1000));
 
@@ -48,7 +50,7 @@ export function createZrodla(ctx) {
   const keyMsg = {};
   let removing = null;
   // formularze kredytu i limitów: null | { step: 'edit' | 'confirm', values, msg }
-  let credit = null, limits = null, nqConfirm = false, minConfirm = false, min1Opt = null, money1 = null;
+  let credit = null, limits = null, nqConfirm = false, minConfirm = false, min1Opt = null, abeConfirm = false, abeOpt = null, abeBack = null, money1 = null;
   // final (ocena wyglądu P2-8): w kreatorze koszty, okno 1s NQ, FRED i Finnhub są pod „Więcej (opcjonalne)”; stan rozwinięcia przeżywa przerysowanie
   let wizMore = false;
   // komunikat stanu: błąd jako ostrzeżenie, „Sprawdzam…” jako oczekiwanie, reszta jako sukces (tekst z kropką)
@@ -153,8 +155,9 @@ export function createZrodla(ctx) {
     const st = (i) => (i.state === 'blocked' ? t('zablokowane: {why}', { why: i.reason || '' }) : i.retryAfter ? t('czeka na dane Databento (ok. {at} UTC)', { at: fmtT(i.retryAfter) }) : t('czeka'));
     const items = q.items.slice(0, 5).map((i) => `<li><b>${esc(`${i.instrument} ${i.layer}`)}</b><span>${esc(`${fmtT(i.from)} – ${fmtT(i.to)} UTC`)}</span><span>${esc(st(i))}</span></li>`).join('');
     const head = q.pending + q.blocked ? t('Czeka {p}, zablokowanych {b}.', { p: q.pending, b: q.blocked }) : t('Kolejka jest pusta.');
+    const abeBlocked = q.afterBeBlocked ? `<p class="note sv-warn">${esc(t('Zablokowane pozycje dobierania do wyniku po BE: {n}. Nowe trade\'y dobierają się dalej, a te czekają na decyzję: aby je ponowić, zapisz limity jeszcze raz albo wyłącz i włącz przełącznik.', { n: q.afterBeBlocked }))}</p>` : '';
     return `<p class="sv-sub">${L('Kolejka pobierania')}</p>
-      <p class="note">${esc(head)}${q.message ? ` ${esc(q.message)}` : ''}</p>${items ? `<ul class="sv-q">${items}</ul>` : ''}`;
+      <p class="note">${esc(head)}${q.message ? ` ${esc(q.message)}` : ''}</p>${abeBlocked}${items ? `<ul class="sv-q">${items}</ul>` : ''}`;
   }
   // compact (N6): sam przełącznik okna 1s NQ z potwierdzeniem kosztu, bez nagłówka i kolejki
   function autoHtml({ compact = false } = {}) {
@@ -162,6 +165,7 @@ export function createZrodla(ctx) {
     const on = D().nq1sDaily ?? m.chartNq1sDaily === true;
     // min1Opt: stan wybrany przed odpowiedzią serwera, żeby pole nie mignęło starą wartością
     const on1m = min1Opt ?? D().min1Daily ?? m.chart1mDaily === true;
+    const onAbe = abeOpt ?? D().afterBe ?? m.chartAfterBe === true;
     // bez klucza albo kredytu włączenie niczego nie pobierze: potwierdzenie mówi, czego brakuje
     const needs = !src?.keys?.databento?.configured ? t('Pobieranie ruszy dopiero po zapisaniu klucza Databento.') : !D().credit?.configured ? t('Pobieranie ruszy dopiero po wpisaniu stanu kredytu Databento.') : '';
     const needsHtml = needs ? `<p class="note sv-warn">${esc(needs)}</p>` : '';
@@ -170,6 +174,16 @@ export function createZrodla(ctx) {
     // P57 (3.11.2026): minutówki ES i NQ, stan w config.local.json (chart1mDaily), domyślnie wyłączone; włączenie z potwierdzeniem kosztu
     const conf1m = minConfirm ? `<div class="sv-confirm" role="group" aria-labelledby="sv-1m-c"><p id="sv-1m-c"><b>${L('Włączyć automatyczne pobieranie minutówek ES i NQ?')}</b> ${L('Kolejka pobierze brakujące świece minutowe ES i NQ. Cena to ok. 0,005 USD na dzień na instrument. Przy pierwszym przebiegu nadrobi najwyżej 92 dni, razem z oknami wokół zmiany kontraktu: pierwszy przebieg razem do ok. 0,80 USD. Zawsze w limitach i kredycie.')}</p>${needsHtml}
       <div class="upd-actions"><button type="button" class="btn sm" data-act="zr-1m-ok" data-fk="zr-1m-ok">${L('Włącz (ok. 0,01 USD dziennie)')}</button><button type="button" class="btn ghost sm" data-act="zr-1m-no" data-fk="zr-1m-no">${L('Anuluj')}</button></div></div>` : '';
+    // [U] 04.11.2026 «Dobieraj automatycznie świece 1m», «Wyłącznik, u ciebie włączony»: stan w config.local.json (chartAfterBe), domyślnie wyłączone; włączenie z potwierdzeniem kosztu, wzorem minutówek
+    // [U] 04.11.2026 «Jedna zgoda z wyceną (Recommended)» (opis opcji: „Włączając przełącznik, widzisz szacunkowy koszt zaległości i potwierdzasz raz. Potem dobiera się samo małymi porcjami, zawsze w limitach i kredycie”):
+    // potwierdzenie pokazuje szacunek zaległości, a dopóki liczenie trwa, nie da się włączyć. Liczba nieznana jest nazwana wprost, nie jako 0.
+    const backHtml = abeBack === 'busy' ? `<p class="note" role="status">${L('Liczę dni handlowe bez świec…')}</p>`
+      : !abeBack || abeBack === 'unknown' ? `<p class="note sv-warn">${L('Liczba dni handlowych bez świec jest nieznana, bo trade\'y nie są wczytane albo pytanie się nie udało. Szacunku zaległości tu nie podajemy, a zaległości mogą kosztować więcej niż jeden dzień.')}</p>`
+        : abeBack.days ? `<p class="note">${esc(t('Dni handlowe bez świec: {n}. Szacunkowy koszt zaległości: ok. {usd} USD ({n} × 0,005 USD). To szacunek, bez płatnej wyceny.', { n: abeBack.days, usd: moneyFine(abeBack.usd) }))}</p>`
+          : `<p class="note">${L('Nie ma trade\'ów po BE bez świec, więc szacunek zaległości to 0 USD. Liczone z wczytanych trade\'ów.')}</p>`;
+    const abeOkLabel = abeBack && abeBack !== 'busy' && abeBack !== 'unknown' && abeBack.days ? esc(t('Włącz (zaległości ok. {usd} USD)', { usd: moneyFine(abeBack.usd) })) : L('Włącz dobieranie');
+    const confAbe = abeConfirm ? `<div class="sv-confirm" role="group" aria-labelledby="sv-abe-c"><p id="sv-abe-c"><b>${L('Włączyć dobieranie świec do wyniku po BE?')}</b> ${L('Gdy trade Live albo Paper wybity na BE nie ma świec 1m do końca swojego dnia handlowego, kolejka pobierze je sama, także dla starszych trade\'ów. Cena to ok. 0,005 USD za dzień handlowy na instrument. Trade\'y typu Backtest nigdy niczego nie pobierają.')}</p>${backHtml}<p class="note">${L('Po tej jednej zgodzie dobiera się samo, najwyżej 20 pozycji na przebieg co 5 minut, zawsze w limitach i kredycie.')}</p>${needsHtml}
+      <div class="upd-actions"><button type="button" class="btn sm" data-act="zr-abe-ok" data-fk="zr-abe-ok"${abeBack === 'busy' ? ' disabled' : ''}>${abeOkLabel}</button><button type="button" class="btn ghost sm" data-act="zr-abe-no" data-fk="zr-abe-no">${L('Anuluj')}</button></div></div>` : '';
     if (compact) {
       return `<div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-nq1s" data-fk="ch-nq1s" ${on || nqConfirm ? 'checked' : ''}> ${L('Codziennie pobieraj 1s NQ 9:30–11:00 NY')}</label>
         <p class="note">${L('Sekundowe świece NQ z pierwszych 90 minut sesji Nowego Jorku, każdego dnia. Przydają się do Backtestu na sekundach. Wyłączone, dopóki ich nie włączysz.')}</p>${conf}</div>`;
@@ -180,6 +194,8 @@ export function createZrodla(ctx) {
         <p class="note">${L('Okno sekundowe NQ z pierwszych 90 minut sesji Nowego Jorku każdego dnia (ok. 0,02 USD na dzień, w zwykłych limitach). Nadrabia dni, w których dashboard był wyłączony, najwyżej 7. Ustawienie tylko na tym komputerze.')}</p>${conf}</div>
       <div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-1m" data-fk="ch-1m" ${on1m || minConfirm ? 'checked' : ''}> ${L('Automatycznie pobieraj minutówki ES i NQ')}</label>
         <p class="note">${L('Pobiera brakujące świece minutowe ES i NQ (ok. 0,005 USD na dzień na instrument, w zwykłych limitach i kredycie). Nadrabia najwyżej 92 dni (pierwszy przebieg razem do ok. 0,80 USD), starszą historię pobierzesz importem. Ustawienie tylko na tym komputerze.')}</p>${conf1m}</div>
+      <div class="sp-f"><label class="check"><input type="checkbox" data-act="ch-after-be" data-fk="ch-after-be" ${onAbe || abeConfirm ? 'checked' : ''}> ${L('Dobieraj świece do wyniku po BE (ok. 0,005 USD za dzień)')}</label>
+        <p class="note">${L('Pobiera świece 1m tylko na dni trade\'ów Live i Paper wybitych na BE, gdy dzień handlowy trade\'a już się skończył, a Databento je udostępnił. Starsze trade\'y też, bez limitu 92 dni. Bez tego, a także bez klucza, bez kredytu albo po limicie, wynik po BE pokazuje „brak danych”, a powód podaje podpowiedź przy trade\'zie. Ustawienie tylko na tym komputerze.')} ${esc(t('Wydano dotąd: {usd} USD.', { usd: moneyFine(D().afterBeSpentUsd ?? 0) }))}</p>${confAbe}</div>
       ${queueHtml()}`;
   }
   function importHtml() {
@@ -289,6 +305,23 @@ export function createZrodla(ctx) {
   }
 
   // ---------- dane ----------
+  // szacunek zaległości: bezpłatne pytanie o wyniki wczytanych trade'ów; po odpowiedzi fokus na przycisku, chyba że użytkownik już anulował
+  async function askAbe() {
+    abeConfirm = true;
+    abeBack = 'busy';
+    ctx.rerender();
+    let got = null;
+    try { got = await ctx.opts.afterBeBacklog?.(); } catch { got = null; }
+    if (!abeConfirm) return;
+    abeBack = got || 'unknown';
+    ctx.rerender();
+    root()?.querySelector('[data-fk="zr-abe-ok"]')?.focus();
+  }
+  function setAbe(on) {
+    abeOpt = on;
+    ctx.rerender();
+    Promise.resolve(ctx.opts.onConfig({ chartAfterBe: on })).then(() => loadSources()).finally(() => { abeOpt = null; ctx.rerender(); });
+  }
   function setMin1(on) {
     min1Opt = on;
     ctx.rerender();
@@ -425,6 +458,8 @@ export function createZrodla(ctx) {
       case 'zr-nq-no': nqConfirm = false; ctx.rerender(); root()?.querySelector('[data-fk="ch-nq1s"]')?.focus(); return true;
       case 'zr-1m-ok': minConfirm = false; setMin1(true); return true;
       case 'zr-1m-no': minConfirm = false; ctx.rerender(); root()?.querySelector('[data-fk="ch-1m"]')?.focus(); return true;
+      case 'zr-abe-ok': abeConfirm = false; setAbe(true); return true;
+      case 'zr-abe-no': abeConfirm = false; ctx.rerender(); root()?.querySelector('[data-fk="ch-after-be"]')?.focus(); return true;
       case 'zr-imp-quote': quote(val); return true;
       case 'zr-imp-go': go(val); return true;
       case 'zr-imp-no': imp[val] = null; ctx.rerender(); return true;
@@ -445,6 +480,12 @@ export function createZrodla(ctx) {
       setMin1(false);
       return true;
     }
+    if (ev.target.matches('[data-act="ch-after-be"]')) {
+      if (ev.target.checked) { askAbe(); return true; }
+      abeConfirm = false;
+      setAbe(false);
+      return true;
+    }
     // zmiana instrumentu albo dat unieważnia wycenę (pobranie idzie zawsze za wyceną z tych samych pól)
     const im = /^#?sv-imp(1m|1s)-(from|to)$/.exec(ev.target.id || '');
     if (ev.target.matches('#sv-imp-sym') || im) {
@@ -456,7 +497,7 @@ export function createZrodla(ctx) {
     return false;
   }
   function onEscape() {
-    if (removing || credit || limits || nqConfirm || minConfirm) { removing = null; credit = null; limits = null; nqConfirm = false; minConfirm = false; ctx.rerender(); return true; }
+    if (removing || credit || limits || nqConfirm || minConfirm || abeConfirm) { removing = null; credit = null; limits = null; nqConfirm = false; minConfirm = false; abeConfirm = false; ctx.rerender(); return true; }
     return false;
   }
   return {

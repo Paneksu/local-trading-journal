@@ -71,7 +71,7 @@ export default ({ test, H, assert, ROOT }) => {
     const mixed = m.groups[2];
     assert.deepEqual([mixed.line, mixed.imp, mixed.count], [true, 'low', 2], 'kolor liczy się z pewnych zdarzeń (niepewne czerwone go nie podbija)');
     // całodzienne: etykieta dnia, bez znacznika i linii
-    assert.deepEqual(m.labels.map((l) => [l.day, l.text]), [['2026-11-07', 'OPEX miesięczny · Bank Holiday'], ['2026-11-20', 'OPEX kwartalny (triple witching)']]);
+    assert.deepEqual(m.labels.map((l) => [l.day, l.text]), [['2026-11-07', 'OPEX miesięczny · Bank Holiday · sob 07.11'], ['2026-11-20', 'OPEX kwartalny (triple witching) · pt 20.11']]);
     assert.equal(m.groups.some((x) => x.items.some((e) => e.allDay)), false);
     // przełączniki warstw: wyłączona warstwa nie liczy się wcale
     assert.deepEqual(N.buildNewsModel({ news, prefs: { news: false, newsImp: all } }).groups, []);
@@ -109,7 +109,7 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(m.eGroups.length, 2, 'BMO i AMC; trzy spółki AMC o 16:00 to jeden znacznik');
     assert.deepEqual(m.eGroups.map((g) => [g.count, g.cls]), [[1, 1], [3, 1]]);
     assert.deepEqual(m.eGroups[1].items.map((e) => e.symbol), ['AAPL', 'MSFT', 'F'], 'wewnątrz grupy: klasa, potem ticker');
-    assert.deepEqual(m.labels.map((l) => l.text), ['Wyniki: GE'], 'bez pory: etykieta dnia z tickerami');
+    assert.deepEqual(m.labels.map((l) => l.text), ['Wyniki: GE · pt 30.10'], 'bez pory: etykieta dnia z tickerami i datą');
     const geo = N.newsGeometry(m, xt, { left: 100, right: 960, top: 0, bottom: 300 });
     const [bmo, amc] = geo.marks;
     assert.ok(bmo.x < xt(open) && amc.x >= xt(close) - 0.01, 'BMO przed otwarciem, AMC od zamknięcia');
@@ -133,6 +133,8 @@ export default ({ test, H, assert, ROOT }) => {
     const es = [earn(3040, 'AAPL', 1, 'amc')];
     const labels = [ev(1000, 'Bank Holiday', 'holiday', { kind: 'holiday', allDay: true, day: '2026-11-03' }), ev(1010, 'Monthly OPEX', 'opex', { kind: 'opex', allDay: true, day: '2026-11-03' }), ev(1020, 'Monthly OPEX', 'opex', { kind: 'opex', allDay: true, day: '2026-11-04' })];
     const m = N.buildNewsModel({ news: [...news, ...labels], earn: es, prefs: { news: true, earnings: true, newsImp: { high: true, medium: true, low: true, holiday: true, opex: true }, earnCls: { 1: true } } });
+    // oś testu jest w sekundach z palca: zakres dnia handlowego (rzeczywiste daty) pomijamy, etykiety liczą się wtedy od t0/t1 atrapy; zakres i pasek sprawdza newsy-08
+    for (const l of m.labels) { delete l.r0; delete l.r1; }
     const g = N.newsGeometry(m, xt, box);
     assert.deepEqual(g.lines.map((l) => [l.x, l.imp, l.y1, l.y2]), [[100, 'high', 10, 210], [200, 'medium', 10, 210]], 'linia tylko dla Line i Other (Tent ma godzinę niepewną)');
     const marks = Object.fromEntries(g.marks.map((k) => [k.key, k]));
@@ -140,7 +142,7 @@ export default ({ test, H, assert, ROOT }) => {
     assert.equal(marks['e:3040'].y, 201 - 13, 'earning stojący obok newsa jest podniesiony, żeby się nie nakładały');
     assert.equal(g.labels.length, 2, 'dwa dni = dwie etykiety');
     assert.ok(g.labels[0].y >= box.top + 11 && g.labels[1].y >= box.top + 11);
-    assert.ok(g.hits.length === g.marks.length + g.labels.length && g.hits.filter((h) => h.key.startsWith('n:') || h.key.startsWith('e:')).every((h) => h.w >= 24 && h.h >= 24), 'cel dotykowy znacznika to co najmniej 24 px (WCAG 2.2)');
+    assert.ok(g.hits.length === g.marks.length + g.labels.length + g.bands.length && g.hits.filter((h) => h.key.startsWith('n:') || h.key.startsWith('e:')).every((h) => h.w >= 24 && h.h >= 24), 'cel dotykowy znacznika to co najmniej 24 px (WCAG 2.2)');
     // SVG: kolory tylko jako tokeny motywu
     const svg = N.newsSvg(g);
     assert.ok(/var\(--n-red\)/.test(svg.under) && /var\(--n-orange\)/.test(svg.under) && /stroke-dasharray/.test(svg.under));

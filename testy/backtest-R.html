@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: wykres backtestu z siatką przyszłości (strona robocza)</title>
+<!-- Strona robocza testu backtest-R (testy/backtest-R-strona.mjs), tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/. Sam wykres backtestu (createReplayChart) bez replayu:
+     zmiana interwału z siatką przyszłości (1m -> 1W/1M -> 1m), podążanie za świecą po zoomie kółkiem i po przewinięciu (z siatką i bez niej, w układzie wielu wykresów),
+     czas krzyża w przyszłości, skala ceny. Przegląd kodu 04.11.2026. Wynik: pre#wynik z JSON-em { checks, fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  .h { position: relative; width: 800px; height: 400px; }
+  #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body>
+<div id="h1" class="h bt-plot"></div><div id="h2" class="h bt-plot"></div><div id="h3" class="h bt-plot"></div>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const U = (y, mo, d, h = 0, mi = 0, s = 0) => Date.UTC(y, mo - 1, d, h, mi, s) / 1000;
+try {
+  const LWC = await import('/vendor/lightweight-charts/lightweight-charts.standalone.production.mjs');
+  const { createReplayChart } = await import('/js/bt-wykres.js');
+  const { readColors } = await import('/js/wykres.js');
+  const bar = (t, p = 100) => [t, p, p + 1, p - 1, p + 0.5, 10];
+  const setNews = (on) => localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: on, earnings: false, newsImp: { high: true, medium: true, low: true, holiday: true, opex: true } }));
+  const mk = (id, tf, on) => { setNews(on); const h = document.getElementById(id); h.innerHTML = ''; return createReplayChart(h, { LWC, tf, colors: readColors(h), instrument: 'NQ', getNews: () => [] }); };
+  const last = U(2026, 11, 18, 15);
+  const b1 = []; for (let i = 400; i >= 0; i--) b1.push(bar(last - i * 60));
+  const lastX = (c) => { const n = c.bars().length, x = c.chart.timeScale().timeToCoordinate(c.bars()[n - 1][0]); return x == null ? null : Math.round(x); };
+  const range = (c) => c.chart.timeScale().getVisibleLogicalRange();
+
+  const stop = new URLSearchParams(location.search).get('stop'); // zrzuty: 1W (wykres po zmianie 1m -> 1W) albo multi (trzy wykresy po zoomie i krokach)
+  main: {
+  // ---- blokada 1: zmiana interwału z siatką przyszłości (1m -> 1W / 1M -> 1m) ----
+  {
+    const c = mk('h1', '1m', true);
+    c.apply({ kind: 'reset', bars: b1 }); await sleep(500);
+    rec('interwał', c.future().length > 1000, `1m ma siatkę (${c.future().length})`);
+    for (const [tf, secs, n] of [['1W', 604800, 80], ['1M', 2592000, 24]]) {
+      c.setTf(tf);
+      const w = []; for (let i = n; i >= 0; i--) w.push(bar(U(2026, 11, 15, 23) - i * secs));
+      c.apply({ kind: 'reset', bars: w }); await sleep(900);
+      const r = range(c), nn = c.bars().length, lx = lastX(c);
+      rec('interwał', r && r.to >= nn - 1 && r.to <= nn - 1 + 8 && lx != null && lx > 0 && lx < c.chart.timeScale().width(), `${tf}: ostatnia świeca w widoku (prawy brzeg ${r?.to.toFixed(1)} przy ${nn} świecach, x ${lx})`);
+      rec('interwał', c.chart.timeScale().options().rightOffset === 6, `${tf}: rightOffset wrócił do marginesu (${c.chart.timeScale().options().rightOffset})`);
+      if (stop === '1W' && tf === '1W') break main;
+    }
+    c.setTf('1m'); c.apply({ kind: 'reset', bars: b1 }); await sleep(600);
+    const r = range(c);
+    rec('interwał', r && Math.abs(r.to - (b1.length - 1 + 6)) <= 1.5, `powrót na 1m: widok na „teraz” (${r?.to.toFixed(1)})`);
+    c.destroy();
+  }
+
+  // ---- blokada 2: podążanie po zoomie i po przewinięciu, z siatką i bez, w układzie wielu wykresów ----
+  {
+    const cs = [mk('h1', '1m', true), mk('h2', '1m', true), mk('h3', '1m', false)];
+    let t = last;
+    for (const c of cs) c.apply({ kind: 'reset', bars: b1 });
+    await sleep(700);
+    rec('podążanie', cs[0].future().length > 1000 && cs[2].future().length === 0, 'dwa wykresy z siatką i jeden bez (układ wielu wykresów)');
+    const wheel = async (dy, n) => { for (const c of cs) { const cv = [...c.chart.chartElement().querySelectorAll('canvas')].sort((a, b) => b.width - a.width)[0]; for (let i = 0; i < n; i++) { cv.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, clientX: 300, clientY: 200, bubbles: true, cancelable: true })); await sleep(40); } } await sleep(300); };
+    const steps = async (n) => { for (let i = 0; i < n; i++) { t += 60; for (const c of cs) c.apply({ kind: 'append', bars: [bar(t)] }); await sleep(30); } await sleep(300); };
+    const same = (tag, what) => { const [a, b, z] = cs.map(lastX); rec(tag, a != null && a === z && b === z, `${what}: ostatnia świeca w tym samym miejscu z siatką (${a}, ${b}) i bez (${z})`); };
+    await wheel(120, 5); same('podążanie', 'po oddaleniu kółkiem');
+    if (stop === 'multi') { await steps(60); break main; }
+    const before = lastX(cs[2]); await steps(60); same('podążanie', 'po oddaleniu i 60 krokach');
+    rec('podążanie', lastX(cs[2]) === before, `bez siatki odstęp też stoi (${before} → ${lastX(cs[2])})`);
+    await wheel(-120, 6); same('podążanie', 'po przybliżeniu kółkiem'); await steps(40); same('podążanie', 'po przybliżeniu i 40 krokach');
+    for (const c of cs) { const r = range(c); c.chart.timeScale().setVisibleLogicalRange({ from: r.from - 4, to: r.to - 4 }); }
+    await sleep(300); same('podążanie', 'po przewinięciu o 4 świece w lewo'); await steps(30); same('podążanie', 'po przewinięciu o 4 i 30 krokach');
+    // ostatnia świeca poza widokiem (przeszłość): widok stoi na indeksach
+    for (const c of cs) { const r = range(c); c.chart.timeScale().setVisibleLogicalRange({ from: r.from - 300, to: r.to - 300 }); }
+    await sleep(300);
+    const rb = cs.map(range); await steps(20); const ra = cs.map(range);
+    rec('podążanie', rb.every((r, i) => Math.abs(r.to - ra[i].to) < 0.01), 'widok w przeszłości stoi w miejscu po krokach (wszystkie wykresy)');
+    // skala ceny: auto-skala z samych świec (siatka nie ma cen)
+    const pr = cs.map((c) => [c.series.coordinateToPrice(5), c.series.coordinateToPrice(380)]);
+    rec('skala', Math.abs(pr[0][0] - pr[2][0]) < 1e-6 && Math.abs(pr[0][1] - pr[2][1]) < 1e-6, `zakres ceny z siatką = bez siatki (${pr[0][0].toFixed(3)}..${pr[0][1].toFixed(3)} vs ${pr[2][0].toFixed(3)}..${pr[2][1].toFixed(3)})`);
+    for (const c of cs) c.destroy();
+  }
+
+  // ---- dwa zdarzenia w jednej klatce (przegląd, ostatnia runda): reset po resecie i krok po resecie nie wypychają widoku w przyszłość ----
+  {
+    const c = mk('h1', '1m', true);
+    c.apply({ kind: 'reset', bars: b1 }); c.apply({ kind: 'reset', bars: b1 }); // bez await: drugi reset w klatce, w której pierwszy czeka na ustalenie osi
+    await sleep(700);
+    let r = range(c), nn = c.bars().length, lx = lastX(c);
+    rec('klatka', r && Math.abs(r.to - (nn - 1 + 6)) <= 1.5 && lx != null && lx > 0 && lx < c.chart.timeScale().width(), `reset po resecie w jednej klatce: widok na „teraz” (prawy brzeg ${r?.to.toFixed(1)} przy ${nn} świecach, x ${lx})`);
+    c.apply({ kind: 'reset', bars: b1 }); c.apply({ kind: 'append', bars: [bar(last + 60)] }); c.apply({ kind: 'append', bars: [bar(last + 120)] });
+    await sleep(700);
+    r = range(c); nn = c.bars().length; lx = lastX(c);
+    rec('klatka', r && Math.abs(r.to - (nn - 1 + 6)) <= 1.5 && lx != null && lx > 0 && lx < c.chart.timeScale().width(), `reset i dwa kroki w jednej klatce: widok na „teraz” (prawy brzeg ${r?.to.toFixed(1)} przy ${nn} świecach, x ${lx})`);
+    c.destroy();
+  }
+
+  // ---- krzyż w przyszłości nie zwraca czasu (zachowanie, nie regex po źródle) ----
+  {
+    const seen = [];
+    setNews(true);
+    const h = document.getElementById('h1'); h.innerHTML = '';
+    const c = createReplayChart(h, { LWC, tf: '1m', colors: readColors(h), instrument: 'NQ', getNews: () => [], onCrosshair: (tm) => seen.push(tm) });
+    c.apply({ kind: 'reset', bars: b1 }); await sleep(600);
+    // krzyż prawdziwym ruchem wskaźnika nad polem wykresu: najpierw nad pustym miejscem (przyszłość), potem nad ostatnią świecą
+    const ts = c.chart.timeScale(), pane = [...c.chart.chartElement().querySelectorAll('canvas')].sort((p, q) => q.width - p.width)[0], rc = pane.getBoundingClientRect();
+    const fut = c.future()[2], real = b1[b1.length - 5][0];
+    const move = async (tm) => {
+      const x = rc.left + ts.timeToCoordinate(tm), y = rc.top + 150, el = document.elementFromPoint(x, y) || pane;
+      for (const ty of ['mouseenter', 'mousemove']) el.dispatchEvent(new MouseEvent(ty, { clientX: x, clientY: y, bubbles: true }));
+      for (const ty of ['pointerenter', 'pointermove']) el.dispatchEvent(new PointerEvent(ty, { pointerType: 'mouse', clientX: x, clientY: y, bubbles: true }));
+      await sleep(150);
+    };
+    seen.length = 0; await move(fut); const afterFuture = [...seen]; seen.length = 0;
+    await move(real);
+    rec('krzyż', afterFuture.length > 0 && afterFuture.every((x) => x === null), `krzyż w przyszłości: czas null (${JSON.stringify(afterFuture)})`);
+    rec('krzyż', seen.includes(real), `krzyż na świecy: czas świecy (${JSON.stringify(seen)})`);
+    c.destroy();
+  }
+  }
+  out.textContent = JSON.stringify({ checks, fatal: null });
+} catch (e) { out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) }); }
+</script>
+</body>
+</html>

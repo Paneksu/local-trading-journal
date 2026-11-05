@@ -47,6 +47,9 @@ try {
   await RP.ready;
   info.sessionId = doc.id;
   const scr = () => document.querySelector('.bt-screen');
+  // Wysyłka w toku: sendNotion zwraca wtedy null i odkłada prośbę do kolejki. Przed „Zapisz do Notion”, którego wynik test sprawdza, czekamy warunkiem na koniec wysyłki
+  // (aria-busy na przycisku, kolejka trzyma go zajętym do końca), a nie stałym czasem. Gdy przycisk nie zwalnia się albo druga wysyłka nie rusza, wynik jest null i sprawdzenie pada.
+  const notionIdle = () => until(() => scr()?.querySelector('[data-bt="notion"]')?.getAttribute('aria-busy') === 'false', 15000);
   const P = (sel) => scr().querySelector(`.bt-ord ${sel}`);
   const setF = (n, v) => { const el = P(`[name="${n}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); };
   const pos = () => RP.book().positions.NQ;
@@ -110,6 +113,7 @@ try {
     info.firstSl = first;
     info.trades = [{ id: tr.id, sl0: tr.sl0, r: tr.r, pnl: tr.pnl, tp: tr.tp, be: tr.be }];
     rec('przebieg', !pos() && tr && tr.sl0 === first && Number.isFinite(tr.r), `trade ${tr?.id}: sl0 = pierwszy SL ${tr?.sl0}, R ${tr?.r}, wyjść ${tr?.exits?.length}`);
+    await notionIdle();
     const sent = await RP.sendNotion({ all: true });
     rec('przebieg', !!sent && !(sent.failed || []).length, `wysyłka do atrapy Notion: wysłano ${sent?.sent}, błędów ${(sent?.failed || []).length}`);
     info.sentIds = [tr.id];

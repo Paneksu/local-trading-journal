@@ -32,6 +32,7 @@
 <pre id="wynik">…</pre>
 <script type="module">
 import { setDayRule, setLang, isOpen } from '/js/wybor-daty.js';
+import { todayKey } from '/js/format.js';
 const out = document.getElementById('wynik');
 const qs = new URLSearchParams(location.search);
 if (qs.get('theme') === 'platinum') document.documentElement.setAttribute('data-theme', 'platinum');
@@ -173,7 +174,8 @@ await section('zakres', async () => {
   // pole opcjonalne: „Wyczyść”, „Dziś” bez zakresu
   exit.focus(); key(exit, 'ArrowDown'); await until(() => pop());
   reset(); pop().querySelector('[data-wa="today"]').click();
-  const td = new Date(); const tk = `${td.getFullYear()}-${String(td.getMonth() + 1).padStart(2, '0')}-${String(td.getDate()).padStart(2, '0')}`;
+  // „dziś” liczone tą samą funkcją co aplikacja (strefa aplikacji, a nie strefa przeglądarki): inaczej test czerwienieje między północą lokalną a północą w tej strefie
+  const tk = todayKey();
   rec('zakres', exit.value === tk && ev.change.length === 1, `„Dziś”: ${exit.value}`);
   key(exit, 'ArrowDown'); await until(() => pop());
   reset(); pop().querySelector('[data-wa="clear"]').click();

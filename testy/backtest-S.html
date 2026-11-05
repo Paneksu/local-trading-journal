@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: zmiana interwału z siatką i licznik w replayu (strona robocza)</title>
+<!-- Strona robocza testu backtest-S (testy/backtest-S-strona.mjs), tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/. Prawdziwy replay na świecach syntetycznych
+     z włączonymi newsami (siatka przyszłości): ścieżka użytkownika zmiany interwału (przyciski 1h, 5s, 1m i pole „Własny”), licznik 5s poza oknem 1s (secEff) i „Brak notowań”
+     w dziurze danych 1m. Przegląd kodu 04.11.2026, ostatnia runda. Wynik: pre#wynik z JSON-em { checks, fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+try {
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: true, earnings: false, newsImp: { high: true, medium: true, low: true, holiday: true, opex: true } })); } catch { /* bez localStorage */ }
+  try { for (const k of ['thq.bt.open.v1', 'thq.bt.dock.v1', 'thq.bt.ord.v1', 'thq.bt.jump.v1', 'thq.bt.layout.v1']) localStorage.removeItem(k); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja S',
+    def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'pct', value: 1 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] }, now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  const RP = openReplay(document.body, { sessionId: doc.id, client, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const ch = () => RP.chart();
+  const cd = () => scr().querySelector('.bt-cd')?.textContent || '';
+  const cdTitle = () => scr().querySelector('.bt-cd')?.title || '';
+  const secs = (s) => { const m = /(\d+):(\d\d)$/.exec(s); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const lastX = () => { const c = ch(), n = c.bars().length, x = c.chart.timeScale().timeToCoordinate(c.bars()[n - 1][0]); return x == null ? null : Math.round(x); };
+  const range = () => ch().chart.timeScale().getVisibleLogicalRange();
+  const W = () => ch().chart.timeScale().width();
+
+  if (new URLSearchParams(location.search).get('gaps') === '1') {
+    // ---- luki w danych 1s: co trzeci sekunda bez świecy; każdy przeskoczony punkt siatki to przebudowa siatki (do ok. 100 tys. punktów) ----
+    const pct = (xs, p) => { const q = [...xs].sort((x, y) => x - y); return q[Math.min(q.length - 1, Math.floor(q.length * p))]; };
+    await RP.goTo(nyAt('2024-03-12', '09:40')); await sleep(900);
+    { const f = scr().querySelector('.bt-tfadd'); f.querySelector('input').value = '1s'; const b = scr().querySelector('.bt-tfs [data-tf="1s"]'); if (b) b.click(); else f.requestSubmit(); }
+    await sleep(1500);
+    rec('luki', ch().future().length > 5000, `siatka 1s przy lukach istnieje (gęsty początek i rzadki ogon do końca okna (${ch().future().length} punktów; interwał ${scr().querySelector('.bt-tfs [aria-pressed="true"]')?.dataset.tf}, ostatnie świece ${ch().bars().slice(-4).map((b) => b[0] % 100).join(',')}, kursor ${RP.cursor() % 100})`);
+    globalThis.__btStats = {};
+    const xs = [];
+    for (let i = 0; i < 150; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const t0 = performance.now(); RP.step(1); const t1 = performance.now();
+      await new Promise((r) => requestAnimationFrame((ts) => { xs.push((t1 - t0) + Math.max(0, performance.now() - ts)); r(); }));
+    }
+    const reb = globalThis.__btStats.futSetData || 0, p95 = pct(xs, 0.95), mx = Math.max(...xs);
+    rec("luki", true, `150 kroków 1s przy lukach: p95 ${p95.toFixed(1)} ms, max ${mx.toFixed(1)} ms, przebudowy siatki ${reb}, punktów siatki ${ch().future().length}`);
+    rec('luki', p95 <= 16, `p95 kroku przy lukach ≤ 16 ms (${p95.toFixed(1)} ms, przebudowy ${reb})`);
+    out.textContent = JSON.stringify({ checks, fatal: null });
+    throw new Error('__koniec');
+  }
+
+  // ---- ścieżka użytkownika: zmiana interwału z siatką po obu stronach (1m → 1h → 1m → 5s → własny 7m → 1m), ostatnia świeca zostaje w widoku, siatka istnieje ----
+  await RP.goTo(nyAt('2024-03-12', '09:40')); await sleep(900);
+  rec('interwał', ch().future().length > 1000, `1m w oknie 1s ma siatkę przyszłości (${ch().future().length} punktów)`);
+  const shot = async (tag, label) => {
+    await sleep(900);
+    const r = range(), n = ch().bars().length, lx = lastX();
+    rec('interwał', r && r.to >= n - 1 && r.to <= n - 1 + 40 && lx != null && lx > 0 && lx < W(), `${label}: ostatnia świeca w widoku (prawy brzeg ${r?.to.toFixed(1)} przy ${n} świecach, x ${lx} z ${Math.round(W())})`);
+    rec('interwał', ch().future().length > 0, `${label}: siatka przyszłości istnieje (${ch().future().length})`);
+    rec('interwał', ch().chart.timeScale().options().rightOffset <= 6, `${label}: rightOffset wyliczony od końca siatki (${ch().chart.timeScale().options().rightOffset})`);
+  };
+  // przycisk ulubionego, a gdy go nie ma (domyślnie tylko część interwałów), pole „Własny” jak użytkownik
+  const click = (tf) => { const b = scr().querySelector(`.bt-tfs [data-tf="${tf}"]`); if (b) { b.click(); return; } const fm = scr().querySelector('.bt-tfadd'); fm.querySelector('input').value = tf; fm.requestSubmit(); };
+  const active = () => scr().querySelector('.bt-tfs [aria-pressed="true"]')?.dataset.tf;
+  for (const tf of ['1h', '1m', '5s']) { click(tf); await shot('interwał', `→${tf}`); rec('interwał', active() === tf, `aktywny interwał ${tf} (jest ${active()})`); }
+  // własny interwał przez pole „Własny” (7m), potem znów 1m
+  const form = scr().querySelector('.bt-tfadd'), inp = form.querySelector('input');
+  inp.value = '7m'; form.requestSubmit(); await shot('interwał', 'własny 7m');
+  rec('interwał', active() === '7m', `aktywny interwał własny 7m (jest ${active()})`);
+  click('1m'); await shot('interwał', 'powrót na 1m'); rec('interwał', active() === '1m', `aktywny interwał 1m (jest ${active()})`);
+  // kroki po zmianach: widok dalej podąża (ostatnia świeca w tym samym miejscu)
+  const x0 = lastX();
+  await RP.step(1); await RP.step(1); await RP.step(1); await sleep(300);
+  rec('interwał', Math.abs(lastX() - x0) <= 1.5, `po zmianach interwału i 3 krokach ostatnia świeca stoi (${x0} → ${lastX()})`);
+
+  // ---- licznik 5s: w oknie 1s odstęp 5 s, poza oknem (12:00:20 NY, świece minutowe) liczony z faktycznych świec: do 60 s ----
+  click('5s'); await RP.goTo(nyAt('2024-03-12', '09:40') + 12); await sleep(1500);
+  rec('licznik', active() === '5s' && secs(cd()) != null && secs(cd()) <= 5, `5s w oknie 1s: do końca świecy ≤ 5 s («${cd()}»)`);
+  await RP.goTo(nyAt('2024-03-12', '12:30') + 20); await sleep(700);
+  rec('licznik', secs(cd()) === 40, `5s poza oknem 1s (12:30:20 NY): świeca minutowa, 40 s do końca («${cd()}»)`);
+  click('1m'); await sleep(400);
+  rec('licznik', secs(cd()) === 40, `1m w tym samym miejscu: 40 s («${cd()}»)`);
+
+  // ---- „Brak notowań”: dziura 12:00–12:20 NY w danych 1m (przygotowana przez test): pod kursorem sesja, wykres nie ma świecy ----
+  await RP.goTo(nyAt('2024-03-12', '12:10')); await sleep(700);
+  rec('brak', cd() === 'Brak notowań' && /Brak notowań/.test(cdTitle()), `kursor w dziurze danych (12:10 NY): «${cd()}» (title «${cdTitle()}»)`);
+  rec('brak', secs(cd()) == null, 'bez odliczania i bez ujemnego czasu w dziurze');
+  await RP.goTo(nyAt('2024-03-12', '12:40')); await sleep(700);
+  rec('brak', /^Do zamknięcia świecy \d\d:\d\d$/.test(cd()), `po dziurze licznik wraca («${cd()}»)`);
+  await RP.goTo(nyAt('2024-03-12', '11:30')); await sleep(700);
+  rec('brak', /^Do zamknięcia świecy \d\d:\d\d$/.test(cd()), `przed dziurą normalne odliczanie («${cd()}»)`);
+  out.textContent = JSON.stringify({ checks, fatal: null });
+} catch (e) { if (e && e.message === '__koniec') { /* tryb luk zakończony */ } else out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) }); }
+</script>
+</body>
+</html>

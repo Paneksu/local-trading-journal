@@ -68,6 +68,13 @@ export function parseBtSession(s) {
   return m ? { name: m[1].trim(), sessionId: m[2], tradeId: m[3] } : null;
 }
 
+// Klucz trade'a typu Backtest z lokalną sesją, „<sessionId>/<tradeId>”; pozostałe trade'y: null. Niesie go zapytanie o świece, żeby serwer przyciął je do granicy sesji.
+export function btTradeKey(x) {
+  if (!x || x.typ !== 'Backtest') return null;
+  const m = parseBtSession(x.btSession);
+  return m ? `${m.sessionId}/${m.tradeId}` : null;
+}
+
 export function normalizeKonta(rows) {
   return rows.map((r) => ({
     id: r._id,

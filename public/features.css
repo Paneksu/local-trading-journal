@@ -918,6 +918,9 @@ button.cell .cv, button.cell .cn { width: 100%; }
 /* newsy makro USD i earningsy (1.4.0): nakładki na wykresie, karty „Dzisiaj” i „Wyniki spółek”, sekcje Ustawień. Kolory tylko z tokenów (--n-red, --n-orange, --n-yellow, --n-blue, --fg-2). */
 .swc-plot { position: relative; }
 svg .nwl { fill: none; stroke-width: 1; stroke-opacity: .8; }
+/* pasek zakresu dnia handlowego przy osi czasu (04.11.2026): domyślnie niewidoczny, po najechaniu na napis dnia bardzo delikatny (przygaszony kolor wagi); bez animacji, więc reduced-motion nic nie zmienia */
+svg .nwb { stroke: none; shape-rendering: crispEdges; opacity: 0; pointer-events: none; }
+svg .nwb.on { opacity: .55; }
 svg .nwm { stroke-width: 1.4; stroke-linejoin: round; }
 svg .nwc, svg .nwd { font-size: 10.5px; font-family: var(--font); font-variant-numeric: tabular-nums; }
 svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float)); stroke-width: 3px; stroke-linejoin: round; }
@@ -931,6 +934,8 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .nws-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
 .nws-hit { position: absolute; margin: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; pointer-events: auto; cursor: pointer; }
 .nws-hit:focus-visible { outline: 2px solid var(--fg); outline-offset: 0; }
+/* aktywne narzędzie rysowania (wykres backtestu, 04.11.2026): klik w napis dnia lub znacznik ma postawić rysunek, więc przyciski nie przechwytują wskaźnika */
+.nws-layer.nws-off .nws-hit { pointer-events: none; }
 .nws-tip { min-width: 170px; max-width: min(340px, calc(100% - 8px)); z-index: 6; font-size: var(--t-sm); }
 .nws-tip .nws-row { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
 .nws-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; transform: translateY(-1px); }
@@ -1265,9 +1270,9 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-st-card { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
 .bt-st-card p { margin: 0; }
 .bt-st-tw { overflow-x: auto; }
-.bt-st-tab td, .bt-st-tab th { padding-right: 14px; }
-.bt-st-tab tr.bt-few td, .bt-st-tab td.bt-few { color: var(--fg-2); }
-.bt-st-tab tr.bt-few td.pos, .bt-st-tab tr.bt-few td.neg, .bt-st-tab td.bt-few.pos, .bt-st-tab td.bt-few.neg { color: var(--fg-2); }
+.bt-st-tab td, .bt-st-tab th, .abe-tab td, .abe-tab th { padding-right: 14px; }
+.bt-st-tab tr.bt-few td, .bt-st-tab td.bt-few, .abe-tab tr.bt-few td, .abe-tab td.bt-few { color: var(--fg-2); }
+.bt-st-tab tr.bt-few td.pos, .bt-st-tab tr.bt-few td.neg, .bt-st-tab td.bt-few.pos, .bt-st-tab td.bt-few.neg, .abe-tab tr.bt-few td.pos, .abe-tab tr.bt-few td.neg, .abe-tab td.bt-few.pos, .abe-tab td.bt-few.neg { color: var(--fg-2); }
 .bt-few-tag { white-space: nowrap; margin-left: 6px; }
 .bt-st-verdict { font-size: var(--t-sm); color: var(--fg); }
 .bt-st-kvs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; margin: 0; }
@@ -1279,20 +1284,20 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-st-eq, .bt-st-mae { min-width: 0; position: relative; }
 @media (max-width: 640px) {
   .bt-st-card .sec-h, .bt-view > .sec > .sec-h { align-items: flex-start; }
-  .bt-st-tab th { letter-spacing: .04em; }
+  .bt-st-tab th, .abe-tab th { letter-spacing: .04em; }
 }
 .bt-view .seg { flex-wrap: wrap; max-width: 100%; }
 .bt-st-tiles, .bt-st-ex { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 @media (max-width: 640px) {
   /* tabele statystyk zostają tabelami (przewijane w ramce), bez przebudowy listy sesji na karty */
-  .bt-st-tab { display: table; width: max-content; min-width: 100%; }
-  .bt-st-tab thead { display: table-header-group; }
-  .bt-st-tab tbody { display: table-row-group; }
-  .bt-st-tab tr { display: table-row; padding: 0; }
-  .bt-st-tab th, .bt-st-tab td { white-space: nowrap; }
+  .bt-st-tab, .abe-tab { display: table; width: max-content; min-width: 100%; }
+  .bt-st-tab thead, .abe-tab thead { display: table-header-group; }
+  .bt-st-tab tbody, .abe-tab tbody { display: table-row-group; }
+  .bt-st-tab tr, .abe-tab tr { display: table-row; padding: 0; }
+  .bt-st-tab th, .bt-st-tab td, .abe-tab th, .abe-tab td { white-space: nowrap; }
   /* H2 (ocena wyglądu #4): reguła listy sesji (.bt-tab td { display: block }) rozsypywała tabelę statystyk; komórki wracają do tabeli, ramka .bt-st-tw przewija */
-  .bt-st-tab th, .bt-st-tab td { display: table-cell; padding: 6px 14px 6px 0; border-top: 1px solid var(--line); }
-  .bt-st-tab thead th { border-top: 0; }
+  .bt-st-tab th, .bt-st-tab td, .abe-tab th, .abe-tab td { display: table-cell; padding: 6px 14px 6px 0; border-top: 1px solid var(--line); }
+  .bt-st-tab thead th, .abe-tab thead th { border-top: 0; }
 }
 
 /* H2 #25: w kaflach „Wykonanie” etykieta zajmuje wolne miejsce, więc liczby stoją w jednej linii także przy etykiecie w dwóch wierszach */
@@ -1372,6 +1377,11 @@ svg .nwc, svg .nwd { paint-order: stroke; stroke: var(--chart-bg, var(--float));
 .bt-when { display: inline-flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
 .bt-clock { font-size: var(--t-md); font-weight: 700; letter-spacing: .01em; }
 .bt-clock-ny { font-size: var(--t-sm); color: var(--fg-2); }
+.bt-clock-tz { font-size: var(--t-xs); color: var(--fg-2); }
+.bt-clock-tz:empty { display: none; }
+/* odliczanie do zamknięcia świecy (04.11.2026): w nagłówku wykresu obok interwału, cyfry tabelaryczne, bez animacji */
+.bt-cd { margin-left: 4px; font-size: var(--t-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bt-cd:empty { display: none; }
 .bt-clock-ny:empty { display: none; }
 .bt-stats { gap: 6px 16px; }
 .bt-acct { display: inline-flex; flex-wrap: nowrap; gap: 0; align-items: stretch; }
@@ -2306,3 +2316,18 @@ html.sv-open .tabbar { visibility: hidden; }
 .sv-tz-list .sp-sel { min-width: 11em; }
 .sv-tz-bulk { align-items: center; flex-wrap: wrap; gap: 6px; }
 .sv-tz-cnt { margin: 6px 0 !important; font-weight: 600; }
+
+/* wynik po BE (po-be-widok.js): kropka w kolorze i tekst, bez podkładki pod tekstem; tp (klasa abe-be, kolor BE) = BE kosztowało zysk, sl (abe-pos) = BE ochroniło przed stratą, kwota R zawsze w kolorze neutralnym (abe-r) */
+.abe { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.abe::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.abe-be { color: var(--be); }
+.abe-r { color: var(--fg); }
+.abe-pos { color: var(--profit); }
+.abe-muted { color: var(--fg-2); }
+td.abe-c, th.abe-h { padding-right: 12px; white-space: nowrap; }
+.lb-facts > .abe-fact { grid-column: 1 / -1; }
+.abe-sec .abe-tiles { margin-top: 10px; }
+.abe-sec .abe-note, .abe-sec .abe-counts { margin: 8px 0 0; }
+.abe-sec .abe-err { color: var(--loss); }
+.abe-sec .abe-tab { margin-top: 12px; }
+.tc3 [data-abe-card] .abe { font-size: inherit; }

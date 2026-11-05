@@ -19,6 +19,7 @@ import { createNews } from './lib/news-service.mjs';
 import { createReplayRange, parseFindQuery } from './lib/backtest-range.mjs';
 import { createBacktestStore, BacktestError, SESSION_BODY_LIMIT, SESSION_ID_RE } from './lib/backtest-store.mjs';
 import { createBacktestSync, MARKER_RE } from './lib/backtest-sync.mjs';
+import { createAfterBe, readTradeCandles } from './lib/po-be.mjs';
 import { createDayIndex } from './lib/backtest-index.mjs';
 import { NewsError } from './lib/news.mjs';
 import { normSymbol } from './lib/earnings.mjs';
@@ -286,6 +287,10 @@ function startUpdate() {
 const replayRange = createReplayRange({ candles, news, earnings, baseDir: DATA_DIR, t });
 // Backtest (1.5.0, pakiet C1): sesje w CONFIG_DIR/chart-data/backtest/sessions (źródło prawdy stanu sesji), pula dni z indeksu pokrycia świec.
 const btStore = createBacktestStore({ baseDir: DATA_DIR, t });
+// po-be-02 (04.11.2026): wynik po BE liczy serwer (granica sesji z pliku sesji, pamięć podręczna w chart-data/after-be-cache.json)
+// [U] 04.11.2026 «Dobieraj automatycznie świece 1m», «Wyłącznik, u ciebie włączony»: wantWindows (tylko Live i Paper) dokłada okna do kolejki; przełącznik i strażników pilnuje lib/candles.mjs
+// Przy kopii katalogu danych wynik dalej się liczy (odczyt), ale nic nie dopisujemy do kolejki starego katalogu, jak queueTick; następne pytanie po kopii dołoży pozycję.
+const afterBe = createAfterBe({ btStore, replayRange, candles, baseDir: DATA_DIR, t, wantWindows: (list) => (mover.writesBlocked() ? undefined : candles.wantAfterBeWindows(list)), heldWindows: (list) => candles.afterBeHeld(list), writesBlocked: () => mover.writesBlocked() });
 // E2: wysyłka trade'ów sesji do bazy Trade'y (typ Backtest), idempotentna po znaczniku w polu „Sesja backtestu”
 const btSync = createBacktestSync({ store: btStore, writer, drawings, data, t });
 const btIndex = createDayIndex({ candles, news, earnings, baseDir: DATA_DIR, t });
@@ -356,7 +361,7 @@ function sendError(res, e) {
 function meta() {
   return {
     ...versionState(), lang: config.lang, version: APP_VERSION, schemaVersion: SCHEMA_VERSION, installedSchema: config.schemaVersion || 0,
-    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily === true, chart1mDaily: config.chart1mDaily === true, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
+    updateCheck: config.updateCheck !== false, notionUrl: S.rootUrl, onboarded: config.onboarded !== false, hasDatabentoKey: candles.hasKey(), hasFredKey: news.hasKey(), hasFinnhubKey: earnings.hasKey(), chartCostLimitUsd: candles.limitUsd(), chartDailyLimitUsd: candles.dailyLimitUsd(), chartSpentTodayUsd: candles.spentToday(), chartCredit: candles.credit(), chartNq1sDaily: config.chartNq1sDaily === true, chart1mDaily: config.chart1mDaily === true, chartAfterBe: config.chartAfterBe === true, syncEnabled: config.syncEnabled !== false, deviceId: config.deviceId, deviceName: config.deviceName,
   };
 }
 
@@ -378,7 +383,9 @@ const ACTIONS = {
     // P57 (3.11.2026): automatyczne minutówki ES i NQ; tak samo urządzenie i pieniądze, domyślnie wyłączone
     if (typeof body.chart1mDaily === 'boolean') config.chart1mDaily = body.chart1mDaily;
     // P57, przegląd (4.11.2026): wyłączenie automatu zatrzymuje wydawanie od razu, więc jego pozycje znikają z kolejki (okna trade'ów zostają)
-    if (body.chart1mDaily === false || body.chartNq1sDaily === false) candles.dropAutomatic();
+    // [U] 04.11.2026 «Wyłącznik, u ciebie włączony»: dobieranie świec do wyniku po BE, urządzenie i pieniądze, domyślnie wyłączone; włącza je tylko jawne true z Ustawień
+    if (typeof body.chartAfterBe === 'boolean') config.chartAfterBe = body.chartAfterBe;
+    if (body.chart1mDaily === false || body.chartNq1sDaily === false || body.chartAfterBe === false) candles.dropAutomatic();
     if (body.lang === 'pl' || body.lang === 'en') { config.lang = body.lang; setLang(body.lang); }
     persistConfig();
     return { ok: true, ...meta() };
@@ -498,6 +505,8 @@ function runSetupJob({ pageId, lang, demo }) {
 }
 Object.assign(ACTIONS, {
   '/api/candles/quote': (body) => candles.quote(body ?? {}),
+  // po-be-02: POST (nie GET), bo lista pozycji jest długa; chroniona jak zapis (guardWrite), odpowiedź { results } to wyłącznie Result, bez świec i cen
+  '/api/after-be': (body) => afterBe.resolve(body?.items),
   // N3: w trakcie przenoszenia katalogu danych nic nie dopisuje świec do starego katalogu (moveBusy rzuca 409)
   '/api/candles/fetch': (body) => moveBusy() || candles.fetchDays(body ?? {}),
   '/api/candles/key': (body) => candles.setKey(body ?? {}),
@@ -561,7 +570,7 @@ function sourcesState() {
   return {
     keys: Object.fromEntries(Object.entries(SOURCE_KEYS).map(([s, k]) => [s, { configured: !!env[k], hint: keyHint(env[k]) }])),
     databento: {
-      limitUsd: candles.limitUsd(), dailyLimitUsd: candles.dailyLimitUsd(), spentTodayUsd: candles.spentToday(), credit: candles.credit(), nq1sDaily: config.chartNq1sDaily === true, min1Daily: config.chart1mDaily === true,
+      limitUsd: candles.limitUsd(), dailyLimitUsd: candles.dailyLimitUsd(), spentTodayUsd: candles.spentToday(), credit: candles.credit(), nq1sDaily: config.chartNq1sDaily === true, min1Daily: config.chart1mDaily === true, afterBe: config.chartAfterBe === true, afterBeSpentUsd: candles.afterBeSpent(), afterBeReadyTo: candles.readyUntil(),
       // [U] 31.10.2026 «Przyjmuję wszystkie» (decyzja 2: bez podnoszenia twardych sufitów): UI tylko je pokazuje, pilnuje serwer
       caps: { limitMaxUsd: LIMIT_MAX_USD, creditMaxUsd: CREDIT_MAX_USD, importMaxUsd: IMPORT_MAX_USD, open1sMaxUsd: OPEN_IMPORT_MAX_USD },
       queue: st.queue, open1s: st.open1s, import1s: st.import1s,
@@ -976,7 +985,8 @@ const server = http.createServer(async (req, res) => {
           const body = await readJson(req, DRAWINGS_BODY_LIMIT, 'Rysunki są zbyt duże.');
           return sendJson(res, 200, await drawings.save(body.id, body.doc));
         }
-        const body = await readJson(req);
+        // po-be-02: do 500 pozycji Live po ok. 230 B przekracza domyślne 64 KB, więc ta trasa ma 256 KB
+        const body = await readJson(req, url.pathname === '/api/after-be' ? 256 * 1024 : undefined);
         if (action) return sendJson(res, 200, await action(body));
         if (m[2] && !PAGE_ID_RE.test(m[2])) throw new ValidationError({}, 'Nieprawidłowy identyfikator wpisu.');
         return sendJson(res, 200, await writer[m[1].toLowerCase()](body, m[2] || null));
@@ -1027,7 +1037,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/candles/status') return sendJson(res, 200, candles.status());
     if (url.pathname === '/api/candles/size') return sendJson(res, 200, { bytes: await candles.dataBytes() }); // Ustawienia → Wykresy → Dane (P39: tylko rozmiar); przegląd HIJ, pkt 1: asynchronicznie, wynik z pamięci 60 s
     if (url.pathname === '/api/candles') {
-      try { return sendJson(res, 200, candles.read(Object.fromEntries(url.searchParams))); } catch (e) { return sendError(res, e); }
+      // [U] 05.11.2026 «Ogranicz do granicy sesji (Recommended)»: pole btTrade tnie świece do granicy sesji po stronie serwera (lib/po-be.mjs)
+      try { return sendJson(res, 200, readTradeCandles({ candles, btStore, t }, Object.fromEntries(url.searchParams))); } catch (e) { return sendError(res, e); }
     }
     // Backtest K (31.10.2026): zakres replayu (strumień bazowy tf=base albo historia wykresu tf=<interwał>) i granice danych; tylko lokalne świece.
     if (url.pathname === '/api/backtest/range') {

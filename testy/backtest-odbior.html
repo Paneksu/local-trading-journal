@@ -63,6 +63,9 @@ try {
   const day = () => nyDayOf(R.cursor());
   const filterJump = async () => { const sel = scr().querySelector('.bt-jump'); sel.value = 'nextDay'; ev(sel, 'change'); scr().querySelector('[data-bt="jump"]').click(); };
   const scr = () => document.querySelector('.bt-screen');
+  // Wysyłka w toku: sendNotion zwraca wtedy null i odkłada prośbę do kolejki. Przed „Zapisz do Notion”, którego wynik test sprawdza, czekamy warunkiem na koniec wysyłki
+  // (aria-busy na przycisku, kolejka trzyma go zajętym do końca), a nie stałym czasem. Gdy przycisk nie zwalnia się albo druga wysyłka nie rusza, wynik jest null i sprawdzenie pada.
+  const notionIdle = () => until(() => scr()?.querySelector('[data-bt="notion"]')?.getAttribute('aria-busy') === 'false', 15000);
   const goto = (t) => {
     const sec = Math.round(t - R.cursor());
     if (sec <= 0) throw new Error(`goto wstecz: ${hms(t)} przy kursorze ${hms(R.cursor())}`);
@@ -487,6 +490,7 @@ try {
     const ok = await until(() => R.doc().trades.every((x) => x.notion?.state === 'sent') && /^Notion: zapisane$/.test(notionLabel()), 20000);
     rec('notion', !!ok, `dzień 3: ${R.doc().trades.map((x) => x.id + ' ' + x.notion?.state + ' ' + (x.notion?.id || '').slice(0, 8)).join(', ')}; licznik „${notionLabel()}”`);
     const ids = R.doc().trades.map((x) => x.notion.id);
+    await notionIdle();
     const again = await R.sendNotion({ all: true });
     rec('notion', again && again.sent === 0 && !(again.failed || []).length && JSON.stringify(R.doc().trades.map((x) => x.notion.id)) === JSON.stringify(ids), `drugi „Zapisz do Notion”: wysłano ${again?.sent}, pominięto ${again?.skipped}, błędów ${(again?.failed || []).length}, id stron bez zmian`);
     rec('notion', /^Notion: zapisane$/.test(notionLabel()) && scr().querySelector('[data-bt="notion"]').disabled, `licznik po drugim zapisie: „${notionLabel()}”, przycisk wyłączony`);

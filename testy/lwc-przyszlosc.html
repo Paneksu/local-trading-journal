@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><title>LWC: przyszłość (eksperyment)</title>
+<!-- Strona robocza (tylko dashboard testowy, THQ_TEST_PAGES=1): jak Lightweight Charts w używanej wersji liczy margines, podążanie i przewijanie, gdy za ostatnią
+     świecą są punkty bez wartości w osobnej serii (04.11.2026, wybór sposobu rysowania newsów w przyszłości replayu). Wynik: pre#wynik z JSON-em. -->
+<style>.c { width: 800px; height: 200px; }</style></head>
+<body><div id="c1" class="c"></div><div id="c2" class="c"></div><pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+try {
+  const LWC = await import('/vendor/lightweight-charts/lightweight-charts.standalone.production.mjs');
+  const T0 = 1_700_000_000, N = 100, F = 60;
+  const bars = (n) => Array.from({ length: n }, (_, i) => ({ time: T0 + i * 60, open: 10, high: 11, low: 9, close: 10 + (i % 3) }));
+  const res = {};
+  for (const [id, withWs] of [['c1', false], ['c2', true]]) {
+    const chart = LWC.createChart(document.getElementById(id), { width: 800, height: 200, timeScale: { rightOffset: 6, shiftVisibleRangeOnNewBar: true, timeVisible: true } });
+    const s = chart.addSeries(LWC.CandlestickSeries, {});
+    s.setData(bars(N));
+    if (withWs) {
+      const w = chart.addSeries(LWC.LineSeries, { visible: false, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+      w.setData(Array.from({ length: F }, (_, i) => ({ time: T0 + (N + i) * 60 })));
+    }
+    const ts = chart.timeScale(), r = {};
+    ts.scrollToRealTime(); await sleep(100);
+    r.start = ts.getVisibleLogicalRange();
+    s.update({ time: T0 + N * 60, open: 10, high: 12, low: 9, close: 11 }); await sleep(150);
+    r.poNowejSwiecy = ts.getVisibleLogicalRange();
+    s.update({ time: T0 + N * 60, open: 10, high: 12, low: 9, close: 13 }); await sleep(100);
+    r.poAktualizacjiBiezacej = ts.getVisibleLogicalRange();
+    ts.setVisibleLogicalRange({ from: 150, to: 216 }); await sleep(100);
+    r.przewiniecieDaleko = ts.getVisibleLogicalRange();
+    ts.scrollToRealTime(); await sleep(100);
+    r.powrot = ts.getVisibleLogicalRange();
+    r.czasZaOstatnia = ts.timeToCoordinate(T0 + (N + 30) * 60);
+    r.czasPoza = ts.timeToCoordinate(T0 + (N + 90) * 60);
+    res[withWs ? 'zPrzyszloscia' : 'bez'] = r;
+  }
+  // wariant C: ostatni punkt siatki z wartością (kotwica): baseIndex = koniec siatki?
+  {
+    const el = document.createElement('div'); el.className = 'c'; document.body.insertBefore(el, document.getElementById('wynik'));
+    const chart = LWC.createChart(el, { width: 800, height: 200, timeScale: { rightOffset: 6 - F, shiftVisibleRangeOnNewBar: true, timeVisible: true } });
+    const s = chart.addSeries(LWC.CandlestickSeries, {});
+    s.setData(bars(N));
+    const w = chart.addSeries(LWC.LineSeries, { visible: false, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+    const ws = Array.from({ length: F }, (_, i) => ({ time: T0 + (N + i) * 60 })); ws[F - 1] = { time: ws[F - 1].time, value: 0 };
+    w.setData(ws);
+    const ts = chart.timeScale(), r = {};
+    ts.scrollToPosition(6 - F, false); await sleep(150);
+    r.start = ts.getVisibleLogicalRange();
+    s.update({ time: T0 + N * 60, open: 10, high: 12, low: 9, close: 11 }); await sleep(150);
+    r.poNowejSwiecy = ts.getVisibleLogicalRange();
+    ts.setVisibleLogicalRange({ from: 150, to: 216 }); await sleep(100);
+    r.przewiniecieDaleko = ts.getVisibleLogicalRange();
+    ts.scrollToPosition(-40, false); await sleep(100);
+    r.scrollMinus40 = ts.getVisibleLogicalRange();
+    r.opcje = ts.options().rightOffset;
+    res.wariantC = r;
+  }
+  out.textContent = JSON.stringify(res, null, 1);
+} catch (e) { out.textContent = 'FAIL ' + (e && e.stack || e); }
+</script></body></html>

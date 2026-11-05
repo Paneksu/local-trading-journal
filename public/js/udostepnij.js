@@ -64,7 +64,7 @@ export function cardChartRequest(card, { cfg = chartSettings(), badj = loadBadj(
   if (!CHART_IN_SHARE || !cfg?.shareChart || card?.kind !== 'trade' || card.at == null || !miniEligible(card)) return null;
   const plan = cardChartPlan(card), step = plan.find((p) => p.res === res) || plan[plan.length - 1];
   const q = new URLSearchParams({ instrument: String(card.instrument).trim().toUpperCase(), from: String(step.from), to: String(step.to), tf: step.tf });
-  for (const [k, v] of Object.entries(tradeQuery({ at: card.at, exitAt: card.exitAt, contract: card.contract, date: card.date, time: card.time }))) q.set(k, String(v));
+  for (const [k, v] of Object.entries(tradeQuery({ at: card.at, exitAt: card.exitAt, contract: card.contract, date: card.date, time: card.time, btTrade: card.btTrade }))) q.set(k, String(v));
   if (badj) q.set('adjust', '1');
   return `/api/candles?${q}`;
 }

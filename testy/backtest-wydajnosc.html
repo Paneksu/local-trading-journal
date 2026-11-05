@@ -291,6 +291,86 @@ try {
     R.close();
   });
 
+  // ---- 6. siatka przyszłości (newsy włączone, 04.11.2026): siatka 1s ma do ok. 165 tys. punktów (limit 200 tys.). Krok na 1s i 5s (jeden wykres i układ czterech wykresów), czas resetu przy zmianie
+  // interwału (setData serii siatki) i przewinięcie do newsa z następnego dnia (14:30 ET) na 1s. Progi jak w pozostałych sekcjach: krok ≤ 16 ms p95 ----
+  await section('siatka', async () => {
+    const LAY1 = (tf) => ({ kind: '1', active: 0, charts: [{ instrument: 'NQ', tf }] });
+    const LAY4 = { kind: '4', active: 0, charts: [{ instrument: 'NQ', tf: '1s' }, { instrument: 'NQ', tf: '5s' }, { instrument: 'ES', tf: '1m' }, { instrument: 'NQ', tf: '15s' }] };
+    try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: true, earnings: false, newsImp: { high: true, medium: true, low: true, holiday: true, opex: true } })); } catch { /* bez localStorage */ }
+    const measure = async (R, n) => {
+      const xs = [], syncs = [];
+      globalThis.__btStats = {};
+      await new Promise((done) => {
+        const one = () => requestAnimationFrame(() => {
+          const t0 = performance.now(); R.step(1); const t1 = performance.now();
+          requestAnimationFrame((ts) => { syncs.push(t1 - t0); xs.push((t1 - t0) + Math.max(0, performance.now() - ts)); if (xs.length < n) one(); else done(); });
+        });
+        one();
+      });
+      return { p95: pct(xs, 0.95), med: median(xs), max: Math.max(...xs), sync95: pct(syncs, 0.95), n: xs.length, rebuilds: globalThis.__btStats.futSetData || 0 };
+    };
+    const setNews = (on) => { try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: on, earnings: false, newsImp: { high: true, medium: true, low: true, holiday: true, opex: true } })); } catch { /* bez localStorage */ } };
+    // kontrola: te same układy bez newsów (bez siatki), żeby odróżnić koszt siatki od kosztu samego układu na tej maszynie
+    for (const [key, label, lay, n] of [['grid1s', 'jeden wykres NQ 1s', LAY1('1s'), 300], ['grid5s', 'jeden wykres NQ 5s', LAY1('5s'), 300], ['grid4', 'cztery wykresy (NQ 1s, NQ 5s, ES 1m, NQ 15s)', LAY4, 300]]) {
+      const res = {};
+      for (const on of [false, true, false, true]) {
+        setNews(on);
+        const doc = await mk('siatka ' + key + (on ? ' on' : ' off'), [DAY], nyAt(DAY, '09:40'), lay); // 09:40: w oknie 1s są już świece sekundowe, więc siatka ma pełny odstęp 1 s (ok. 100 tys. punktów)
+        const R = await open(doc);
+        await sleep(800);
+        const m = await measure(R, n);
+        m.grid = R.charts().map((c) => c.future().length);
+        (res[on ? 'on' : 'off'] ||= []).push(m);
+        R.close();
+      }
+      perf[key] = res;
+      const p = (k) => res[k].map((m) => m.p95.toFixed(1)).join('/');
+      const worstOn = Math.max(...res.on.map((m) => m.p95)), worstOff = Math.max(...res.off.map((m) => m.p95));
+      rec('siatka', res.on.every((m) => m.grid[0] > 1000), `${label}: siatka przyszłości istnieje po krokach (punkty: ${res.on.map((m) => m.grid.join(',')).join(' | ')})`);
+      rec('siatka', worstOn <= Math.max(16, worstOff + 3), `p95 kroku (${label}) z newsami ${p('on')} ms, bez newsów ${p('off')} ms (dwa przebiegi na przemian; max z newsami ${Math.max(...res.on.map((m) => m.max)).toFixed(1)}, bez ${Math.max(...res.off.map((m) => m.max)).toFixed(1)}; część synchroniczna p95 z newsami ${res.on.map((m) => m.sync95.toFixed(1)).join('/')}; przebudowy siatki w 300 krokach: ${res.on.map((m) => m.rebuilds).join('/')}); próg: ≤ 16 ms albo najwyżej 3 ms ponad układ bez newsów`);
+    }
+    setNews(true);
+    // reset przy zmianie interwału: od wywołania do końca drugiej klatki (ustawienie serii siatki), dla kilku par
+    {
+      const doc = await mk('siatka reset', [DAY], nyAt(DAY, '09:40'), LAY1('1m'));
+      const R = await open(doc);
+      await sleep(800);
+      const times = {};
+      for (const tf of ['1s', '1m', '5s', '1h', '1s', '15s', '1m']) {
+        const t0 = performance.now(); R.setTf(tf); const t1 = performance.now(); await frame(); await frame();
+        (times[tf] ||= []).push({ sync: t1 - t0, total: performance.now() - t0 });
+        await sleep(400);
+      }
+      const all = Object.values(times).flat();
+      perf.resetMs = Object.fromEntries(Object.entries(times).map(([k, v]) => [k, v.map((x) => Math.round(x.total))]));
+      perf.resetMaxMs = Math.max(...all.map((x) => x.total)); perf.resetSyncMaxMs = Math.max(...all.map((x) => x.sync));
+      rec('siatka', true, `zmiana interwału z siatką (całość do drugiej klatki, ms): ${Object.entries(perf.resetMs).map(([k, v]) => k + ' ' + v.join('/')).join(', ')}; najdłuższa część synchroniczna ${perf.resetSyncMaxMs.toFixed(0)} ms`);
+      rec('siatka', perf.resetSyncMaxMs <= 250, `reset przy zmianie interwału z siatką: część synchroniczna ≤ 250 ms (najdłuższa ${perf.resetSyncMaxMs.toFixed(0)} ms)`);
+      R.close();
+    }
+    // przewinięcie do newsa z następnego dnia (14:30 ET) na 1s: oś zna czas, znacznik w widoku, czas przewinięcia
+    {
+      const doc = await mk('siatka news', [DAY], nyAt(DAY, '09:40'), LAY1('1s'));
+      const R = await open(doc);
+      await sleep(900);
+      const c = R.charts()[0], newsT = nyAt('2024-03-13', '14:30');
+      const fut = c.future(), from = fut.from || 0;
+      const before = fut.filter((t) => t <= newsT).length - from;
+      const idx = c.bars().length - 1 + Math.max(0, before);
+      const t0 = performance.now();
+      c.chart.timeScale().setVisibleLogicalRange({ from: idx - 120, to: idx + 120 });
+      const t1 = performance.now(); await frame(); await frame();
+      const total = performance.now() - t0, ts = c.chart.timeScale();
+      // siatka ma rzadki ogon: czas newsa leży między dwoma punktami siatki, a pozycję liczy interpolacja (newsy.js timeToX); tu: oba sąsiednie punkty mają współrzędne w widoku
+      const j = fut.findIndex((t) => t > newsT), xa = ts.timeToCoordinate(fut[j - 1]), xb = ts.timeToCoordinate(fut[j]);
+      const x = xa != null && xb != null ? xa + (xb - xa) * ((newsT - fut[j - 1]) / (fut[j] - fut[j - 1])) : null;
+      perf.newsScrollMs = Math.round(total); perf.newsScrollSyncMs = Math.round(t1 - t0);
+      rec('siatka', j > 0 && x != null && x > 0 && x < ts.width(), `news 14:30 ET następnego dnia na 1s: sąsiednie punkty siatki w widoku, interpolowane x ${x == null ? 'brak' : Math.round(x)} z ${Math.round(ts.width())} (punktów siatki do newsa ${before}, siatka ${fut.length - from}); przewinięcie ${perf.newsScrollMs} ms (synchronicznie ${perf.newsScrollSyncMs})`);
+      R.close();
+    }
+    try { localStorage.removeItem('thq.chart.overlays.v1'); } catch { /* bez localStorage */ }
+  });
+
   out.textContent = JSON.stringify({ checks, perf });
 } catch (e) {
   out.textContent = JSON.stringify({ fatal: String(e && e.stack || e), checks, perf });

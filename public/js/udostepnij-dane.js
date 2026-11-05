@@ -2,7 +2,7 @@
 // bez DOM i bez tłumaczeń: napisy i formatowanie są w udostepnij-render.js.
 // Wartość karty liczona jest w trzech jednostkach naraz (R, $, % konta), żeby przełącznik w oknie nie liczył danych od nowa.
 // English: pure data builders for the share cards.
-import { calc, byDay, outcome, sortChrono, cfg } from './stats.js';
+import { calc, byDay, outcome, sortChrono, cfg, btTradeKey } from './stats.js';
 import { addDays, weekdayIdx, parseKey, daysInMonth, pad } from './format.js';
 
 const EPS = 1e-9;
@@ -123,7 +123,7 @@ export function tradeCard(t, konta) {
     instrument: t.instrument, dir: t.dir, date: t.date, time: t.time, exitTime: t.exitTime, dur: t.dur,
     setup: t.setup, session: t.session,
     // etap 17 (pakiet I): ceny i czas trade'a dla wykresu w karcie i wierszy „Cena wejścia/wyjścia”
-    at: t.at ?? null, exitAt: t.at != null && t.dur != null ? t.at + t.dur * 60000 : null, contract: t.contract || '',
+    at: t.at ?? null, exitAt: t.at != null && t.dur != null ? t.at + t.dur * 60000 : null, contract: t.contract || '', btTrade: btTradeKey(t),
     entryPrice: t.entryPrice ?? null, exitPrice: t.exitPrice ?? null, sl: t.sl ?? null, tp: t.tp ?? null,
     v: { R: t.r, $: t.typ === 'Live' ? t.pnl : null, '%': pct },
   };

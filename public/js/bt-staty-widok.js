@@ -8,6 +8,8 @@ import { t } from './i18n.js';
 import { esc, fmtR, fmtPct, fmtUsdFull as fmtMoney, cls, shortDate, DAYS_TITLE, num } from './format.js';
 import { drawEquity, drawColumns } from './charts.js';
 import { dayTags } from './bt-filtr.js';
+import { afterBeStats } from './po-be.js';
+import { afterBeSection, btAfterBeRows, createAfterBeStore, statRows } from './po-be-widok.js';
 import { MIN_N, BY, summary, equityR, edgeTable, execution, compareLive, mergeBacktest, pickSessions, sessionsOf, NO_SETUP, NO_DAYTYPE, NO_HOUR, HOUR_BEFORE, HOUR_AFTER } from './bt-staty.js';
 
 const BY_LABEL = () => ({ setup: t('Setup'), wd: t('Dzień tygodnia'), hour: t('Godzina wejścia'), dayType: t('Typ dnia'), dir: t('Kierunek') });
@@ -37,10 +39,14 @@ async function defaultFeatures(client, days) {
 }
 
 // backLabel: napis przycisku powrotu (final, ocena wyglądu P3: z listy „Wróć do listy sesji”, z replayu „Wróć do sesji”)
-export function mountStats(host, { client, getTrades = () => [], sessionId = null, onBack = null, backLabel = null, loadFeatures = null } = {}) {
+export function mountStats(host, { client, getTrades = () => [], sessionId = null, onBack = null, backLabel = null, loadFeatures = null, afterBeFetch = null } = {}) {
   const st = { scope: sessionId ? 'this' : 'all', picked: null, by: 'setup' };
   let sessList = [], all = [], live = [], feats = new Map(), featsOk = true, err = null, ro = null, raf = 0, dead = false, equity = [], cols = null;
   let fullLoaded = false, failedN = 0;
+  // wynik po BE (sekcja obok „Wykonania”): pobierany asynchronicznie po narysowaniu strony, bufor po kluczu; pending i no-data odświeżane tylko raz, przy wejściu na widok
+  // [U] 04.11.2026 «Procenty + R bez BE, per setup (Recommended)»; Backtest idzie do serwera jako { key, typ }, bo tylko serwer zna granicę sesji (po-be-widok.js)
+  const abe = createAfterBeStore(afterBeFetch ? { fetchImpl: afterBeFetch } : {});
+  let abeBusy = false, abeFresh = true;
 
   const scoped = () => {
     if (st.scope === 'this') return pickSessions(all, [sessionId]);
@@ -162,6 +168,25 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
     <h4 class="bt-st-h4">${esc(t('Jak głęboko szła cena pod prąd w wygranych trade\'ach (MAE)'))}</h4><div class="bt-st-mae" data-mae></div>${p80}`);
   }
 
+  // sekcja „Wynik po BE” z bufora: liczby pojawiają się w miarę dochodzenia wyników, bez przerysowania reszty strony
+  function abeHtml(ts) {
+    const rows = btAfterBeRows(ts);
+    const stats = afterBeStats(statRows(rows, abe));
+    return afterBeSection(stats, { loading: abeBusy || rows.some((x) => !abe.has(x.key) && !abe.failed()), error: abe.failed() && rows.some((x) => !abe.has(x.key)), total: rows.length });
+  }
+  async function abeKick(ts) {
+    const rows = btAfterBeRows(ts);
+    if (!rows.length || dead) return;
+    const fresh = abeFresh; abeFresh = false;
+    abeBusy = true;
+    const changed = await abe.ensure(rows, { refresh: fresh });
+    abeBusy = false;
+    if (dead) return;
+    const el = host.querySelector('[data-abe-sec]');
+    if (el) el.outerHTML = abeHtml(scoped());
+    else if (changed) paint();
+  }
+
   function liveHtml(ts) {
     const rows = compareLive(ts, live);
     if (!rows.length) return block(t('Backtest kontra Live'), '', `<p class="note">${esc(t("Brak setupu, który ma trade'y i w backtestcie, i w Live (z wynikiem w R). Porównanie pojawi się, gdy ta sama nazwa setupu wystąpi po obu stronach."))}</p>`);
@@ -185,10 +210,11 @@ export function mountStats(host, { client, getTrades = () => [], sessionId = nul
       host.innerHTML = `${top}<div class="card empty"><h3>${esc(t("Brak ukończonych trade'ów w tym zakresie"))}</h3><p>${esc(t("Statystyki pojawią się po zamknięciu pierwszego trade'a w replayu."))}</p></div>`;
       return;
     }
-    host.innerHTML = `${top}${headHtml(ts)}${equityHtml()}${edgeHtml(ts)}${execHtml(ts)}${liveHtml(ts)}`;
+    host.innerHTML = `${top}${headHtml(ts)}${equityHtml()}${edgeHtml(ts)}${execHtml(ts)}${abeHtml(ts)}${liveHtml(ts)}`;
     equity = equityR(ts);
     cols = execution(ts);
     draw();
+    abeKick(ts);
   }
 
   function draw() {

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>JustJournal: podgląd trade'a Backtest a granica sesji (strona robocza)</title>
+<link rel="stylesheet" href="/css/features.css">
+<!-- Atrapa GET /api/candles jak serwer z polem btTrade: świece tylko do granicy, poza nią pusto, a odpowiedź niesie sessionCap. Strona liczy zapytania, gdy podgląd stoi na prawej krawędzi. -->
+</head>
+<body>
+<div id="box" class="lb-chart" style="width:1100px;height:600px"></div>
+<pre id="wynik">…</pre>
+<script type="module">
+  import { createPodglad } from '/js/podglad.js';
+  const E = Date.UTC(2024, 2, 12, 14) / 1000, X = E + 1200, CAP = X + 1800;
+  const calls = [];
+  const real = window.fetch.bind(window);
+  window.fetch = async (u, o) => {
+    if (!String(u).startsWith('/api/candles?')) return real(u, o);
+    const q = new URL(u, location.href).searchParams;
+    calls.push(Object.fromEntries(q));
+    const tf = q.get('tf') === '1D' ? 86400 : 60;
+    const from = Number(q.get('from')), to = Math.min(Number(q.get('to')), CAP), bars = [];
+    for (let t = Math.ceil(from / tf) * tf; t < to; t += tf) bars.push([t, 100, 101, 99, 100, 5]);
+    return new Response(JSON.stringify({ tf: q.get('tf'), layer: '1m', bars, covered: [[from, to]], derived: [], missing: [], holes: [], rolls: [], gaps: [], availableEnd: 4000000000, sessionCap: CAP }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const box = document.getElementById('box');
+  const pv = createPodglad(box, { trade: { at: E * 1000, exitAt: X * 1000, instrument: 'NQ', entryPrice: 100, exitPrice: 100, sl: 98, tp: 104, be: 100, r: 0, time: '10:00', date: '2024-03-12', btTrade: 'bt-falaaaaa001/t1' }, drawings: [], tf: '1m' });
+  await pv.ready;
+  // wielokrotne pchnięcie widoku w prawo: każde rysowanie przy krawędzi może dociągać świece
+  for (let i = 0; i < 40; i++) { box.querySelector('svg')?.dispatchEvent(new WheelEvent('wheel', { deltaX: 400, deltaY: 0, bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 25)); pv.redraw?.(); }
+  await new Promise((r) => setTimeout(r, 400));
+  const cs = pv.candles();
+  document.getElementById('wynik').textContent = JSON.stringify({ status: pv.status(), calls: calls.length, noKey: calls.filter((c) => !c.btTrade).length, lastBar: cs[cs.length - 1]?.[0], cap: CAP, tfs: [...new Set(calls.map((c) => c.tf))] });
+</script>
+</body>
+</html>

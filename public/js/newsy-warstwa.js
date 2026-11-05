@@ -5,7 +5,7 @@
 import { tipFor } from './newsy.js';
 
 // host: element wykresu (position: relative). fmt(): { HM, DAY } w strefie wykresu. Zwraca { update(geo, model, sig), hide(), destroy() }.
-export function mountNewsLayer(host, { fmt }) {
+export function mountNewsLayer(host, { fmt, onActive = () => {} }) {
   const layer = document.createElement('div');
   layer.className = 'nws-layer';
   const tip = document.createElement('div');
@@ -16,6 +16,15 @@ export function mountNewsLayer(host, { fmt }) {
   host.appendChild(layer);
   const btns = new Map();
   let model = null, sig = '', openKey = null;
+  // pasek zakresu dnia (04.11.2026, «tylko po najechaniu na tekst danego dnia»): pokazany, gdy dymek jest otwarty na napisie dnia (mysz, fokus, dotyk).
+  // SVG podglądu jest rysowany od nowa, więc stan nakładamy po każdej aktualizacji; edytor LWC dostaje klucz przez onActive i rysuje pasek na canvasie.
+  const activeBand = () => (openKey && /^(nd|ed):/.test(openKey) ? openKey : null);
+  let lastBand = null;
+  function paintBand() {
+    const k = activeBand();
+    host.querySelectorAll('svg .nwb').forEach((r) => r.classList.toggle('on', r.dataset.k === k));
+    if (k !== lastBand) { lastBand = k; onActive(k); }
+  }
 
   function place(b) {
     const hw = host.clientWidth, w = tip.offsetWidth, h = tip.offsetHeight;
@@ -32,11 +41,13 @@ export function mountNewsLayer(host, { fmt }) {
     openKey = b.dataset.k;
     b.setAttribute('aria-describedby', tip.id || (tip.id = `nwt-${Math.random().toString(36).slice(2, 8)}`));
     place(b);
+    paintBand();
   }
   function hide() {
     tip.hidden = true;
     if (openKey) btns.get(openKey)?.removeAttribute('aria-describedby');
     openKey = null;
+    paintBand();
   }
   // Przyciski nie przekazują wskaźnika do wykresu: przeciąganie i krzyżyk wykresu nie startują na znaczniku.
   const stop = (ev) => ev.stopPropagation();
@@ -82,6 +93,7 @@ export function mountNewsLayer(host, { fmt }) {
     }
     sig = newSig;
     for (const [k, b] of btns) if (!seen.has(k)) { if (openKey === k) hide(); b.remove(); btns.delete(k); }
+    paintBand();
     if (openKey && btns.has(openKey)) { const b = btns.get(openKey); if (!tip.hidden) { const d = tipFor(openKey, m, fmt()); if (d) { tip.innerHTML = d.html; place(b); } } }
   }
   function destroy() { document.removeEventListener('pointerdown', outside, true); layer.remove(); btns.clear(); }

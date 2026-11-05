@@ -20,6 +20,8 @@ import { loadOverlays, sessionDefs, chartTz, fmtIn, tfSec } from './podglad.js';
 import { tzShort } from './strefa.js';
 import { sessionWindows, pdhlSpans, overlayLevels, parseTf } from './swiece.js';
 import { buildNewsModel } from './newsy.js';
+import { newsWindowEnd, futureBuckets } from './bt-czas.js';
+import { mountNewsLayer } from './newsy-warstwa.js';
 import { locale, t } from './i18n.js';
 import { fmtR, esc } from './format.js';
 import { MULT, TICK, beLevel, TPS_MAX } from './bt-wypelnienia.js';
@@ -50,6 +52,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   const fmtUsd = (x) => fmtUsdIn(Number.isFinite(x) ? Math.round(x) || 0 : x);
   if (!LWC) throw new Error('bt-wykres: brak modułu Lightweight Charts');
   let c = colors;
+  let curTf = tf;
   let candles = [], hide = !!hideDate, step = tfSec(tf), secs = (parseTf(tf)?.sec ?? 60) < 60, cursorT = null;
   let ovModel = null, newsModel = null; // pamięć modeli nakładek: unieważniana przy nowej świecy, resecie i zmianie TF
   // K: historia sprzed okna bazowego; hFrom = początek wczytanej historii (otwarcie sesji), hDone = doszła do początku danych
@@ -82,6 +85,73 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
     localization: timeOpts().localization,
   });
   const series = chart.addSeries(LWC.CandlestickSeries, { ...candleOptions(c), lastValueVisible: true, priceLineVisible: false });
+  // ---- przyszłość za ostatnią świecą (newsy): 04.11.2026 «maja sie rysowac w przyszlosci tamgdzie nie ma swieczek» ----
+  // Wybór sposobu (zmierzony w używanej wersji Lightweight Charts, testy/lwc-przyszlosc.html): osobna, niewidoczna seria liniowa z czasami za ostatnią świecą (punkty bez wartości,
+  // tylko ostatni punkt ma wartość zastępczą 0 jako kotwica). Oś czasu zna wtedy te chwile (prawdziwe godziny w pustym miejscu, przerwy i weekendy pominięte jak w sesjach CME),
+  // a punkt odniesienia osi (baseIndex) leży na końcu siatki, więc wykres da się przewinąć w prawo aż do końca okna newsów (bez kotwicy limit przewijania liczy się od ostatniej świecy,
+  // czyli około szerokości wykresu). Skutek: margines i „teraz” trzeba liczyć od końca siatki (pushOffset, applyMargin: rightOffset − R), a podążanie za nową świecą robimy sami,
+  // bo świece zajmują już istniejące punkty osi i wykres sam nic nie przesuwa. Seria jest niewidoczna, bez autoscaleInfoProvider i bez cen, więc auto-skala, przybliżanie i skala ceny
+  // liczą się tylko z prawdziwych świec; series.update świecy na czasie z siatki nie koliduje (osobna seria). Warunkiem siatki jest włączony przełącznik newsów lub wyników w nakładkach
+  // (newsOf().on), a nie obecność zdarzeń: przy wyłączonym przełączniku siatki nie ma i wykres działa dokładnie jak dotąd.
+  const ws = chart.addSeries(LWC.LineSeries, { visible: false, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+  let curOff = 6; // margines za ostatnią świecą w świecach (rightOffset z szerokości plakietek, patrz applyMargin)
+  // fut: rosnące początki świec za ostatnią świecą; fut.from = liczba początkowych punktów już zajętych przez świece (geometria newsów czyta tablicę bez kopiowania, krok 1s ma 100 tys. punktów)
+  let fut = [], futPos = 0, futKey = '';
+  // faktyczny odstęp świec: interwał sekundowy poza oknem prawdziwego 1s składa się ze świec minutowych
+  function effStep() {
+    if (step >= 60 || candles.length < 2) return step;
+    let m = Infinity;
+    for (let i = candles.length - 1; i > 0 && i > candles.length - 7; i--) { const d = candles[i][0] - candles[i - 1][0]; if (d > 0 && d < m) m = d; }
+    return Number.isFinite(m) ? Math.max(step, m) : step;
+  }
+  function syncFuture(force = false, quiet = false) {
+    if (!candles.length || !newsOf().on) {
+      if (fut.length) { fut = []; futPos = 0; futKey = ''; ws.setData([]); try { chart.timeScale().applyOptions({ rightOffset: curOff }); } catch { /* wykres zniszczony */ } }
+      return;
+    }
+    const last = candles[candles.length - 1][0], end = newsWindowEnd(last), key = `${curTf}|${effStep()}|${end}`;
+    if (!force && key === futKey) return;
+    const rBefore = chart.timeScale().getVisibleLogicalRange(), nBefore = candles.length;
+    futKey = key; fut = futureBuckets(last, curTf, effStep(), end); futPos = 0; fut.from = 0;
+    ws.setData(fut.map((time, i) => (i === fut.length - 1 ? { time, value: 0 } : { time }))); stat('futSetData');
+    if (!quiet) pushOffset(rBefore, nBefore);
+  }
+  // ile punktów siatki leży jeszcze za ostatnią świecą i indeks punktu odniesienia osi (koniec siatki albo ostatnia świeca, gdy siatki nie ma)
+  const remaining = () => Math.max(0, fut.length - futPos);
+  const baseIdx = () => candles.length - 1 + remaining();
+  // prawy brzeg widoku na zadanym indeksie logicznym, bez zmiany rozmiaru świec i bez animacji
+  function setRight(to) { try { chart.timeScale().scrollToPosition(to - baseIdx(), false); } catch { /* wykres zniszczony */ } }
+  // Punkt odniesienia osi to koniec siatki, a Lightweight Charts stosuje opcję rightOffset po zmianie danych, więc opcja = margines − liczba punktów siatki za ostatnią świecą.
+  // Reguła biblioteki (shiftVisibleRangeOnNewBar), odtworzona ręcznie, bo świece zajmują istniejące punkty osi i wykres sam niczego nie przesuwa: gdy ostatnia świeca była widoczna
+  // (rBefore.to >= nBefore - 1), prawy brzeg widoku przesuwa się o liczbę dodanych świec, z zachowaniem odstępu i rozmiaru świec (po zoomie kółkiem i po przewinięciu o kilka świec też);
+  // gdy ostatnia świeca była poza widokiem (przeszłość), prawy brzeg zostaje na tym samym indeksie. Widok, który sięga w przyszłość (ostatnia świeca widoczna, prawy brzeg dalej), jest
+  // „z widoczną ostatnią świecą”, więc przesuwa się razem ze świecami o tę samą liczbę (przyszłość nie stoi na indeksie). Reset (brak widoku): „na teraz”.
+  // Lightweight Charts kończy aktualizację osi po zmianie danych dopiero w następnej klatce i wtedy nadpisuje położenie widoku (zmierzone w replayu), więc to samo ustawienie
+  // powtarzamy po klatce; do tego czasu widoku nie odczytujemy z wykresu, tylko dziedziczymy poprzednią decyzję (kilka kroków w klatce dodaje swoje przesunięcia).
+  let settleRaf = 0, pend = null;
+  function pushOffset(rBefore, nBefore) {
+    // reset (brak widoku, rBefore null) zawsze nadpisuje oczekujące ustawienie i ustawia widok „na teraz”; przesunięcie o d dodanych świec liczy tylko gałąź append
+    // (inaczej drugie zdarzenie w tej samej klatce, np. krok po resecie, doliczyłoby do pend.to całą liczbę świec i wypchnęłoby widok w przyszłość)
+    if (!rBefore) pend = { follow: true, to: candles.length - 1 + curOff };
+    else if (!settleRaf || !pend) {
+      const d = candles.length - nBefore, follow = rBefore.to >= nBefore - 1;
+      pend = { follow, to: follow ? rBefore.to + d : rBefore.to };
+    } else if (pend.follow) pend.to += candles.length - nBefore;
+    const apply = () => {
+      try { chart.timeScale().applyOptions({ rightOffset: curOff - remaining() }); } catch { /* wykres zniszczony */ }
+      setRight(pend.to);
+    };
+    apply();
+    if (!settleRaf) settleRaf = requestAnimationFrame(() => { settleRaf = 0; apply(); pend = null; });
+  }
+  // nowa świeca zajmuje punkt siatki; przeskoczony punkt (brak świecy w danych) zostawiłby pustą szczelinę wśród świec, więc wtedy siatka liczona od nowa
+  function advanceFuture(t) {
+    let skipped = false;
+    while (futPos < fut.length && fut[futPos] <= t) { if (fut[futPos] < t) skipped = true; futPos++; }
+    fut.from = futPos;
+    if (skipped) syncFuture(true, true);
+  }
+  const futureOf = () => fut;
   // 1.7-2 (G-2.6): markery porcji otwartej pozycji na świecach: strzałka wejścia i dokładki (+ilość) oraz wyjścia częściowego (−ilość), w kolorze kierunku pozycji.
   // Przebudowa tylko przy zmianie liczby porcji i wyjść, interwału albo przeładowaniu świec (nie co klatkę odtwarzania).
   const posMarkers = LWC.createSeriesMarkers ? LWC.createSeriesMarkers(series, []) : null;
@@ -120,7 +190,13 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   // etykiety dni newsów niosą datę: przy ukrytej dacie znikają (linie i znaczniki zostają)
   const newsOf = () => (newsModel ||= ((m) => (hide ? { ...m, labels: [] } : m))(buildNewsModel({ news: getNews(), earn: [], prefs })));
   const prim = overlayPrimitive({ chart, series, getModel: overlayModel, getPrefs: () => prefs, getCandles: () => candles, getColors: () => c });
-  const nprim = newsPrimitive({ chart, series, getModel: newsOf, getCandles: () => candles, getStep: () => step, getColors: () => c });
+  // 04.11.2026: warstwa przycisków nad napisami dni i znacznikami (dymek, klawiatura, dotyk) jak w podglądzie i edytorze; po najechaniu na napis dnia (OPEX, Bank Holiday)
+  // pojawia się delikatny pasek zakresu dnia handlowego przy osi czasu (słowa użytkownika: «tylko po najechaniu na tekst danego dnia»). Wcześniej wykres backtestu nie miał
+  // żadnej interakcji z newsami.
+  let activeBand = null;
+  const nwl = mountNewsLayer(host, { fmt: () => fmtIn(chartTz()), onActive: (k) => { activeBand = k; nprim.requestUpdate(); } });
+  const nprim = newsPrimitive({ chart, series, getModel: newsOf, getCandles: () => candles, getStep: () => effStep(), getColors: () => c, getActiveBand: () => activeBand, getFuture: futureOf,
+    onGeometry: (g) => { const m = newsOf(); nwl.update(g, m, `${chartTz()}|${m.groups.length}|${m.labels.length}|${candles.length}|${hide ? 1 : 0}`); } });
   // linia kursora (D1: wspólny zegar kilku wykresów); w C1 jeden wykres, linia tylko na żądanie
   const cursorPrim = {
     req: null,
@@ -143,7 +219,8 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   const extras = D ? extrasPrimitive({ chart, series, getDrawings: () => rys?.manager.drawings() || [], getCandles: () => candles, getStep: () => step, getColors: () => c,
     getFocus: () => rys?.focusIds?.() || new Set(), getInstrument: () => instrument }) : null;
   if (extras) series.attachPrimitive(extras);
-  chart.subscribeCrosshairMove((p) => onCrosshair(p?.time ?? null));
+  // czas w pustym miejscu (przyszłość) nie wychodzi z wykresu: krzyż poza ostatnią świecą to brak czasu jak dotąd
+  chart.subscribeCrosshairMove((p) => onCrosshair(p?.time != null && candles.length && p.time <= candles[candles.length - 1][0] ? p.time : null));
   // K: przewinięcie w lewo doładowuje historię; nakładki przeliczają się, gdy widok wyjdzie przed ich ogon
   chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
     if (!r) return;
@@ -152,6 +229,9 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   });
 
   // ---- C2: handel na wykresie ----
+  // Przy aktywnym narzędziu rysowania przyciski newsów nie przechwytują kliknięć (klik w napis dnia albo znacznik ma postawić rysunek), więc warstwa dostaje klasę .nws-off
+  let offTool = null; // wyrejestrowanie nasłuchu narzędzia (destroy)
+  function watchTool() { try { offTool = mgr.on('tool', (k) => nwl.element.classList.toggle('nws-off', !!k)); } catch { /* zdarzenie niedostępne */ } }
   const tick = tickOf(instrument);
   let mgr = null, posId = null, applying = false, lines = [], want = null, wantPos = null;
   if (D && rysunki) {
@@ -184,9 +264,11 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
       repaint: () => extras.requestUpdate(), onSelect: () => rysunki.onSelect?.(), positionDefaults: rysunki.positionDefaults, sessionQty: rysunki.sessionQty,
     });
     mgr = rys.manager;
+    watchTool();
     series.detachPrimitive(extras); series.attachPrimitive(extras); // J: podpisy pozycji nad warstwą paczki
   } else if (D) {
     mgr = new D.DrawingManager(chart, series, {});
+    watchTool();
   }
   let held = null;
   // tymczasowe wyłączenie przesuwania i autoskalowania na czas przeciągania rysunku; wraca poprzedni stan (auto nie zawsze true)
@@ -795,7 +877,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
   }
 
   // ---- margines za ostatnią świecą: rightOffset z szerokości najszerszej plakietki (skokowo, najszersza z ostatnich 2 s, żeby wykres nie drgał) ----
-  let wHist = [], curOff = 6, offTimer = 0;
+  let wHist = [], offTimer = 0;
   // szerokość najszerszej plakietki w spoczynku (odczyt layoutu); plakietka w trakcie przeciągania i linia „w ręku” nie liczą się, żeby świece nie uciekały ani nie skakały przy chwycie
   function measureTags() {
     const hasTrade = !!(layerSt && (layerSt.position || (layerSt.orders || []).length));
@@ -811,7 +893,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
     let sp = 6;
     try { sp = chart.timeScale().options().barSpacing || 6; } catch { /* wykres zniszczony */ }
     const off = hasTrade ? Math.max(6, Math.ceil((wmax + 16) / sp)) : 6;
-    if (off !== curOff) { curOff = off; try { chart.timeScale().applyOptions({ rightOffset: off }); } catch { /* wykres zniszczony */ } }
+    if (off !== curOff) { curOff = off; try { chart.timeScale().applyOptions({ rightOffset: off - remaining() }); } catch { /* wykres zniszczony */ } }
     // po zniknięciu szerszego odczytu margines wraca po 2 s
     if (hasTrade && wHist.some((x) => x.w !== w) && !offTimer) offTimer = setTimeout(() => { offTimer = 0; relayout(); }, 2100);
   }
@@ -1231,12 +1313,18 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
       series.setData(candles.map(toBar)); stat('setData');
       pkgAll();
       syncMarkers(want?.position || null, true);
-      chart.timeScale().scrollToRealTime();
+      syncFuture(true, true);
+      try { chart.timeScale().applyOptions({ rightOffset: curOff - remaining() }); } catch { /* wykres zniszczony */ }
+      if (fut.length) pushOffset(null, 0); else chart.timeScale().scrollToRealTime();
       dirty();
       if (!autoInit) { autoInit = true; requestAnimationFrame(() => requestAnimationFrame(() => { if (!autoY) ps().applyOptions({ autoScale: false }); })); }
       if (!hist.length && !hDone) loadHistory();
     } else if (u.kind === 'append') {
+      // podążanie za nową świecą: patrz pushOffset (reguła biblioteki odtworzona ręcznie)
+      const hadFut = fut.length > 0, rBefore = hadFut ? chart.timeScale().getVisibleLogicalRange() : null, nBefore = candles.length;
       for (const k of u.bars) put(k.slice(0, 6));
+      if (u.bars.length) advanceFuture(candles[candles.length - 1][0]);
+      if (hadFut && candles.length > nBefore) pushOffset(rBefore, nBefore);
       dirty();
     } else if (u.kind === 'update' && u.bar) {
       put(u.bar.slice(0, 6));
@@ -1383,7 +1471,7 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
     setAuto, auto: () => autoY, hold: holdScale,
     bars: () => candles,
     overlays: () => overlayModel(), // H1: model nakładek (sesje, PDH/PDL) do sprawdzenia „brak przyszłości” w odbiorze
-    setTf(next) { step = tfSec(next); secs = (parseTf(next)?.sec ?? 60) < 60; chart.applyOptions(timeOpts()); resetHistory(); },
+    setTf(next) { curTf = next; step = tfSec(next); secs = (parseTf(next)?.sec ?? 60) < 60; chart.applyOptions(timeOpts()); resetHistory(); },
     // K: okno bazowe przesunięte w prawo: świece odcięte z okna (już zagregowane do interwału wykresu) dochodzą na koniec historii; potem wywołujący daje reset z buildera
     appendHistory(bars, from) { const add = (bars || []).filter((k) => !hist.length || k[0] > hist[hist.length - 1][0]).map((k) => k.slice(0, 6)); hist = [...hist, ...add]; if (hFrom == null && Number.isFinite(from)) hFrom = from; },
     // K: okno bazowe przeładowane wcześniej (krok wstecz): historia tylko przed nowym początkiem okna
@@ -1397,7 +1485,8 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
     liveBars,
     setHideDate(on) { hide = !!on; chart.applyOptions(timeOpts()); newsModel = null; nprim.requestUpdate(); },
     setCursorLine(t) { cursorT = t ?? null; cursorPrim.req?.(); },
-    newsChanged() { newsModel = null; nprim.requestUpdate(); },
+    newsChanged() { newsModel = null; syncFuture(); nprim.requestUpdate(); },
+    future: () => futureOf(), // testy: siatka czasów za ostatnią świecą
     resize() { chart.timeScale().applyOptions({}); },
     crossT: () => cursorT,
     rysunki: () => rys,
@@ -1415,6 +1504,8 @@ export function createReplayChart(host, { LWC, D = null, instrument = '', tf = '
     tradingState: () => ({ position: curPosId() && mgr ? mgr.get(curPosId()) : null, orders: lines.filter((l) => l.field === 'price').map(({ id, price, title }) => ({ id, price, title })) }),
     manager: () => mgr,
     destroy() {
+      try { if (typeof offTool === 'function') offTool(); } catch { /* menedżer już zniszczony */ } offTool = null;
+      nwl.destroy();
       closeMenu({ refocus: false }); clearHold();
       mo?.disconnect(); ro?.disconnect(); if (layerRaf) cancelAnimationFrame(layerRaf); clearTimeout(offTimer); clearInterval(yWatch); layer.remove();
       cancelHand(false); if (drag) endDragState(); closePart({ refocus: false }); closePct({ refocus: false });

@@ -18,6 +18,9 @@ import { MULT } from './bt-wypelnienia.js';
 import { fillsOf, gapUnderBe } from './bt-ksiega.js';
 import { tpOrder } from './bt-drabinka.js';
 import { overlay } from './modal.js';
+import { tradingDayEnd } from './dzien-handlowy.js';
+import { localBeHit } from './bt-staty.js';
+import { afterBeFact } from './po-be-widok.js';
 
 const HIST_DAYS = 390, SEC_DAYS = 8, MAX_BARS = 50_000;
 const svg = (d, s = 18) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -25,14 +28,17 @@ const I_PREV = svg('<path d="m15 6-6 6 6 6"/>'), I_NEXT = svg('<path d="m9 6 6 6
 const I_PANEL = svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/>');
 const inside = (ranges, c) => (ranges || []).some(([a, b]) => c >= a && c < b);
 
-// Koniec świec Journala: koniec świecy bazowej wyjścia (SL/TP wypełniają się w świecy zaczętej o exitT; wyjście ręczne o exitT = koniec ostatniej widocznej świecy),
-// nigdy po kursorze. real1s = pokrycie prawdziwych sekund instrumentu (świeca bazowa 1 s), poza nim 1 min.
-export function journalMaxT(trade, { cursor = Infinity, real1s = [] } = {}) {
-  const ex = (trade?.exits || [])[trade.exits.length - 1];
+// Koniec świec Journala: min(limit, max(koniec świecy wyjścia, koniec dnia handlowego wyjścia)). Koniec świecy wyjścia: SL/TP wypełniają się w świecy zaczętej o exitT,
+// wyjście ręczne o exitT = koniec ostatniej widocznej świecy; real1s = pokrycie prawdziwych sekund instrumentu (świeca bazowa 1 s), poza nim 1 min.
+// limit = najdalsza chwila, którą sesja już pokazała dla instrumentu (znak wodny hwOf w bt-replay.js), nigdy kursor ani nic dalej: zaraz po zamknięciu limit = wyjście, więc świec po wyjściu nie widać.
+// [U] 04.11.2026 «niech journal w backtestingu ma wlasnie dostep podczas wyswietlania trade'a swiece nie do momentu wyjscia tylko jeszcze troche po zeby bylo widac ogolna reakcje rynku podczas trade,
+// ale jak zapisuje trade i journaluje jeszcze podczas jak nie poznalem przyszlych swiec w backtestingowej sesji to nnie powinny mi sie ujawniac wtedy»; zakres: «Do końca dnia handlowego (Recommended)».
+export function journalMaxT(trade, { limit = Infinity, real1s = [] } = {}) {
+  const xs = trade?.exits || [], ex = xs[xs.length - 1];
   const t0 = ex ? ex.t : trade?.exitT;
-  if (!Number.isFinite(t0)) return Number.isFinite(cursor) ? cursor : null;
+  if (!Number.isFinite(t0)) return Number.isFinite(limit) ? limit : null;
   const end = ex && (ex.reason === 'sl' || ex.reason === 'tp') ? t0 + (inside(real1s, t0) ? 1 : 60) : t0;
-  return Math.min(cursor, end);
+  return Math.min(limit, Math.max(end, tradingDayEnd(t0)));
 }
 
 // Źródło świec Journala zgodne z GET /api/candles ({ bars }): API zakresu replayu (te same świece co w replayu), bez świec po maxT. Świeca interwału, która w chwili maxT
@@ -93,7 +99,8 @@ export const tradeArgOf = (x) => ({
 // openJournalWindow(opts) → { close, el, tradeId(), show(id), editing(), view() }
 // opts: trades() → zamknięte trade'y sesji (kolejność sesji), id, fetchRange, maxTOf(trade), setups, known, fmtTime(sec), onSave(id, { setup, notes }) → void,
 // onDrawings(id, doc) → void (migawka rysunków trade'a), onClose(), loadEditor() → import('./wykres.js')
-export function openJournalWindow({ root = document.body, trades, id, fetchRange, maxTOf, setups = [], known = [], fmtTime = (s) => String(s), onSave = () => {}, onDrawings = () => {}, onDelete = null, onClose = () => {}, loadEditor = () => import('./wykres.js'), setup: preset = '' }) {
+// afterBe: { store, sessionId, ready() } (wynik po BE, po-be-widok.js): wiersz „Po BE” w faktach dla trade'ów zamkniętych stopem na BE; liczy serwer ze znakiem wodnym sesji, a ready() wysyła zmiany sesji przed pytaniem
+export function openJournalWindow({ root = document.body, trades, id, fetchRange, maxTOf, setups = [], known = [], fmtTime = (s) => String(s), onSave = () => {}, onDrawings = () => {}, onDelete = null, onClose = () => {}, loadEditor = () => import('./wykres.js'), setup: preset = '', afterBe = null }) {
   const el = document.createElement('div');
   el.className = 'lb bt-jw';
   el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', t('Journal trade\'a backtestu'));
@@ -123,6 +130,21 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
     if (e) return t('SL na {sl} · {time}', { sl: pxText(e.v.sl), time: fmtTime(e.at) });
     return x.autoBe && typeof x.autoBe === 'object' && !x.autoBe.done ? t('nie wyzwolone') : null;
   }
+  // Wynik po BE: wiersz tylko dla trade'a zamkniętego stopem na BE (ta sama reguła beHit co w statystykach); do czasu odpowiedzi serwera ten sam tekst co pending
+  // [U] 04.11.2026 «jak zapisuje trade i journaluje jeszcze podczas jak nie poznalem przyszlych swiec w backtestingowej sesji to nnie powinny mi sie ujawniac wtedy»: granicę zna tylko serwer
+  const abeKey = (x) => (afterBe && afterBe.sessionId && x && localBeHit(x) ? `${afterBe.sessionId}/${x.id}` : null);
+  // błąd żądania: osobny tekst „nie udało się pobrać”, nie „czeka na świece”
+  const abeRow = (x, failed = false) => { const k = abeKey(x); return k ? afterBeFact(afterBe.store.get(k) || (failed ? { status: 'error' } : null)) : ''; };
+  async function loadAbe(x, my) {
+    const k = abeKey(x);
+    if (!k) return;
+    try { await afterBe.ready?.(); } catch { /* zapis sesji nie wyszedł: serwer odpowie no-session albo starszym stanem, nigdy przyszłością */ }
+    if (my !== seq || closed) return;
+    await afterBe.store.ensure([{ key: k, item: { key: k, typ: 'Backtest' } }], { refresh: true });
+    if (my !== seq || closed || cur !== x) return;
+    const r = abeRow(x, afterBe.store.failed()), host = $('.lb-facts [data-abe]');
+    if (host && r) host.outerHTML = r;
+  }
   function facts(x) {
     const dur = Number.isFinite(x.exitT) ? x.exitT - x.entryT : null;
     const rows = [
@@ -142,7 +164,7 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
       [t('Wyjście z luką pod BE'), (() => { const g = gapUnderBe(x); return g ? t('SL na {sl}, wyjście {exit}', { sl: pxText(g.sl), exit: pxText(g.exit) }) : null; })()],
     ];
     const cl = (v) => (v > 1e-9 ? 'pos' : v < -1e-9 ? 'neg' : '');
-    return rows.filter((r) => r[1]).map(([k, v, n]) => `<div><dt>${esc(k)}</dt><dd class="${n != null ? cl(n) : ''}">${esc(v)}</dd></div>`).join('');
+    return rows.filter((r) => r[1]).map(([k, v, n]) => `<div><dt>${esc(k)}</dt><dd class="${n != null ? cl(n) : ''}">${esc(v)}</dd></div>`).join('') + abeRow(x);
   }
   // 1.7-2 (P3): tabela wejść i wyjść trade'a z kilkoma porcjami albo wyjściami: czas, zdarzenie, cena, ilość, powód, wynik porcji (brutto, po średnim koszcie w chwili wyjścia)
   const WHY = () => ({ sl: 'SL', tp: 'TP', manual: t('ręcznie'), partial: t('część'), eod: t('koniec dnia'), reverse: t('odwrócenie') });
@@ -215,6 +237,7 @@ export function openJournalWindow({ root = document.body, trades, id, fetchRange
     $('.bt-jw-lv').innerHTML = levels(x);
     paintState(); paintNav();
     preview(x);
+    loadAbe(x, my).catch(() => {});
     return true;
   }
   // „Edytuj wykres”: edytor LWC z rysunkami migawki trade'a; zapis rysunków → onDrawings (plik sesji), nigdy rysunki sesji ani Notion bezpośrednio

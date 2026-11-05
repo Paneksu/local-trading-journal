@@ -5,8 +5,9 @@
 // Kolory wyłącznie z tokenów motywu (NEWS_TOKENS / EARN_TOKENS), bez literałów. Wszystkie godziny to chwile UTC; wyświetlanie przez Intl w strefie wykresu.
 // English: news/earnings overlay logic shared by the SVG preview and the Lightweight Charts editor: settings, filters, grouping, marker geometry, tooltips, data client.
 import { esc, num } from './format.js';
-import { t } from './i18n.js';
-import { timeToIndexF } from './geometria.js';
+import { t, locale } from './i18n.js';
+import { timeToIndex, timeToIndexF } from './geometria.js';
+import { tradingDayRange } from './dzien-handlowy.js';
 
 // ---- ustawienia (część settings.chart.overlays, synchronizowana jak reszta nakładek) ----
 export const NEWS_IMPS = ['high', 'medium', 'low', 'holiday', 'opex'];
@@ -66,13 +67,29 @@ export function groupNews(events) {
     return { key: `n:${tt}`, kind: 'news', t: tt, items, count: items.length, imp: bestImp(sure.length ? sure : items), line: sure.length > 0, tentative: sure.length === 0 };
   });
 }
-// Zdarzenia całodzienne (Bank Holiday, OPEX) jako etykieta dnia u góry wykresu, bez linii. Jedna etykieta na dzień ET.
+// ---- zakres dnia handlowego CME dla zdarzeń całodziennych ----
+// [U] 04.11.2026 «nie ma zakrywac calego pola wykresu tylko np kolorowy pasek na dole lub na gorze pokazujacy zakres czasowy newsa»; wybory użytkownika:
+// zakres = dzień handlowy CME, czyli 18:00 ET dnia poprzedniego do 17:00 ET danego dnia; miejsce = na dole pola, tuż nad osią czasu.
+// Zakres liczony przez strefę America/New_York (Intl), nie stałym offsetem, więc dni zmiany czasu mają 22 h (marzec) i 24 h (listopad) zamiast 23 h.
+// To tylko rysowanie: semantyka „dnia” w filtrach i statystykach (news.mjs dayEnd/sameDay, bt-filtr dayTags) zostaje północ–północ ET.
+// Czyste liczenie granic (Intl, America/New_York) mieszka w dzien-handlowy.js, bo importuje je też serwer; tu reeksport dla widoków newsów.
+export { tradingDayRange };
+// „pt 20.11”: dzień tygodnia i data dnia ET (niezależnie od strefy wykresu), żeby napis nie mylił, gdy początek paska jest poza ekranem.
+export function dayShort(day, loc = locale()) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day));
+  if (!m) return '';
+  // skrót dnia tygodnia z kropką w polskim („pt.”) bez kropki, w angielskim („Fri”) bez zmian
+  const wd = new Intl.DateTimeFormat(loc, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))).replace(/\.$/, '');
+  return `${wd} ${m[3]}.${m[2]}`;
+}
+const rangeOf = (day) => { const r = tradingDayRange(day); return r ? { r0: r.from, r1: r.to } : {}; };
+// Zdarzenia całodzienne (Bank Holiday, OPEX) jako etykieta dnia u góry wykresu, bez linii, i pasek zakresu u dołu (r0, r1). Jedna etykieta na dzień ET.
 export function dayLabelsNews(events) {
   const by = new Map();
   for (const e of events) if (e.allDay) { if (!by.has(e.day)) by.set(e.day, []); by.get(e.day).push(e); }
   return [...by.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([day, items]) => {
     items.sort((a, b) => IMP_RANK[a.imp] - IMP_RANK[b.imp]);
-    return { key: `nd:${day}`, kind: 'news', day, t0: items[0].t, t1: items[0].t + 86400, items, imp: bestImp(items), text: items.map(eventName).join(' · ') };
+    return { key: `nd:${day}`, kind: 'news', day, t0: items[0].t, t1: items[0].t + 86400, ...rangeOf(day), items, imp: bestImp(items), text: `${items.map(eventName).join(' · ')} · ${dayShort(day)}` };
   });
 }
 // Earningsy z godziną (BMO przed 9:30 ET, AMC od 16:00 ET, w trakcie sesji z rzeczywistej chwili raportu) mają znacznik; bez pory (allDay) etykietę dnia.
@@ -95,7 +112,7 @@ export function dayLabelsEarn(events) {
     items.sort((a, b) => a.cls - b.cls || (a.symbol < b.symbol ? -1 : 1));
     const shown = items.slice(0, 3).map((e) => e.symbol).join(', ');
     const more = items.length > 3 ? ` +${items.length - 3}` : '';
-    return { key: `ed:${day}`, kind: 'earn', day, t0: items[0].t, t1: items[0].t + 86400, items, cls: items[0].cls, text: `${t('Wyniki')}: ${shown}${more}` };
+    return { key: `ed:${day}`, kind: 'earn', day, t0: items[0].t, t1: items[0].t + 86400, ...rangeOf(day), items, cls: items[0].cls, text: `${t('Wyniki')}: ${shown}${more} · ${dayShort(day)}` };
   });
 }
 
@@ -109,16 +126,91 @@ export function buildNewsModel({ news = [], earn = [], prefs }) {
 // ---- geometria (piksele) ----
 export const NEWS_DASH = [4, 4];
 const LABEL_ROWS = 3, MARK_R = 5;
+// Pasek zakresu dnia: 2 px wysokości przy dolnej krawędzi pola, co najmniej 4 px szerokości (święto na wykresie 1D bez świecy).
+// [U] 04.11.2026 «niech ten pasek bedzie bardzo delikatny i cienki i tylko po najechaniu na tekst danego dnia»: pasek jest domyślnie niewidoczny, pojawia się
+// wyłącznie dla napisu dnia, nad którym jest wskaźnik albo fokus z klawiatury (dymek napisu zostaje); geometria liczy paski wszystkich dni, rysunek pokazuje jeden.
+const BAND_H = 2, BAND_MIN_W = 4;
 // Odwzorowanie chwili UTC na piksel: początek świecy i = x(i − 0,5) (jak w nakładkach sesji). sc.x(i) to skala indeksu świecy, candles posortowane po czasie.
-export function timeToX(candles, step, sc) {
-  return (tt) => { const i = timeToIndexF(candles, tt, step); return i == null ? null : sc.x(i - 0.5); };
+// future: rosnące początki świec za ostatnią świecą (backtest, 04.11.2026 «maja sie rysowac w przyszlosci tamgdzie nie ma swieczek»; bt-czas.js futureBuckets), te same czasy co
+// punkty bez wartości na osi wykresu: indeksy n, n + 1, ... Punkty odniesienia za początkiem ostatniej świecy to [ostatnia świeca, ...future]; wewnątrz przedziału między sąsiednimi
+// punktami pozycja jest interpolowana liniowo, dokładnie jak timeToIndexF między świecami, więc po dojściu kursora (świece zajmują te same punkty) nic nie przeskakuje, także przy
+// przerwie 17:00-18:00 ET, weekendzie i zmianie czasu. Zwraca { k, a, b } (k = numer punktu licząc od ostatniej świecy, a = jego czas, b = czas następnego punktu albo null) albo null.
+function extPoint(candles, future, tt) {
+  const n = candles?.length ?? 0;
+  if (!n || !(tt >= candles[n - 1][0])) return null;
+  const last = candles[n - 1][0], F = future?.length ?? 0, from = future?.from || 0;
+  let lo = from, hi = F - 1, j = from - 1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (future[m] <= tt) { j = m; lo = m + 1; } else hi = m - 1; }
+  return { k: j - from + 1, a: j < from ? last : future[j], b: j + 1 < F ? future[j + 1] : null };
+}
+// czy siatka ma jeszcze punkty za ostatnią świecą (future.from = punkty zajęte już przez świece)
+const hasFuture = (future) => !!future && future.length - (future.from || 0) > 0;
+export function timeToX(candles, step, sc, future = null) {
+  return (tt) => {
+    const n = candles?.length ?? 0;
+    if (hasFuture(future) && n && tt >= candles[n - 1][0] + step) {
+      const p = extPoint(candles, future, tt);
+      if (p.b == null && tt > p.a + step) return null; // dalej niż siatka: poza oknem
+      return sc.x(n - 1 + p.k + (p.b == null ? (tt - p.a) / step : (tt - p.a) / (p.b - p.a)) - 0.5);
+    }
+    const i = timeToIndexF(candles, tt, step);
+    return i == null ? null : sc.x(i - 0.5);
+  };
+}
+// Krawędzie paska zakresu [from, to): from(t) = lewa krawędź, to(t) = prawa. Różnią się od timeToX w przerwach między świecami (17:00-18:00 ET, weekend, święto bez sesji):
+// początek w przerwie schodzi na lewą krawędź następnej świecy, koniec na prawą krawędź ostatniej świecy przed nim (indeksy świec nie znają przerw, więc
+// liniowa interpolacja rozmazałaby pasek na pół weekendu). Na 1D (świeca ≈ doba) krawędzie przyciągają się do całych świec: pasek obejmuje świecę dnia handlowego.
+export function bandX(candles, step, sc, future = null) {
+  const n = candles?.length ?? 0;
+  const daily = step >= 79200 && step <= 108000;
+  const X = (i) => sc.x(i - 0.5);
+  return {
+    from(tt) {
+      if (n && hasFuture(future) && tt >= candles[n - 1][0] + step) {
+        const p = extPoint(candles, future, tt);
+        if (tt >= p.a + step) return X(n + p.k);
+        return X(daily ? n - 1 + p.k : n - 1 + p.k + (tt - p.a) / (p.b == null ? step : p.b - p.a));
+      }
+      const i = n ? timeToIndex(candles, tt, step) : null;
+      if (i == null) return null;
+      const k = Math.floor(i + 1e-9);
+      if (k >= 0 && k < n - 1 && tt >= candles[k][0] + step) return X(k + 1);
+      return X(daily ? k : timeToIndexF(candles, tt, step));
+    },
+    to(tt) {
+      if (n && hasFuture(future) && tt - 1 >= candles[n - 1][0] + step) {
+        const p = extPoint(candles, future, tt - 1);
+        if (daily || tt - 1 >= p.a + step) return X(n + p.k);
+        return X(n - 1 + p.k + Math.min(1, (tt - p.a) / step));
+      }
+      const j = n ? timeToIndex(candles, tt - 1, step) : null;
+      if (j == null) return null;
+      const k = Math.floor(j + 1e-9);
+      if (k >= 0 && k < n - 1) {
+        if (daily || tt - 1 >= candles[k][0] + step) return X(k + 1);
+        return X(k + Math.min(1, (tt - candles[k][0]) / step));
+      }
+      return X(daily ? k + 1 : timeToIndexF(candles, tt, step));
+    },
+  };
 }
 // m: model z buildNewsModel; xt(t) → px albo null; box { left, right, top, bottom }. Wynik:
 //  lines: pionowe linie newsów z pewną godziną; marks: znaczniki u dołu pola (newsy i earningsy), earningsy podniesione, gdy stoją tuż przy newsie;
 //  labels: etykiety dni u góry w co najwyżej trzech rzędach; hits: prostokąty dla przycisków dostępnych z klawiatury, dotyku i myszy (ten sam zapis w SVG i LWC).
-export function newsGeometry(m, xt, box) {
-  const lines = [], marks = [], labels = [], hits = [];
+export function newsGeometry(m, xt, box, bx = null) {
+  const lines = [], marks = [], labels = [], hits = [], bands = [];
   const inside = (x) => x != null && Number.isFinite(x) && x >= box.left - MARK_R && x <= box.right + MARK_R;
+  // pasek zakresu dnia (zdarzenia całodzienne) przy osi czasu; jeden na etykietę dnia, klucz paska = klucz etykiety (pokazuje go najechanie na napis)
+  const bandFrom = bx?.from || xt, bandTo = bx?.to || xt;
+  for (const l of m.labels) {
+    if (!Number.isFinite(l.r0) || !Number.isFinite(l.r1)) continue;
+    let xa = bandFrom(l.r0), xb = bandTo(l.r1);
+    if (xa == null || xb == null || !Number.isFinite(xa) || !Number.isFinite(xb)) continue;
+    if (xb - xa < BAND_MIN_W) { const mid = (xa + xb) / 2; xa = mid - BAND_MIN_W / 2; xb = mid + BAND_MIN_W / 2; }
+    if (xb <= box.left || xa >= box.right) continue;
+    const a = Math.max(xa, box.left), b = Math.min(xb, box.right);
+    bands.push({ key: l.key, kind: l.kind, imp: l.imp, cls: l.cls, x: a, w: b - a, y: box.bottom - BAND_H, h: BAND_H, clipL: xa < box.left, clipR: xb > box.right });
+  }
   const yMark = box.bottom - 9;
   for (const g of m.groups) {
     const x = xt(g.t);
@@ -134,7 +226,8 @@ export function newsGeometry(m, xt, box) {
   }
   const rowEnd = [];
   for (const l of m.labels) {
-    const xa = xt(l.t0), xb = xt(l.t1);
+    // napis stoi na początku paska (zakres dnia handlowego), a bez zakresu (stare dane) na północy ET
+    const xa = Number.isFinite(l.r0) ? bandFrom(l.r0) : xt(l.t0), xb = Number.isFinite(l.r1) ? bandTo(l.r1) : xt(l.t1);
     if (xa == null || xb == null || xb <= box.left || xa >= box.right) continue;
     const x = Math.max(xa, box.left) + 4, w = Math.ceil(l.text.length * 5.9) + 8;
     let row = rowEnd.findIndex((end) => x >= end + 6);
@@ -145,7 +238,7 @@ export function newsGeometry(m, xt, box) {
   // przycisk znacznika z liczbą obejmuje też liczbę (rysowaną od x + 8), żeby obwódka fokusu jej nie przecinała (przegląd 29.10.2026)
   for (const k of marks) { const extra = k.count > 1 ? String(k.count).length * 6 + 2 : 0; hits.push({ key: k.key, x: k.x + extra / 2, y: k.y, w: 24 + extra, h: 24 }); }
   for (const l of labels) hits.push({ key: l.key, x: l.x + l.w / 2 - 4, y: l.y - 4, w: Math.max(20, l.w), h: 18 });
-  return { lines, marks, labels, hits };
+  return { lines, marks, labels, hits, bands };
 }
 export const markPath = (kind, x, y) => (kind === 'earn'
   ? `M${f1(x)} ${f1(y - 5)}L${f1(x + 5)} ${f1(y)}L${f1(x)} ${f1(y + 5)}L${f1(x - 5)} ${f1(y)}Z`
@@ -156,7 +249,8 @@ export const tokenOf = (o) => (o.kind === 'earn' ? EARN_TOKENS[o.cls] : NEWS_TOK
 // Podgląd SVG: warstwa pod świecami (linie) i nad świecami (znaczniki, etykiety). Kolory przez var(--token) i klasy CSS (.nwl, .nwm, .nwd).
 export function newsSvg(geo) {
   const under = geo.lines.map((l) => `<line class="nwl" x1="${f1(l.x)}" x2="${f1(l.x)}" y1="${f1(l.y1)}" y2="${f1(l.y2)}" stroke-dasharray="${NEWS_DASH.join(' ')}" style="stroke:var(${NEWS_TOKENS[l.imp]})"/>`).join('');
-  const over = geo.marks.map((k) => {
+  const bandSvg = (geo.bands || []).map((b) => `<rect class="nwb ${b.kind}" data-k="${esc(b.key)}" x="${f1(b.x)}" y="${f1(b.y)}" width="${f1(b.w)}" height="${b.h}" style="fill:var(${tokenOf(b)})"/>`).join('');
+  const over = bandSvg + geo.marks.map((k) => {
     const c = `var(${tokenOf(k)})`;
     const style = k.hollow ? `fill:none;stroke:${c}` : `fill:${c};stroke:none`;
     return `<path class="nwm ${k.kind}${k.hollow ? ' hollow' : ''}" d="${markPath(k.kind, k.x, k.y)}" style="${style}"/>` +

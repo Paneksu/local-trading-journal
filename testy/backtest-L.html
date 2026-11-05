@@ -220,6 +220,15 @@ try {
       P('[data-o="close"]').click(); await sleep(80);
       scr().querySelector('.bt-jr [data-jr="skip"]')?.click(); await sleep(20);
       const tr = RP.doc().trades[RP.doc().trades.length - 1];
+      // [U] 04.11.2026 «ale jak zapisuje trade i journaluje jeszcze podczas jak nie poznalem przyszlych swiec w backtestingowej sesji to nnie powinny mi sie ujawniac wtedy»: Journal otwarty zaraz po zamknięciu nie ma świec po wyjściu
+      key('j', { ctrlKey: true });
+      const jw0 = await until(() => document.querySelector('.bt-jw'));
+      const W0 = RP.journalWindow();
+      await W0.ready;
+      const pv0 = await until(() => (W0.view()?.status?.() === 'ok' ? W0.view() : null), 8000);
+      const cs0 = pv0 ? pv0.candles() : [];
+      rec('journal', !!jw0 && cs0.length > 10 && cs0.every((k) => k[0] < tr.exitT), `Journal zaraz po zamknięciu bez świec po wyjściu (${cs0.length} świec, ostatnia ${cs0[cs0.length - 1]?.[0]}, wyjście ${tr.exitT})`);
+      W0.close(); await sleep(80);
       await stepN(12);
       const sessBefore = JSON.stringify(RP.drawings().docOf('NQ').d);
       rec('journal', (tr.drawings?.d || []).some((x) => x.id === sessId), 'migawka rysunków przy zamknięciu');
@@ -233,10 +242,12 @@ try {
       const pv = await until(() => (W.view()?.status?.() === 'ok' ? W.view() : null), 8000);
       const cs = pv ? pv.candles() : [];
       const maxT = tr.exitT; // wyjście ręczne: koniec ostatniej widocznej świecy bazowej
-      rec('journal', cs.length > 10 && cs.every((k) => k[0] < maxT) && RP.cursor() > maxT + 300, `wykres Journala bez świec po zamknięciu (${cs.length} świec, ostatnia ${cs[cs.length - 1]?.[0]}, zamknięcie ${maxT}, kursor ${RP.cursor()})`);
+      // [U] 04.11.2026 «niech journal w backtestingu ma wlasnie dostep podczas wyswietlania trade'a swiece nie do momentu wyjscia tylko jeszcze troche po»: po przesunięciu sesji o 12 świec Journal pokazuje świece po wyjściu, ale nie dalej niż znak wodny (sesja ich nie pokazała)
+      const hwNow = RP.book().hwi?.NQ ?? RP.book().hw;
+      rec('journal', cs.length > 10 && cs.some((k) => k[0] >= maxT) && cs.every((k) => k[0] < hwNow) && RP.cursor() > maxT + 300, `wykres Journala ze świecami po zamknięciu do znaku wodnego (${cs.length} świec, ostatnia ${cs[cs.length - 1]?.[0]}, zamknięcie ${maxT}, znak wodny ${hwNow}, kursor ${RP.cursor()})`);
       const last = cs[cs.length - 1];
       const tf = pv.state().tf, sec = { '1m': 60, '15s': 15, '5m': 300 }[tf] || 60;
-      rec('journal', last && last[0] + sec >= maxT - 60, `ostatnia świeca przy chwili zamknięcia (${tf}: ${last?.[0]} vs ${maxT})`);
+      rec('journal', last && last[0] + sec >= hwNow - sec * 2, `ostatnia świeca przy znaku wodnym (${tf}: ${last?.[0]} vs ${hwNow})`);
       rec('journal', !!jw.querySelector('.lb-top .lb-count') && !!jw.querySelector('.lb-facts') && !!jw.querySelector('[name="notes"]') && !!jw.querySelector('.swc-edit'), 'okno: licznik, fakty, notatka, „Edytuj wykres”');
       // skróty replayu wyłączone przy otwartym Journalu
       const c0 = RP.cursor();
@@ -267,6 +278,25 @@ try {
       rec('journal', !document.querySelector('.bt-jw') && notionCalls.length > n0, `zamknięcie: wysyłka zmian do Notion w tle (${notionCalls.length - n0})`);
       const c1 = RP.cursor(); key('ArrowRight', { shiftKey: true }); await sleep(80);
       rec('journal', RP.cursor() > c1, 'po zamknięciu skróty replayu wracają');
+      // [U] 04.11.2026 «ale jak zapisuje trade i journaluje jeszcze podczas jak nie poznalem przyszlych swiec w backtestingowej sesji to nnie powinny mi sie ujawniac wtedy»: kursor cofnięty poniżej znaku wodnego: sesja te świece już pokazała, więc Journal pokazuje je do znaku wodnego (nie do kursora) i nic dalej
+      {
+        await stepN(3);
+        const hwB = RP.book().hwi?.NQ ?? RP.book().hw;
+        const back = tr.exitT + 120;
+        await RP.goTo(back); await sleep(120);
+        rec('journal', RP.cursor() < hwB - 60 && (RP.book().hwi?.NQ ?? RP.book().hw) === hwB, `cofnięcie: kursor ${RP.cursor()} poniżej znaku wodnego ${hwB}, który się nie zmienia`);
+        RP.openJournalWindow(tr.id);
+        await until(() => document.querySelector('.bt-jw'));
+        const WB = RP.journalWindow();
+        await WB.ready;
+        const pvB = await until(() => (WB.view()?.status?.() === 'ok' ? WB.view() : null), 8000);
+        const csB = pvB ? pvB.candles() : [];
+        const lastB = csB[csB.length - 1], secB = { '1m': 60, '15s': 15, '5m': 300 }[pvB?.state().tf] || 60;
+        rec('journal', csB.length > 10 && csB.every((k) => k[0] < hwB) && lastB[0] > back, `po cofnięciu świece do znaku wodnego, nie dalej (ostatnia ${lastB?.[0]}, kursor ${RP.cursor()}, znak wodny ${hwB})`);
+        rec('journal', lastB && lastB[0] + secB >= hwB - secB * 2, `po cofnięciu ostatnia świeca przy znaku wodnym, a nie przy kursorze (${lastB?.[0]} vs ${hwB})`);
+        WB.close(); await sleep(80);
+        await RP.goTo(hwB); await sleep(120);
+      }
       // Historia: stan i Journal
       scr().querySelector('.bt-dock [data-dk="hist"]').click(); await sleep(30);
       const hr = scr().querySelector(`.bt-dock [data-row="${tr.id}"]`);
@@ -295,13 +325,16 @@ try {
       P('[data-ot="limit"]').click(); setF('price', px + 6); setF('sl', 8); setF('tp', 16);
       RP.orders().submit('sell'); await sleep(20);
       scr().querySelector('.bt-dock [data-dk="ord"]').click();
+    } else if (shot === 'journal-po') {
+      // 30 świec po wyjściu: Journal pokazuje reakcję rynku po trade'zie (do znaku wodnego)
+      await stepN(28);
     } else {
       P('[data-o="buy"]').click(); await sleep(40);
       await stepN(4);
     }
     RP.orders().refresh();
     await sleep(300);
-    if (shot === 'journal') {
+    if (shot === 'journal' || shot === 'journal-po') {
       RP.openJournalWindow(RP.doc().trades[0].id);
       await until(() => RP.journalWindow()?.view()?.status?.() === 'ok', 8000);
       await sleep(400);

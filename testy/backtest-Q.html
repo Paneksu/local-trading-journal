@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="pl" data-theme="onyx">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<base href="/">
+<title>JustJournal: newsy w przyszłości replayu (strona robocza)</title>
+<!-- Strona robocza testu backtest-Q (testy/backtest-Q-strona.mjs), tylko na dashboardzie testowym (THQ_TEST_PAGES=1) pod /__testy/. Prawdziwy replay na świecach syntetycznych
+     z dopisanymi newsami: dzisiejszy później niż kursor, OPEX dnia kursora, news i dzień wolny następnego dnia. 04.11.2026 «maja sie rysowac w przyszlosci tamgdzie nie ma swieczek».
+     ?theme=onyx|platinum ?mode=scroll1 (przewinięcie na dzisiejszy news) | scroll2 (na jutrzejszy) ?mode=fwd (dojście kursora do newsa).
+     Wynik: pre#wynik z JSON-em { checks, fatal }. -->
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/features.css">
+<style>
+  body { margin: 0; background: var(--chrome); color: var(--fg); }
+  #wynik { position: fixed; left: -9999px; }
+</style>
+</head>
+<body>
+<pre id="wynik">…</pre>
+<script type="module">
+const out = document.getElementById('wynik');
+const qs = new URLSearchParams(location.search);
+document.documentElement.dataset.theme = qs.get('theme') === 'platinum' ? 'platinum' : 'onyx';
+const mode = qs.get('mode') || '';
+const checks = [];
+const rec = (tag, cond, msg) => checks.push({ tag, ok: !!cond, msg });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+window.addEventListener('error', (e) => rec('błąd strony', false, e.error?.stack || e.message));
+window.addEventListener('unhandledrejection', (e) => rec('błąd strony', false, String(e.reason?.stack || e.reason)));
+const U = (y, mo, d, h = 0, mi = 0) => Date.UTC(y, mo - 1, d, h, mi) / 1000;
+// 2024-03-12 jest już po zmianie czasu USA (EDT = UTC-4): 12:00 ET = 16:00Z
+const E_TODAY = U(2024, 3, 12, 16, 0), E_TOMORROW = U(2024, 3, 13, 13, 30), E_LATE = U(2024, 3, 13, 15, 0);
+try {
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (url, opts) => {
+    const r = await realFetch(url, opts);
+    if (!String(url).includes('/api/backtest/range')) return r;
+    try {
+      const j = await r.clone().json();
+      if (j && typeof j === 'object') {
+        (j.news ||= []).push(
+          { t: E_TODAY, day: '2024-03-12', name: 'Zorblat Index', imp: 'high', kind: 'data', allDay: false, tentative: false, src: 'ff', basis: 'feed' },
+          { t: U(2024, 3, 12, 4), day: '2024-03-12', name: 'OPEX', imp: 'opex', kind: 'opex', allDay: true, tentative: false, src: 'off', basis: 'rule', variant: 'monthly' },
+          { t: E_TOMORROW, day: '2024-03-13', name: 'Plumbus Orders', imp: 'medium', kind: 'data', allDay: false, tentative: false, src: 'ff', basis: 'feed' },
+          { t: U(2024, 3, 13, 4), day: '2024-03-13', name: 'Bank Holiday', imp: 'holiday', kind: 'holiday', allDay: true, tentative: false, src: 'off', basis: 'rule' });
+        return new Response(JSON.stringify(j), { status: r.status, headers: { 'Content-Type': 'application/json' } });
+      }
+    } catch { /* nie JSON */ }
+    return r;
+  };
+  try { localStorage.setItem('thq.chart.overlays.v1', JSON.stringify({ sessions: false, pdhl: false, news: qs.get('nonews') !== '1', earnings: false, newsImp: { high: true, medium: true, low: false, holiday: true, opex: true } })); } catch { /* bez localStorage */ }
+  try { for (const k of ['thq.bt.open.v1', 'thq.bt.dock.v1', 'thq.bt.ord.v1', 'thq.bt.jump.v1']) localStorage.removeItem(k); } catch { /* bez localStorage */ }
+  const { openReplay } = await import('/js/bt-replay.js');
+  const { createSessionClient, newSessionId } = await import('/js/bt-klient.js');
+  const { newSessionDoc } = await import('/js/bt-kreator.js');
+  const { nyAt } = await import('/js/bt-czas.js');
+  const client = createSessionClient();
+  const doc = newSessionDoc({ id: newSessionId(), name: 'Sesja Q',
+    def: { instruments: ['NQ'], from: '2024-03-12', balance: 50000, risk: { mode: 'pct', value: 1 }, riskBase: 'current', commission: 0, startTime: '09:00', accountId: null, filter: null, excluded: [] }, now: Date.now() });
+  await client.create(doc);
+  client.notion = async () => ({ sent: 0, skipped: 0, failed: [], pending: 0, notion: {} });
+  // loadRange: odpowiedź na dane dociągane w tle w trakcie pauzy; po ustawieniu window.__late niesie dodatkowy news (E_LATE), liczone są wywołania po fladze
+  const lateCalls = { n: 0 };
+  const loadRange = async (q) => {
+    const r = await client.range(q);
+    if (window.__late) {
+      await sleep(3500); // odpowiedź dociągana w tle przychodzi PO ostatnim kroku: wykres stoi w pauzie i nic go nie odświeży poza obsługą dociągniętych danych
+      lateCalls.n++; (r.news ||= []).push({ t: E_LATE, day: '2024-03-13', name: 'Late Index', imp: 'high', kind: 'data', allDay: false, tentative: false, src: 'ff', basis: 'feed' }); }
+    return r;
+  };
+  const RP = openReplay(document.body, { sessionId: doc.id, client, loadRange, onClosed: () => {}, notionEveryMs: 0 });
+  await RP.ready;
+  const scr = () => document.querySelector('.bt-screen');
+  const ch = () => RP.chart();
+  const ts = () => ch().chart.timeScale();
+  const hit = (k) => [...scr().querySelectorAll('.nws-hit')].find((b) => b.dataset.k === k);
+  const lastT = () => ch().bars()[ch().bars().length - 1][0];
+  const lastX = () => ts().timeToCoordinate(lastT());
+  const view = async (from, to) => { const n = ch().bars().length; ts().setVisibleLogicalRange({ from: n + from, to: n + to }); await sleep(350); };
+  await RP.goTo(nyAt('2024-03-12', '09:31')); await sleep(400);
+  const n0 = ch().bars().length, f0 = ch().future();
+  rec('siatka', f0.length > 1000 && f0[0] === lastT() + 60, `siatka przyszłych świec 1m za ostatnią świecą (${f0.length} punktów, pierwsza ${f0[0] - lastT()} s po ostatniej)`);
+  rec('siatka', ch().bars().every((b) => b.length >= 5 && Number.isFinite(b[4])) && lastT() <= nyAt('2024-03-12', '09:32'), 'świece tylko do kursora, bez cen z przyszłości');
+  // margines i podążanie: ostatnia świeca stoi w tym samym miejscu po kolejnych krokach
+  const x0 = lastX();
+  await RP.step(1); await RP.step(1); await RP.step(1); await sleep(250);
+  rec('podążanie', Math.abs(lastX() - x0) <= 1.5, `ostatnia świeca w tym samym miejscu po 3 krokach (${Math.round(x0)} → ${Math.round(lastX())} px)`);
+  // reguła biblioteki: widok z widoczną ostatnią świecą (także przewinięty w prawo, w przyszłość) przesuwa się o liczbę nowych świec; widok w przeszłości (ostatnia świeca poza widokiem) stoi
+  for (const [name, from, to, shift] of [['w lewo (przeszłość)', -400, -95, 0], ['w prawo (przyszłość)', 100, 405, 3]]) {
+    await view(from, to);
+    const rb = ts().getVisibleLogicalRange();
+    await RP.step(1); await RP.step(1); await RP.step(1); await sleep(300);
+    const ra = ts().getVisibleLogicalRange();
+    rec('podążanie', Math.abs(ra.to - rb.to - shift) < 0.01 && Math.abs(ra.from - rb.from - shift) < 0.01, `widok przewinięty ${name}: przesunięcie o ${shift} po 3 krokach (${rb.to.toFixed(1)} → ${ra.to.toFixed(1)})`);
+  }
+  const markX = (k) => Number(hit(k)?.dataset.x);
+  const spacing = () => ts().options().barSpacing;
+  const alignedAt = (E) => { const c = ts().timeToCoordinate(E); return c != null && Math.abs((c - spacing() / 2) - markX(`n:${E}`)) <= 1.5; };
+  if (mode === 'scroll1') {
+    await view(-40, 240);
+    rec('dziś', !!hit(`n:${E_TODAY}`), 'news dzisiejszy później niż kursor ma znacznik w pustym miejscu');
+    rec('dziś', alignedAt(E_TODAY), `znacznik zgodny z osią czasu LWC dla 12:00 ET (marker ${markX(`n:${E_TODAY}`)}, oś ${ts().timeToCoordinate(E_TODAY)})`);
+    rec('dziś', !!hit('nd:2024-03-12'), 'napis dnia OPEX z dnia kursora');
+    const lab = hit('nd:2024-03-12');
+    if (lab) { lab.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse', bubbles: false })); await sleep(300); }
+  } else if (mode === 'fwd') {
+    await view(-40, 240);
+    rec('dziś', !!hit(`n:${E_TODAY}`), 'news dzisiejszy później niż kursor ma znacznik w pustym miejscu');
+    rec('dziś', alignedAt(E_TODAY), `znacznik zgodny z osią czasu LWC dla 12:00 ET (marker ${markX(`n:${E_TODAY}`)}, oś ${ts().timeToCoordinate(E_TODAY)})`);
+    rec('dziś', !!hit('nd:2024-03-12'), 'napis dnia OPEX z dnia kursora');
+    // dojście kursora do newsa: nic nie przeskakuje
+    await RP.goTo(nyAt('2024-03-12', '11:58')); await sleep(300); await view(-40, 240);
+    rec('bez skoku', alignedAt(E_TODAY), `przed dojściem: marker ${markX(`n:${E_TODAY}`)}, oś ${ts().timeToCoordinate(E_TODAY)}`);
+    for (let i = 0; i < 4; i++) await RP.step(1);
+    await sleep(300);
+    rec('bez skoku', alignedAt(E_TODAY), `po dojściu do newsa (4 kroki): marker ${markX(`n:${E_TODAY}`)}, oś ${ts().timeToCoordinate(E_TODAY)}`);
+    await RP.goTo(nyAt('2024-03-12', '12:03')); await sleep(300); await view(-40, 240);
+    rec('bez skoku', alignedAt(E_TODAY), 'po przejściu kursora przez news marker nadal zgodny z osią');
+    rec('bez skoku', !!hit(`n:${E_TODAY}`) && ch().future().length > 0, 'news za kursorem zostaje, siatka istnieje');
+  } else if (mode === 'late') {
+    // dane dociągane w tle w pauzie (przejście na następny dzień przeładowuje okno): news z odpowiedzi ma się pojawić bez kroku
+    window.__late = true; // od teraz każda odpowiedź o dane niesie news E_LATE
+    await RP.goTo(nyAt('2024-03-12', '16:50')); await sleep(700);
+    let calls = 0; const orig = ch().newsChanged; ch().newsChanged = (...a) => { calls++; return orig.apply(ch(), a); };
+    // kroki przez zamknięcie sesji (17:00 ET) i otwarcie następnej: doładowanie okna idzie w tle po kroku (zmierzone: jedna odpowiedź), a w pauzie news z niej ma się pojawić bez dalszego kroku
+    for (let i = 0; i < 14; i++) { await RP.step(1); await sleep(150); }
+    await sleep(4500);
+    await view(-40, 1300);
+    rec('dociąganie', lateCalls.n > 0, `dane dociągnięte w tle po ustawieniu flagi (${lateCalls.n} odpowiedzi z newsem)`);
+    rec('dociąganie', calls > 0, `dociągnięte dane odświeżają model newsów wykresu (newsChanged wywołane ${calls}×)`);
+    rec('dociąganie', !!hit(`n:${E_LATE}`), 'news dociągnięty w tle ma znacznik w pauzie, bez kolejnego kroku');
+  } else if (mode === 'draw') {
+    // aktywne narzędzie rysowania: przyciski newsów nie przechwytują wskaźnika (klik w napis dnia ma postawić rysunek)
+    await view(-40, 240);
+    const lab = hit('nd:2024-03-12'), at = (b) => { const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+    const top = () => { const [x, y] = at(lab); return document.elementFromPoint(x, y); };
+    rec('rysowanie', top()?.closest?.('.nws-hit') === lab, 'bez narzędzia: pod wskaźnikiem przycisk newsa (dymek, klawiatura)');
+    scr().querySelector('.swc-draw').click(); await sleep(200);
+    scr().querySelector('.swc-tools [data-tool]').click(); await sleep(200);
+    rec('rysowanie', !top()?.closest?.('.nws-hit'), `przy aktywnym narzędziu przycisk newsa nie przechwytuje wskaźnika (pod wskaźnikiem: ${top()?.tagName}.${top()?.className})`);
+    scr().querySelector('.swc-tools [data-tool][aria-pressed="true"]')?.click(); await sleep(200);
+    rec('rysowanie', top()?.closest?.('.nws-hit') === lab, 'po wyłączeniu narzędzia przycisk newsa wraca');
+  } else if (mode === 'scroll2') {
+    await view(1230, 1535);
+    rec('jutro', ts().timeToCoordinate(E_TOMORROW) != null, 'oś zna czas jutrzejszego newsa 13:30Z po przewinięciu w prawo');
+    rec('jutro', !!hit(`n:${E_TOMORROW}`), 'jutrzejszy news ma znacznik');
+    rec('jutro', !!hit('nd:2024-03-13'), 'napis dnia Bank Holiday z następnego dnia');
+    rec('jutro', alignedAt(E_TOMORROW), `jutrzejszy znacznik zgodny z osią (marker ${markX(`n:${E_TOMORROW}`)}, oś ${ts().timeToCoordinate(E_TOMORROW)})`);
+    const lab = hit('nd:2024-03-13');
+    if (lab) { lab.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse', bubbles: false })); await sleep(300); }
+  }
+  out.textContent = JSON.stringify({ checks, fatal: null });
+} catch (e) { out.textContent = JSON.stringify({ checks, fatal: String(e && e.stack || e) }); }
+</script>
+</body>
+</html>

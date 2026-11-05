@@ -112,6 +112,12 @@ export function compareLive(bt, live) {
 }
 
 // ---- źródło trade'ów ----
+// „Po BE” dla trade'a z pliku sesji: stop na wejściu (be) albo, po auto-BE z offsetem (SL o kilka ticków za BE, be = false), cena bez ryzyka beAt; powód sl i wynik w marginesie BE
+// (częściowy zysk to nie „po BE”). 04.11.2026 (wynik po BE): rozszerzone o isNum(tr.beAt), bo auto-BE z offsetem ma się kwalifikować; zmienia to też „R zostawione po BE” w Wykonaniu.
+export const localBeHit = (tr) => {
+  const last = (tr.exits || [])[(tr.exits || []).length - 1];
+  return (tr.be === true || isNum(tr.beAt)) && (last?.reason || null) === 'sl' && outcome({ r: tr.r }) === 'be';
+};
 // Lokalny trade z pliku sesji → wspólny kształt. Tylko zamknięte (z R).
 function fromSession(s, tr) {
   const e = nyParts(tr.entryT * 1000);
@@ -122,11 +128,14 @@ function fromSession(s, tr) {
     day: tr.day || e.day, date: tr.day || e.day, time: e.time, created: '', instrument: tr.instrument || null, dir: tr.dir || null,
     setup: tr.setup ? String(tr.setup).trim() : null, r: tr.r, pnl: isNum(tr.pnl) ? tr.pnl : null,
     maeR: isNum(tr.maeR) ? tr.maeR : null, mfeR: isNum(tr.mfeR) ? tr.mfeR : null,
-    exit: reason, beHit: tr.be === true && reason === 'sl' && outcome({ r: tr.r }) === 'be', // „po BE” tak samo jak z Notion: stop na wejściu i wynik w marginesie BE (częściowy zysk to nie „po BE”)
+    exit: reason, beHit: localBeHit(tr), // „po BE” tak samo jak z Notion: stop na wejściu (albo po auto-BE z offsetem) i wynik w marginesie BE
   };
 }
 // Trade Backtest z Notion (znormalizowany przez normalizeTrades). Powód wyjścia w Notion nie istnieje, więc „po BE” to stop przesunięty na wejście (pole BE)
 // i wynik w marginesie BE; „wyjście ręczne” nieznane (exit: null).
+// „Po BE” dla trade'a z Notion (też Live i Paper w dashboardzie): pole BE i wynik BE tak, jak liczą go Statystyki.
+// Decyzja sesji głównej 05.11.2026: kwalifikacja wg outcome, więc wynik ręczny wygrywa w obu kierunkach (Win przy r = 0 nie, BE przy r = 0,9 tak). Trade bez żadnego wyniku się nie kwalifikuje (outcome domyślnie mówi tam „be”).
+export const notionBeHit = (t) => isNum(t.be) && (!!t.manual || isNum(t.r) || isNum(t.pnl)) && outcome(t) === 'be';
 function fromNotion(t) {
   const m = parseBtSession(t.btSession);
   const p = isNum(t.at) ? nyParts(t.at) : null;
@@ -137,7 +146,7 @@ function fromNotion(t) {
     setup: t.setup ? String(t.setup).trim() : null, r: t.r, pnl: isNum(t.pnl) ? t.pnl : null,
     maeR: isNum(t.btMae) ? t.btMae : null, mfeR: isNum(t.btMfe) ? t.btMfe : null,
     manual: t.manual || null, // „Wynik ręcznie” z Notion (outcome liczy go przed R, jak Statystyki dashboardu)
-    exit: null, beHit: isNum(t.be) && isNum(t.r) && outcome({ r: t.r }) === 'be',
+    exit: null, beHit: notionBeHit(t),
   };
 }
 // Trade'y Backtest: z Notion + z lokalnych plików sesji. Duplikat po znaczniku [sesja/trade] → wygrywa lokalny (ma powód wyjścia).
